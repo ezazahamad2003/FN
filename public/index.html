@@ -9,37 +9,76 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Internal tool</p>
-          <h1>FN Onboarding</h1>
+        <div class="brand-lockup">
+          <div class="brand-mark">FN</div>
+          <div>
+            <p class="eyebrow">Fire department gear operations</p>
+            <h1>FN Onboarding</h1>
+          </div>
         </div>
-        <a class="button ghost" href="/setup">Auth Setup</a>
+        <div class="topbar-actions">
+          <div class="connection-card" id="connectionState">
+            <span class="pulse"></span>
+            <span>Checking services</span>
+          </div>
+          <a class="button ghost compact" href="/setup">Auth Setup</a>
+        </div>
       </header>
+
+      <section class="hero-band">
+        <div>
+          <p class="eyebrow">Workflow</p>
+          <h1>FN Onboarding</h1>
+          <p class="hero-copy">Create Drive folders, generate product mockups, write descriptions, and publish a Shopify collection from one upload.</p>
+        </div>
+        <div class="workflow-strip" aria-label="Onboarding workflow">
+          <span>Drive</span>
+          <span>AI mockups</span>
+          <span>Shopify</span>
+        </div>
+      </section>
 
       <section class="workspace">
         <form id="onboardForm" class="panel form-panel">
-          <label>
-            <span>Department Name</span>
-            <input name="departmentName" type="text" placeholder="Sacramento Fire Department" required>
-          </label>
-          <label>
-            <span>Logo files</span>
-            <input name="logos" type="file" accept="image/*" multiple required>
-          </label>
-          <label>
-            <span>Policy documents</span>
-            <input name="policies" type="file" accept="application/pdf" multiple>
-          </label>
+          <div class="panel-heading stacked">
+            <p class="eyebrow">New department</p>
+            <h2>Onboarding package</h2>
+          </div>
+          <div class="field-group">
+            <label for="departmentName">Department Name</label>
+            <input id="departmentName" name="departmentName" type="text" placeholder="Sacramento Fire Department" required>
+          </div>
+          <div class="field-group">
+            <label for="logos">Logo files</label>
+            <div class="file-control">
+              <input id="logos" name="logos" type="file" accept="image/*" multiple required>
+              <span class="file-label">Choose logo images</span>
+              <span class="file-count" id="logoCount">No logos selected</span>
+            </div>
+          </div>
+          <div class="field-group">
+            <label for="policies">Policy documents</label>
+            <div class="file-control">
+              <input id="policies" name="policies" type="file" accept="application/pdf" multiple>
+              <span class="file-label">Choose PDF policies</span>
+              <span class="file-count" id="policyCount">No policies selected</span>
+            </div>
+          </div>
           <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
-          <button class="button" type="submit" id="runButton">Run Onboarding</button>
+          <button class="button primary full" type="submit" id="runButton">Run Onboarding</button>
         </form>
 
         <section class="panel log-panel">
           <div class="panel-heading">
-            <h2>Status Log</h2>
+            <div>
+              <p class="eyebrow">Live run</p>
+              <h2>Status Log</h2>
+            </div>
             <button class="icon-button" id="clearLog" type="button" title="Clear log">Clear</button>
           </div>
-          <ol id="log" class="log"></ol>
+          <ol id="log" class="log">
+            <li class="empty-log">Waiting for an onboarding run.</li>
+          </ol>
         </section>
       </section>
 

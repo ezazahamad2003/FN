@@ -4,11 +4,22 @@ const clearLog = document.getElementById("clearLog");
 const runButton = document.getElementById("runButton");
 const summary = document.getElementById("summary");
 const conflictStrategy = document.getElementById("conflictStrategy");
+const connectionState = document.getElementById("connectionState");
+const logoInput = document.getElementById("logos");
+const policyInput = document.getElementById("policies");
+const logoCount = document.getElementById("logoCount");
+const policyCount = document.getElementById("policyCount");
 
 function addLog(message, state = "") {
+  const empty = log.querySelector(".empty-log");
+  if (empty) empty.remove();
   const item = document.createElement("li");
-  item.textContent = message;
   item.className = state;
+  const firstSpace = message.indexOf(" ");
+  const hasMarker = firstSpace > 0 && firstSpace <= 3;
+  const marker = hasMarker ? message.slice(0, firstSpace) : "\u2022";
+  const text = hasMarker ? message.slice(firstSpace + 1) : message;
+  item.innerHTML = `<span>${marker}</span><strong>${text}</strong>`;
   log.appendChild(item);
   log.scrollTop = log.scrollHeight;
 }
@@ -23,9 +34,12 @@ function iconFor(state) {
 function renderSummary(data) {
   summary.hidden = false;
   summary.innerHTML = `
-    <section class="panel form-panel">
+    <section class="panel form-panel summary-panel">
       <div class="panel-heading">
-        <h2>Final Summary</h2>
+        <div>
+          <p class="eyebrow">Complete</p>
+          <h2>Final Summary</h2>
+        </div>
       </div>
       <div class="summary-actions">
         <a class="button" href="${data.driveFolderUrl}" target="_blank" rel="noreferrer">Drive Folder</a>
@@ -48,6 +62,25 @@ function renderSummary(data) {
       </div>
     </section>
   `;
+}
+
+function updateFileCount(input, output, singular, plural) {
+  const count = input.files.length;
+  output.textContent = count === 0 ? `No ${plural} selected` : `${count} ${count === 1 ? singular : plural} selected`;
+}
+
+async function refreshConnectionState() {
+  if (!connectionState) return;
+  try {
+    const res = await fetch("/health");
+    const status = await res.json();
+    const ready = status.shopifyConnected && status.googleConnected;
+    connectionState.className = `connection-card ${ready ? "ready" : "attention"}`;
+    connectionState.innerHTML = `<span class="pulse"></span><span>${ready ? "Services connected" : "Auth needs attention"}</span>`;
+  } catch (error) {
+    connectionState.className = "connection-card attention";
+    connectionState.innerHTML = '<span class="pulse"></span><span>Status unavailable</span>';
+  }
 }
 
 function parseSseChunk(buffer, onEvent) {
@@ -123,5 +156,9 @@ form.addEventListener("submit", async (event) => {
 });
 
 clearLog.addEventListener("click", () => {
-  log.innerHTML = "";
+  log.innerHTML = '<li class="empty-log">Waiting for an onboarding run.</li>';
 });
+
+logoInput.addEventListener("change", () => updateFileCount(logoInput, logoCount, "logo", "logos"));
+policyInput.addEventListener("change", () => updateFileCount(policyInput, policyCount, "policy", "policies"));
+refreshConnectionState();
