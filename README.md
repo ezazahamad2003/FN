@@ -50,13 +50,14 @@ The main UI accepts a department name, logo images, and policy documents. Submit
 3. Upload logo files into `Logos`.
 4. Upload policy files into the department root folder.
 5. Analyze each logo with GPT-4o Vision.
-6. Generate product mockups with GPT Image and upload them into `Product Images`.
-7. Generate a manual Google Doc in the department root folder. Each product image gets its own page with logo description and policy-based production notes.
-8. Generate Shopify product descriptions with GPT-4o.
-9. Create or reuse a Shopify manual collection.
-10. Create active Shopify products and upload generated mockup images.
-11. Add products to the collection.
-12. Display Drive, manual, collection, and product links.
+6. Extract product types and production details from the uploaded policy documents.
+7. Generate product mockups with GPT Image for each logo/product combination and upload them into `Product Images`.
+8. Generate a manual Google Doc in the department root folder. Each product image gets its own page with logo description and policy-based production notes.
+9. Generate Shopify product descriptions with GPT-4o.
+10. Create or reuse a Shopify manual collection.
+11. Create active Shopify products from the generated product images.
+12. Add products to the collection.
+13. Display Drive, manual, collection, and product links.
 
 ## Drive Folder
 
@@ -72,6 +73,8 @@ The app includes an `/issues` page for small-team feedback. Users can create iss
 
 Issue storage is local JSON at `data/issues.json`. On Render's free/container filesystem this is lightweight but not permanent across rebuilds. For heavier use, move issues into a database.
 
-## Future Inventory Selection
+## Policy-Driven Product Images
 
-The current product mockup workflow still generates the default shirt image per logo. The planned next step is to add an inventory selector for shirts, pants, hats, and other catalog products, then generate Drive and Shopify product images only for selected inventory items.
+The current product mockup workflow reads the uploaded policy documents and asks GPT-4o to infer which products should be generated, such as shirts, hats, pants, hoodies, or jackets. It then generates product images for each product/logo combination and creates matching Shopify products.
+
+The next planned step is to add an explicit inventory selector so users can choose from a controlled catalog before generation.

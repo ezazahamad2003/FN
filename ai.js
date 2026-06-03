@@ -43,7 +43,7 @@ async function generateMockup(description) {
     size: "1024x1024",
     quality: "medium",
     n: 1,
-    prompt: `A professional product photo of a black heavyweight t-shirt laid flat on a white background. The shirt has a fire department logo printed on the center chest. The logo is: ${description}. Clean studio lighting, sharp detail, no wrinkles, commercial product photography style.`
+    prompt: `A professional product photo of ${description.productPrompt}. The item has a fire department logo applied according to these production details: ${description.logoDescription}. Product and policy notes: ${description.productionNotes}. Clean studio lighting, sharp detail, commercial product photography style, white background.`
   });
   const image = response.data?.[0];
   if (image?.b64_json) {
@@ -57,14 +57,14 @@ async function generateMockup(description) {
   return imageRes.buffer();
 }
 
-async function generateProductDescription(departmentName) {
+async function generateProductDescription(departmentName, product) {
   const openai = client();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
         role: "user",
-        content: `Write a 2-sentence Shopify product description for official ${departmentName} gear. The item is a premium heavyweight t-shirt with the department logo printed on the chest. Professional, proud tone. Return only an HTML <p> tag.`
+        content: `Write a 2-sentence Shopify product description for official ${departmentName} gear. The item is ${product.productLabel}. Use this product context: ${product.productionNotes}. Professional, proud tone. Return only an HTML <p> tag.`
       }
     ],
     max_tokens: 180
@@ -96,7 +96,7 @@ async function extractPolicyInstructions(departmentName, policies, productItems)
     .map((file) => `File: ${file.originalname}\n${extractReadableText(file) || "No readable text extracted from this file."}`)
     .join("\n\n");
   const productContext = productItems
-    .map((item) => `${item.filenameBase}: ${item.logoDescription}`)
+    .map((item) => `${item.title}: ${item.logoDescription}. Product: ${item.productLabel}. Notes: ${item.productionNotes}`)
     .join("\n\n");
 
   const openai = client();
@@ -132,8 +132,85 @@ ${policyText || "No policy files were uploaded."}`
   }
 }
 
+function parseJsonArray(text) {
+  const cleaned = text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "");
+  const parsed = JSON.parse(cleaned);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+async function determinePolicyProducts(departmentName, policies) {
+  const policyText = policies
+    .map((file) => `File: ${file.originalname}\n${extractReadableText(file) || "No readable text extracted from this file."}`)
+    .join("\n\n");
+
+  if (!policyText.trim()) {
+    return [
+      {
+        productType: "shirt",
+        productLabel: "Black heavyweight t-shirt",
+        productPrompt: "a black heavyweight t-shirt laid flat",
+        productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents."
+      }
+    ];
+  }
+
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: `Extract the apparel/products that should be generated for ${departmentName} from these onboarding policy documents.
+
+Look specifically for shirts, hats, pants, hoodies, jackets, or other gear. Include logo placement, garment color, allowed/required decoration notes, restrictions, and anything important for mockup generation.
+
+Return JSON only as an array. Each object must have:
+- productType: short lowercase type such as "shirt", "hat", "pants"
+- productLabel: customer-facing product name
+- productPrompt: visual prompt phrase for image generation
+- productionNotes: concise instructions based on policy details
+
+If the documents do not clearly define products, return one default black heavyweight t-shirt item and say the policy should be verified.
+
+Policy text:
+${policyText}`
+      }
+    ],
+    max_tokens: 1000
+  });
+
+  const text = response.choices[0]?.message?.content?.trim() || "[]";
+  try {
+    const items = parseJsonArray(text).filter((item) => item.productLabel && item.productPrompt);
+    return items.length
+      ? items
+      : [
+          {
+            productType: "shirt",
+            productLabel: "Black heavyweight t-shirt",
+            productPrompt: "a black heavyweight t-shirt laid flat",
+            productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents."
+          }
+        ];
+  } catch (error) {
+    return [
+      {
+        productType: "shirt",
+        productLabel: "Black heavyweight t-shirt",
+        productPrompt: "a black heavyweight t-shirt laid flat",
+        productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents."
+      }
+    ];
+  }
+}
+
 module.exports = {
   analyzeLogo,
+  determinePolicyProducts,
   extractPolicyInstructions,
   generateMockup,
   generateProductDescription

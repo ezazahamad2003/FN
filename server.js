@@ -13,7 +13,13 @@ const {
   shopifyInstallUrl
 } = require("./auth");
 const { createDepartmentFolders, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
-const { analyzeLogo, extractPolicyInstructions, generateMockup, generateProductDescription } = require("./ai");
+const {
+  analyzeLogo,
+  determinePolicyProducts,
+  extractPolicyInstructions,
+  generateMockup,
+  generateProductDescription
+} = require("./ai");
 const {
   addProductToCollection,
   adminCollectionUrl,
@@ -84,11 +90,13 @@ function buildManualHtml(departmentName, items, instructions) {
   const instructionMap = new Map(instructions.map((entry) => [entry.title, entry.instructions]));
   const pages = items
     .map((item) => {
-      const note = instructionMap.get(item.filenameBase) || "Review uploaded policy documents before production.";
+      const note = instructionMap.get(item.title) || item.productionNotes || "Review uploaded policy documents before production.";
       return `
         <section class="page">
-          <h1>${escapeHtml(departmentName)} - ${escapeHtml(item.filenameBase)}</h1>
-          <img src="${item.mockupDataUrl}" alt="${escapeHtml(item.filenameBase)} product image">
+          <h1>${escapeHtml(item.title)}</h1>
+          <img src="${item.mockupDataUrl}" alt="${escapeHtml(item.title)} product image">
+          <h2>Product</h2>
+          <p>${escapeHtml(item.productLabel)}</p>
           <h2>Logo Description</h2>
           <p>${escapeHtml(item.logoDescription)}</p>
           <h2>Production Instructions</h2>
@@ -269,6 +277,7 @@ app.post(
       filenameBase: titleCase(file.originalname),
       slug: slug(file.originalname)
     }));
+    let productRuns = [];
 
     try {
       sendEvent(res, "status", { step: 1, state: "complete", message: "Step 1 complete: Google Drive folders ready" });
@@ -288,36 +297,57 @@ app.post(
         }
       });
 
-      await runStep(res, 4, "Generate and save product images", async () => {
-        for (const item of logoRuns) {
-          item.mockupBuffer = await generateMockup(item.logoDescription);
+      const policyProducts = await runStep(res, 4, "Extract products from policy documents", async () => {
+        return determinePolicyProducts(departmentName, policies);
+      });
+
+      await runStep(res, 5, "Generate and save product images", async () => {
+        productRuns = logoRuns.flatMap((logo) =>
+          policyProducts.map((product) => ({
+            ...product,
+            logo,
+            logoDescription: logo.logoDescription,
+            logoFilenameBase: logo.filenameBase,
+            slug: `${logo.slug || "department-logo"}-${slug(product.productLabel || product.productType || "product")}`,
+            title: `${departmentName} - ${product.productLabel} - ${logo.filenameBase}`
+          }))
+        );
+
+        for (const item of productRuns) {
+          item.mockupBuffer = await generateMockup({
+            productPrompt: item.productPrompt,
+            logoDescription: item.logoDescription,
+            productionNotes: item.productionNotes
+          });
           item.mockupDataUrl = `data:image/png;base64,${item.mockupBuffer.toString("base64")}`;
           item.productImageDriveFile = await uploadGeneratedImage(
-            `${item.slug || "department-logo"}-product-image.png`,
+            `${item.slug || "department-product"}-product-image.png`,
             item.mockupBuffer,
             folders.productImages.id
           );
         }
       });
 
-      await runStep(res, 5, "Generate product descriptions and manual", async () => {
-        for (const item of logoRuns) {
-          item.descriptionHtml = await generateProductDescription(departmentName);
+      await runStep(res, 6, "Generate product descriptions and manual", async () => {
+        for (const item of productRuns) {
+          item.descriptionHtml = await generateProductDescription(departmentName, item);
         }
-        const instructions = await extractPolicyInstructions(departmentName, policies, logoRuns);
-        const manualHtml = buildManualHtml(departmentName, logoRuns, instructions);
+        const instructions = await extractPolicyInstructions(departmentName, policies, productRuns);
+        const manualHtml = buildManualHtml(departmentName, productRuns, instructions);
         const manual = await uploadHtmlDocument(`${departmentName} Manual`, manualHtml, folders.root.id);
-        logoRuns.manual = manual;
+        for (const item of productRuns) {
+          item.manual = manual;
+        }
       });
 
-      const collection = await runStep(res, 6, "Create Shopify collection", async () => {
+      const collection = await runStep(res, 7, "Create Shopify collection", async () => {
         return ensureManualCollection(departmentName);
       });
 
-      await runStep(res, 7, "Create Shopify products", async () => {
-        for (const item of logoRuns) {
+      await runStep(res, 8, "Create Shopify products", async () => {
+        for (const item of productRuns) {
           const product = await createProduct({
-            title: `${departmentName} - ${item.filenameBase}`,
+            title: item.title,
             bodyHtml: item.descriptionHtml,
             price: "60.00"
           });
@@ -331,17 +361,17 @@ app.post(
         }
       });
 
-      await runStep(res, 8, "Add products to collection", async () => {
-        for (const item of logoRuns) {
+      await runStep(res, 9, "Add products to collection", async () => {
+        for (const item of productRuns) {
           await addProductToCollection(item.product.id, collection.id);
         }
       });
 
       const summary = {
         driveFolderUrl: folders.url,
-        manualUrl: logoRuns[0]?.manual?.webViewLink || null,
+        manualUrl: productRuns[0]?.manual?.webViewLink || null,
         shopifyCollectionUrl: adminCollectionUrl(collection.id),
-        products: logoRuns.map((item) => ({
+        products: productRuns.map((item) => ({
           title: item.product.title,
           id: String(item.product.id),
           url: adminProductUrl(item.product.id),
@@ -352,7 +382,7 @@ app.post(
       };
 
       sendEvent(res, "summary", summary);
-      sendEvent(res, "status", { step: 9, state: "complete", message: "Step 9 complete: final summary ready" });
+      sendEvent(res, "status", { step: 10, state: "complete", message: "Step 10 complete: final summary ready" });
       res.end();
     } catch (error) {
       sendEvent(res, "error", {
