@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FN Onboarding Setup</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="setup-shell">
+      <section class="panel setup-panel">
+        <p class="eyebrow">First-run setup</p>
+        <h1>FN Onboarding</h1>
+        <p class="muted">Connect Shopify and Google Drive once. When both tokens are saved, this page will send you to the onboarding tool.</p>
+        <div class="setup-actions">
+          <a class="button" href="/auth/shopify">Connect Shopify</a>
+          <a class="button secondary" href="/auth/google">Connect Google Drive</a>
+        </div>
+        <div class="status-grid">
+          <div class="status-pill" id="shopifyStatus">Shopify: checking</div>
+          <div class="status-pill" id="googleStatus">Google Drive: checking</div>
+        </div>
+      </section>
+    </main>
+    <script>
+      async function refreshStatus() {
+        const res = await fetch("/health");
+        const status = await res.json();
+        document.getElementById("shopifyStatus").textContent = `Shopify: ${status.shopifyConnected ? "connected" : "not connected"}`;
+        document.getElementById("googleStatus").textContent = `Google Drive: ${status.googleConnected ? "connected" : "not connected"}`;
+        if (status.shopifyConnected && status.googleConnected) window.location.href = "/";
+      }
+      refreshStatus();
+      setInterval(refreshStatus, 2500);
+    </script>
+  </body>
+</html>

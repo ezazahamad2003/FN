@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FN Onboarding</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Internal tool</p>
+          <h1>FN Onboarding</h1>
+        </div>
+        <a class="button ghost" href="/setup">Auth Setup</a>
+      </header>
+
+      <section class="workspace">
+        <form id="onboardForm" class="panel form-panel">
+          <label>
+            <span>Department Name</span>
+            <input name="departmentName" type="text" placeholder="Sacramento Fire Department" required>
+          </label>
+          <label>
+            <span>Logo files</span>
+            <input name="logos" type="file" accept="image/*" multiple required>
+          </label>
+          <label>
+            <span>Policy documents</span>
+            <input name="policies" type="file" accept="application/pdf" multiple>
+          </label>
+          <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
+          <button class="button" type="submit" id="runButton">Run Onboarding</button>
+        </form>
+
+        <section class="panel log-panel">
+          <div class="panel-heading">
+            <h2>Status Log</h2>
+            <button class="icon-button" id="clearLog" type="button" title="Clear log">Clear</button>
+          </div>
+          <ol id="log" class="log"></ol>
+        </section>
+      </section>
+
+      <section id="summary" class="summary" hidden></section>
+    </main>
+    <script src="/main.js"></script>
+  </body>
+</html>
