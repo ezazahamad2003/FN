@@ -132,7 +132,8 @@ h2 {
 }
 
 .muted,
-.hero-copy {
+.hero-copy,
+.tool-note {
   color: var(--muted);
   line-height: 1.55;
 }
@@ -156,6 +157,18 @@ h2 {
   max-width: 680px;
   margin: 14px 0 0;
   font-size: 1rem;
+}
+
+.tool-note {
+  max-width: 780px;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.compact-note {
+  max-width: 100%;
+  margin-top: 10px;
+  font-size: 0.82rem;
 }
 
 .workflow-strip {
