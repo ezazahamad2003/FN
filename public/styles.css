@@ -206,6 +206,55 @@ h2 {
   align-items: start;
 }
 
+.auth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.auth-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(21, 26, 32, 0.9);
+  padding: 16px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.22);
+}
+
+.auth-card h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+}
+
+.auth-card.connected {
+  border-color: rgba(69, 208, 143, 0.32);
+}
+
+.auth-card.missing,
+.auth-card.checking {
+  border-color: rgba(242, 184, 75, 0.32);
+}
+
+.auth-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--gold);
+  box-shadow: 0 0 0 4px rgba(242, 184, 75, 0.12);
+}
+
+.auth-card.connected .auth-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px rgba(69, 208, 143, 0.12);
+}
+
 .panel {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 8px;
@@ -488,6 +537,7 @@ button:disabled {
 @media (max-width: 860px) {
   .topbar,
   .hero-band,
+  .auth-grid,
   .workspace {
     display: grid;
     grid-template-columns: 1fr;
@@ -499,9 +549,15 @@ button:disabled {
   }
 
   .connection-card,
+  .auth-card,
   .button,
   button {
     width: 100%;
+  }
+
+  .auth-card {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .hero-band {

@@ -9,6 +9,8 @@ const logoInput = document.getElementById("logos");
 const policyInput = document.getElementById("policies");
 const logoCount = document.getElementById("logoCount");
 const policyCount = document.getElementById("policyCount");
+const shopifyAuthCard = document.getElementById("shopifyAuthCard");
+const googleAuthCard = document.getElementById("googleAuthCard");
 
 function addLog(message, state = "") {
   const empty = log.querySelector(".empty-log");
@@ -77,10 +79,28 @@ async function refreshConnectionState() {
     const ready = status.shopifyConnected && status.googleConnected;
     connectionState.className = `connection-card ${ready ? "ready" : "attention"}`;
     connectionState.innerHTML = `<span class="pulse"></span><span>${ready ? "Services connected" : "Auth needs attention"}</span>`;
+    renderAuthCard(shopifyAuthCard, "Shopify", status.shopifyConnected);
+    renderAuthCard(googleAuthCard, "Google Drive", status.googleConnected);
   } catch (error) {
     connectionState.className = "connection-card attention";
     connectionState.innerHTML = '<span class="pulse"></span><span>Status unavailable</span>';
+    renderAuthCard(shopifyAuthCard, "Shopify", false, "Status unavailable");
+    renderAuthCard(googleAuthCard, "Google Drive", false, "Status unavailable");
   }
+}
+
+function renderAuthCard(card, label, connected, fallbackText) {
+  if (!card) return;
+  card.className = `auth-card ${connected ? "connected" : "missing"}`;
+  const statusText = fallbackText || (connected ? "Connected and ready" : "Not connected");
+  const action = connected ? "Review" : "Connect";
+  card.innerHTML = `
+    <div>
+      <p class="eyebrow">${label}</p>
+      <h2><span class="auth-dot"></span>${statusText}</h2>
+    </div>
+    <a class="button ghost compact" href="/setup">${action}</a>
+  `;
 }
 
 function parseSseChunk(buffer, onEvent) {
