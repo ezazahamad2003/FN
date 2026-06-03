@@ -45,6 +45,7 @@ function renderSummary(data) {
       </div>
       <div class="summary-actions">
         <a class="button" href="${data.driveFolderUrl}" target="_blank" rel="noreferrer">Drive Folder</a>
+        ${data.manualUrl ? `<a class="button secondary" href="${data.manualUrl}" target="_blank" rel="noreferrer">Manual Doc</a>` : ""}
         <a class="button secondary" href="${data.shopifyCollectionUrl}" target="_blank" rel="noreferrer">Shopify Collection</a>
       </div>
       <div class="product-grid">

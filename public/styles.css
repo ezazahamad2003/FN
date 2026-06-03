@@ -315,7 +315,21 @@ input[type="text"] {
   outline: none;
 }
 
-input[type="text"]:focus {
+textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0d1116;
+  color: var(--text);
+  padding: 14px;
+  font: inherit;
+  outline: none;
+}
+
+input[type="text"]:focus,
+textarea:focus {
   border-color: rgba(230, 63, 53, 0.85);
   box-shadow: 0 0 0 4px rgba(230, 63, 53, 0.16);
 }
@@ -532,6 +546,79 @@ button:disabled {
   margin: 0;
   font-size: 1rem;
   line-height: 1.35;
+}
+
+.issues-workspace {
+  grid-template-columns: minmax(300px, 430px) 1fr;
+}
+
+.issues-list {
+  display: grid;
+  gap: 12px;
+}
+
+.empty-issues {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--subtle);
+  padding: 28px;
+  text-align: center;
+}
+
+.issue-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10151b;
+  padding: 14px;
+}
+
+.issue-main {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.complete-button {
+  width: 38px;
+  min-height: 38px;
+  border: 1px solid rgba(69, 208, 143, 0.35);
+  border-radius: 999px;
+  background: rgba(69, 208, 143, 0.12);
+  color: var(--ok);
+  padding: 0;
+}
+
+.issue-card h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.issue-card p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.issue-card span {
+  color: var(--subtle);
+  font-size: 0.82rem;
+}
+
+.issue-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.issue-images img {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  object-fit: cover;
 }
 
 @media (max-width: 860px) {

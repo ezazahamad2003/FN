@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FN Onboarding Issues</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark">FN</div>
+          <div>
+            <p class="eyebrow">Internal feedback</p>
+            <h1>Issues</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a class="button ghost compact" href="/">Onboarding</a>
+        </div>
+      </header>
+
+      <section class="workspace issues-workspace">
+        <form id="issueForm" class="panel form-panel">
+          <div class="panel-heading stacked">
+            <p class="eyebrow">New issue</p>
+            <h2>Add a note</h2>
+          </div>
+          <div class="field-group">
+            <label for="issueTitle">Title</label>
+            <input id="issueTitle" name="title" type="text" placeholder="Mockup needs review" required>
+          </div>
+          <div class="field-group">
+            <label for="issueDetails">Details</label>
+            <textarea id="issueDetails" name="details" placeholder="What happened? What should be fixed?"></textarea>
+          </div>
+          <div class="field-group">
+            <label for="issueImages">Images</label>
+            <div class="file-control">
+              <input id="issueImages" name="images" type="file" accept="image/*" multiple>
+              <span class="file-label">Attach screenshots or photos</span>
+              <span class="file-count" id="issueImageCount">No images selected</span>
+            </div>
+          </div>
+          <button class="button primary full" type="submit">Add Issue</button>
+        </form>
+
+        <section class="panel log-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Open items</p>
+              <h2>Issue List</h2>
+            </div>
+          </div>
+          <div id="issuesList" class="issues-list"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/issues.js"></script>
+  </body>
+</html>

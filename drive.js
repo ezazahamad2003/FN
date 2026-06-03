@@ -73,12 +73,12 @@ async function createDepartmentFolders(departmentName, strategy = "fail") {
       ? existing
       : await createFolder(departmentName, parentId);
   const logos = await ensureSubfolder("Logos", root.id);
-  const policies = await ensureSubfolder("Policies", root.id);
+  const productImages = await ensureSubfolder("Product Images", root.id);
 
   return {
     root,
     logos,
-    policies,
+    productImages,
     url: `https://drive.google.com/drive/folders/${root.id}`
   };
 }
@@ -99,7 +99,37 @@ async function uploadBuffer(file, folderId) {
   return res.data;
 }
 
+async function uploadGeneratedImage(filename, buffer, folderId) {
+  return uploadBuffer(
+    {
+      originalname: filename,
+      mimetype: "image/png",
+      buffer
+    },
+    folderId
+  );
+}
+
+async function uploadHtmlDocument(name, html, folderId) {
+  const drive = driveClient();
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.document",
+      parents: [folderId]
+    },
+    media: {
+      mimeType: "text/html",
+      body: Readable.from(Buffer.from(html, "utf8"))
+    },
+    fields: "id,name,mimeType,webViewLink"
+  });
+  return res.data;
+}
+
 module.exports = {
   createDepartmentFolders,
+  uploadGeneratedImage,
+  uploadHtmlDocument,
   uploadBuffer
 };

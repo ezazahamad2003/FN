@@ -73,8 +73,68 @@ async function generateProductDescription(departmentName) {
   return text.startsWith("<p>") ? text : `<p>${text.replace(/^"|"$/g, "")}</p>`;
 }
 
+function extractReadableText(file) {
+  const textTypes = [
+    "text/",
+    "application/json",
+    "application/xml",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument"
+  ];
+  const canRead = textTypes.some((type) => file.mimetype.startsWith(type) || file.mimetype.includes(type));
+  const raw = file.buffer.toString("utf8");
+  const cleaned = raw
+    .replace(/[^\x09\x0a\x0d\x20-\x7e]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (canRead || cleaned.length > 200) return cleaned.slice(0, 12000);
+  return "";
+}
+
+async function extractPolicyInstructions(departmentName, policies, productItems) {
+  const policyText = policies
+    .map((file) => `File: ${file.originalname}\n${extractReadableText(file) || "No readable text extracted from this file."}`)
+    .join("\n\n");
+  const productContext = productItems
+    .map((item) => `${item.filenameBase}: ${item.logoDescription}`)
+    .join("\n\n");
+
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "user",
+        content: `You are preparing an internal production manual for ${departmentName} gear onboarding.
+
+Use the policy document text when readable. If a file has no readable text, say the instruction is based on available onboarding context and should be verified against the uploaded policy file.
+
+For each product/logo below, write concise production instructions covering placement, approval considerations, restrictions, and any policy-specific notes. Return JSON only as an array of objects with keys "title" and "instructions".
+
+Products:
+${productContext}
+
+Policy document text:
+${policyText || "No policy files were uploaded."}`
+      }
+    ],
+    max_tokens: 1200
+  });
+  const text = response.choices[0]?.message?.content?.trim() || "[]";
+  try {
+    const parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, ""));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return productItems.map((item) => ({
+      title: item.filenameBase,
+      instructions: text
+    }));
+  }
+}
+
 module.exports = {
   analyzeLogo,
+  extractPolicyInstructions,
   generateMockup,
   generateProductDescription
 };
