@@ -26,7 +26,7 @@
           <div class="panel-heading stacked">
             <p class="eyebrow">New issue</p>
             <h2>Add a note</h2>
-            <p class="tool-note compact-note">Track internal app or onboarding problems here. Add a title, details, and optional images; click the check button when the issue is complete.</p>
+            <p class="tool-note compact-note">Track internal app or onboarding problems here. Add a title, details, and optional images. Issues stay on the list until someone ticks the checkbox and confirms it's done.</p>
           </div>
           <div class="field-group">
             <label for="issueTitle">Title</label>
@@ -58,6 +58,18 @@
         </section>
       </section>
     </main>
+
+    <div id="confirmOverlay" class="confirm-overlay" hidden>
+      <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <h2 id="confirmTitle">Mark issue as done?</h2>
+        <p id="confirmMessage">This issue will be removed from the list. This can't be undone.</p>
+        <div class="confirm-actions">
+          <button type="button" class="button ghost compact" id="confirmCancel">Cancel</button>
+          <button type="button" class="button primary compact" id="confirmDone">Yes, it's done</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/issues.js"></script>
   </body>
 </html>
