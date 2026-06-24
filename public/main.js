@@ -27,26 +27,27 @@ function addLog(message, state = "") {
 }
 
 function iconFor(state) {
-  if (state === "complete") return "\u2705";
-  if (state === "running") return "\u23f3";
-  if (state === "failed") return "\u274c";
-  return "\u2022";
+  if (state === "complete") return "Done";
+  if (state === "running") return "Run";
+  if (state === "failed") return "Fail";
+  return "Info";
 }
 
 function renderSummary(data) {
+  const productCount = data.products.length;
   summary.hidden = false;
   summary.innerHTML = `
-    <section class="panel form-panel summary-panel">
-      <div class="panel-heading">
+    <section class="panel summary-panel">
+      <div class="summary-head">
         <div>
           <p class="eyebrow">Complete</p>
-          <h2>Final Summary</h2>
+          <h2>${productCount} ${productCount === 1 ? "Product" : "Products"} Created</h2>
         </div>
-      </div>
-      <div class="summary-actions">
-        <a class="button" href="${data.driveFolderUrl}" target="_blank" rel="noreferrer">Drive Folder</a>
-        ${data.manualUrl ? `<a class="button secondary" href="${data.manualUrl}" target="_blank" rel="noreferrer">Manual Doc</a>` : ""}
-        <a class="button secondary" href="${data.shopifyCollectionUrl}" target="_blank" rel="noreferrer">Shopify Collection</a>
+        <div class="summary-actions">
+          <a class="button" href="${data.driveFolderUrl}" target="_blank" rel="noreferrer">Drive Folder</a>
+          ${data.manualUrl ? `<a class="button secondary" href="${data.manualUrl}" target="_blank" rel="noreferrer">Manual Doc</a>` : ""}
+          <a class="button secondary" href="${data.shopifyCollectionUrl}" target="_blank" rel="noreferrer">Shopify Collection</a>
+        </div>
       </div>
       <div class="product-grid">
         ${data.products
@@ -56,7 +57,10 @@ function renderSummary(data) {
                 <img src="${product.thumbnail}" alt="${product.title}">
                 <div>
                   <h3>${product.title}</h3>
-                  <a class="button ghost" href="${product.url}" target="_blank" rel="noreferrer">Open Product</a>
+                  <div class="product-actions">
+                    <a class="button ghost compact" href="${product.url}" target="_blank" rel="noreferrer">Open Product</a>
+                    ${product.driveImageUrl ? `<a class="button ghost compact" href="${product.driveImageUrl}" target="_blank" rel="noreferrer">Drive Image</a>` : ""}
+                  </div>
                 </div>
               </article>
             `
@@ -66,10 +70,10 @@ function renderSummary(data) {
     </section>
   `;
 }
-
 function updateFileCount(input, output, singular, plural) {
   const count = input.files.length;
   output.textContent = count === 0 ? `No ${plural} selected` : `${count} ${count === 1 ? singular : plural} selected`;
+  input.closest(".file-control")?.classList.toggle("has-files", count > 0);
 }
 
 async function refreshConnectionState() {
@@ -79,7 +83,7 @@ async function refreshConnectionState() {
     const status = await res.json();
     const ready = status.shopifyConnected && status.googleConnected;
     connectionState.className = `connection-card ${ready ? "ready" : "attention"}`;
-    connectionState.innerHTML = `<span class="pulse"></span><span>${ready ? "Services connected" : "Auth needs attention"}</span>`;
+    connectionState.innerHTML = `<span class="pulse"></span><span>${ready ? "Ready" : "Needs auth"}</span>`;
     renderAuthCard(shopifyAuthCard, "Shopify", status.shopifyConnected);
     renderAuthCard(googleAuthCard, "Google Drive", status.googleConnected);
   } catch (error) {
@@ -98,7 +102,7 @@ function renderAuthCard(card, label, connected, fallbackText) {
   if (!card) return;
   const service = serviceKey(label);
   card.className = `auth-card ${connected ? "connected" : "missing"}`;
-  const statusText = fallbackText || (connected ? "Connected and ready" : "Not connected");
+  const statusText = fallbackText || (connected ? "Connected" : "Not connected");
   const action = connected
     ? `<button class="button ghost compact disconnect-service" type="button" data-service="${service}">Disconnect</button>`
     : `<a class="button ghost compact" href="/auth/${service}">Connect</a>`;
@@ -132,7 +136,7 @@ async function submitOnboarding() {
 
   if (res.status === 409) {
     const payload = await res.json();
-    addLog(`\u274c Step ${payload.step} failed: ${payload.error}`, "failed");
+    addLog(`Fail Step ${payload.step} failed: ${payload.error}`, "failed");
     const overwrite = window.confirm("A Drive folder for this department already exists. Press OK to overwrite it, or Cancel to skip folder creation and use it.");
     conflictStrategy.value = overwrite ? "overwrite" : "skip";
     addLog(`Retrying with ${conflictStrategy.value}.`, "running");
@@ -141,7 +145,7 @@ async function submitOnboarding() {
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({ error: "Onboarding failed." }));
-    addLog(`\u274c Step ${payload.step || 0} failed: ${payload.error}`, "failed");
+    addLog(`Fail Step ${payload.step || 0} failed: ${payload.error}`, "failed");
     return;
   }
 
@@ -158,7 +162,7 @@ async function submitOnboarding() {
         addLog(`${iconFor(payload.state)} ${payload.message}`, payload.state);
       }
       if (event === "error") {
-        addLog(`\u274c Step ${payload.step} failed: ${payload.error}`, "failed");
+        addLog(`Fail Step ${payload.step} failed: ${payload.error}`, "failed");
       }
       if (event === "summary") {
         renderSummary(payload);
@@ -178,7 +182,7 @@ form.addEventListener("submit", async (event) => {
   try {
     await submitOnboarding();
   } catch (error) {
-    addLog(`\u274c ${error.message}`, "failed");
+    addLog(`Fail ${error.message}`, "failed");
   } finally {
     runButton.disabled = false;
     runButton.textContent = "Run Onboarding";

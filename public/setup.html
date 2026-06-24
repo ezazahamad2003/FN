@@ -8,15 +8,17 @@
   </head>
   <body>
     <main class="setup-shell">
-      <section class="panel setup-panel">
+      <section class="setup-panel">
         <div class="brand-lockup setup-brand">
           <div class="brand-mark">FN</div>
           <div>
-            <p class="eyebrow">Secure setup</p>
-            <h1>FN Onboarding</h1>
+            <p class="eyebrow">Account access</p>
+            <h1>Connections</h1>
           </div>
         </div>
-        <p class="muted">Connect, disconnect, or switch the Shopify and Google Drive accounts used by onboarding.</p>
+        <div class="setup-copy">
+          <h2>Manage the accounts used for onboarding runs.</h2>
+        </div>
         <div class="setup-service-list" id="setupServices">
           <article class="auth-card checking">
             <div>
@@ -47,7 +49,7 @@
         const statusText = connected ? "Connected and ready" : "Not connected";
         const action = connected
           ? '<button class="button ghost compact disconnect-service" type="button" data-service="' + service.key + '">Disconnect</button>'
-          : '<a class="button ghost compact" href="/auth/' + service.key + '">Connect</a>';
+          : '<a class="button compact" href="/auth/' + service.key + '">Connect</a>';
         return '<article class="auth-card ' + (connected ? "connected" : "missing") + '">' +
           '<div><p class="eyebrow">' + service.label + '</p>' +
           '<h2><span class="auth-dot"></span>' + statusText + '</h2></div>' +

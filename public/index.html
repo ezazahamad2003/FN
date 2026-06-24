@@ -9,31 +9,32 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div class="brand-lockup">
+        <a class="brand-lockup" href="/" aria-label="FN Onboarding home">
           <div class="brand-mark">FN</div>
           <div>
-            <p class="eyebrow">Fire department gear operations</p>
-            <h1>FN Onboarding</h1>
+            <p class="eyebrow">Operations console</p>
+            <h1>Onboarding</h1>
           </div>
-        </div>
-        <div class="topbar-actions">
+        </a>
+        <nav class="topbar-actions" aria-label="Primary navigation">
           <div class="connection-card" id="connectionState">
             <span class="pulse"></span>
             <span>Checking services</span>
           </div>
           <a class="button ghost compact" href="/issues">Issues</a>
-          <a class="button ghost compact" href="/setup">Auth Setup</a>
-        </div>
+          <a class="button ghost compact" href="/setup">Connections</a>
+        </nav>
       </header>
 
-      <section class="hero-band">
+      <section class="page-intro">
         <div>
-          <p class="eyebrow">How it works</p>
-          <p class="tool-note">Upload a department name, logos, and policy documents. FN creates the Drive folder, stores source files, generates product images and a manual, then creates the Shopify collection and products.</p>
+          <p class="eyebrow">New department package</p>
+          <h2>Build Drive assets, product mockups, and Shopify listings from one intake.</h2>
         </div>
         <div class="workflow-strip" aria-label="Onboarding workflow">
           <span>Drive</span>
-          <span>AI mockups</span>
+          <span>Mockups</span>
+          <span>Manual</span>
           <span>Shopify</span>
         </div>
       </section>
@@ -42,14 +43,14 @@
         <article class="auth-card checking" id="shopifyAuthCard">
           <div>
             <p class="eyebrow">Shopify</p>
-            <h2>Checking connection</h2>
+            <h2><span class="auth-dot"></span>Checking connection</h2>
           </div>
           <a class="button ghost compact" href="/setup">Setup</a>
         </article>
         <article class="auth-card checking" id="googleAuthCard">
           <div>
             <p class="eyebrow">Google Drive</p>
-            <h2>Checking connection</h2>
+            <h2><span class="auth-dot"></span>Checking connection</h2>
           </div>
           <a class="button ghost compact" href="/setup">Setup</a>
         </article>
@@ -58,15 +59,15 @@
       <section class="workspace">
         <form id="onboardForm" class="panel form-panel">
           <div class="panel-heading stacked">
-            <p class="eyebrow">New department</p>
-            <h2>Onboarding package</h2>
+            <p class="eyebrow">Intake</p>
+            <h2>Department Package</h2>
           </div>
           <div class="field-group">
             <label for="departmentName">Department Name</label>
-            <input id="departmentName" name="departmentName" type="text" placeholder="Sacramento Fire Department" required>
+            <input id="departmentName" name="departmentName" type="text" placeholder="Sacramento Fire Department" autocomplete="organization" required>
           </div>
           <div class="field-group">
-            <label for="logos">Logo files</label>
+            <label for="logos">Logo Files</label>
             <div class="file-control">
               <input id="logos" name="logos" type="file" accept="image/*" multiple required>
               <span class="file-label">Choose logo images</span>
@@ -74,7 +75,7 @@
             </div>
           </div>
           <div class="field-group">
-            <label for="policies">Policy documents</label>
+            <label for="policies">Policy Documents</label>
             <div class="file-control">
               <input id="policies" name="policies" type="file" accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple>
               <span class="file-label">Choose policy docs</span>
@@ -82,7 +83,7 @@
             </div>
           </div>
           <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
-          <button class="button primary full" type="submit" id="runButton">Run Onboarding</button>
+          <button class="button primary full run-button" type="submit" id="runButton">Run Onboarding</button>
         </form>
 
         <section class="panel log-panel">

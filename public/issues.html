@@ -9,24 +9,31 @@
   <body>
     <main class="app-shell">
       <header class="topbar">
-        <div class="brand-lockup">
+        <a class="brand-lockup" href="/" aria-label="FN Onboarding home">
           <div class="brand-mark">FN</div>
           <div>
             <p class="eyebrow">Internal feedback</p>
             <h1>Issues</h1>
           </div>
-        </div>
-        <div class="topbar-actions">
+        </a>
+        <nav class="topbar-actions" aria-label="Primary navigation">
           <a class="button ghost compact" href="/">Onboarding</a>
-        </div>
+          <a class="button ghost compact" href="/setup">Connections</a>
+        </nav>
       </header>
+
+      <section class="page-intro compact-intro">
+        <div>
+          <p class="eyebrow">Open work</p>
+          <h2>Capture app and onboarding issues while the run context is still fresh.</h2>
+        </div>
+      </section>
 
       <section class="workspace issues-workspace">
         <form id="issueForm" class="panel form-panel">
           <div class="panel-heading stacked">
             <p class="eyebrow">New issue</p>
-            <h2>Add a note</h2>
-            <p class="tool-note compact-note">Track internal app or onboarding problems here. Add a title, details, and optional images. Issues stay on the list until someone ticks the checkbox and confirms it's done.</p>
+            <h2>Add Note</h2>
           </div>
           <div class="field-group">
             <label for="issueTitle">Title</label>
@@ -50,7 +57,7 @@
         <section class="panel log-panel">
           <div class="panel-heading">
             <div>
-              <p class="eyebrow">Open items</p>
+              <p class="eyebrow">Queue</p>
               <h2>Issue List</h2>
             </div>
           </div>
