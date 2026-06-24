@@ -28,11 +28,15 @@ const {
   adminProductUrl,
   createProduct,
   ensureManualCollection,
+  shopifyConnected,
+  startTokenAutoRefresh,
   uploadProductImage
 } = require("./shopify");
 
 ensureEnvDefaults();
 dotenv.config();
+// Internal-app mode: auto-mint and refresh the Shopify token from client credentials.
+startTokenAutoRefresh();
 
 const app = express();
 const DATA_DIR = path.join(__dirname, "data");
@@ -168,7 +172,7 @@ function resolveProductLogos(product, logoRuns) {
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
-    shopifyConnected: Boolean(process.env.SHOPIFY_ACCESS_TOKEN),
+    shopifyConnected: shopifyConnected(),
     shopifyStore: process.env.SHOPIFY_STORE || "",
     googleConnected: Boolean(process.env.GOOGLE_REFRESH_TOKEN)
   });
@@ -285,7 +289,7 @@ app.post(
     if (!logos.length) {
       return res.status(400).json({ step: 0, error: "Upload at least one logo image." });
     }
-    if (!process.env.SHOPIFY_ACCESS_TOKEN || !process.env.GOOGLE_REFRESH_TOKEN) {
+    if (!shopifyConnected() || !process.env.GOOGLE_REFRESH_TOKEN) {
       return res.status(401).json({ step: 0, error: "Connect Shopify and Google Drive before onboarding." });
     }
 

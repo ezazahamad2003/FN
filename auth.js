@@ -63,8 +63,17 @@ function ensureEnvDefaults() {
   }
   Object.assign(process.env, next);
 }
+function shopifyConfigured() {
+  // Connected either via a static/OAuth token, or via client credentials that
+  // the app can exchange for a fresh token on demand (internal-app mode).
+  return Boolean(
+    process.env.SHOPIFY_ACCESS_TOKEN ||
+      (process.env.SHOPIFY_CLIENT_ID && process.env.SHOPIFY_CLIENT_SECRET && process.env.SHOPIFY_STORE)
+  );
+}
+
 function hasRequiredTokens() {
-  return Boolean(process.env.SHOPIFY_ACCESS_TOKEN && process.env.GOOGLE_REFRESH_TOKEN);
+  return Boolean(shopifyConfigured() && process.env.GOOGLE_REFRESH_TOKEN);
 }
 
 function disconnectShopify() {
