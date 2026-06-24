@@ -268,6 +268,22 @@ h2 {
   box-shadow: 0 0 0 4px rgba(69, 208, 143, 0.12);
 }
 
+.auth-actions,
+.setup-service-list {
+  display: flex;
+  gap: 10px;
+}
+
+.auth-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.setup-service-list {
+  flex-direction: column;
+  margin-top: 18px;
+}
+
 .panel {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 8px;
@@ -714,6 +730,10 @@ button:disabled {
   .auth-card {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .auth-actions {
+    justify-content: stretch;
   }
 
   .hero-band {

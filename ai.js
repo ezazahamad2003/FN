@@ -142,21 +142,56 @@ function parseJsonArray(text) {
   return Array.isArray(parsed) ? parsed : [];
 }
 
-async function determinePolicyProducts(departmentName, policies) {
+function defaultPolicyProducts() {
+  return [
+    {
+      productType: "shirt",
+      productLabel: "Black heavyweight t-shirt",
+      productPrompt: "a black heavyweight t-shirt laid flat",
+      productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents.",
+      logoSlugs: ["all"]
+    }
+  ];
+}
+
+function normalizePolicyProducts(items) {
+  return items
+    .filter((item) => item.productLabel && item.productPrompt)
+    .map((item) => {
+      const logoSlugs = Array.isArray(item.logoSlugs)
+        ? item.logoSlugs
+        : item.logoSlug
+          ? [item.logoSlug]
+          : ["all"];
+
+      return {
+        productType: item.productType || "product",
+        productLabel: item.productLabel,
+        productPrompt: item.productPrompt,
+        productionNotes: item.productionNotes || "Verify exact garment requirements against the uploaded policy documents.",
+        logoSlugs: logoSlugs.map((slug) => String(slug).trim()).filter(Boolean),
+        assignmentNotes: item.assignmentNotes || ""
+      };
+    });
+}
+
+async function determinePolicyProducts(departmentName, policies, logos = []) {
   const policyText = policies
     .map((file) => `File: ${file.originalname}\n${extractReadableText(file) || "No readable text extracted from this file."}`)
     .join("\n\n");
 
   if (!policyText.trim()) {
-    return [
-      {
-        productType: "shirt",
-        productLabel: "Black heavyweight t-shirt",
-        productPrompt: "a black heavyweight t-shirt laid flat",
-        productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents."
-      }
-    ];
+    return defaultPolicyProducts();
   }
+
+  const logoCatalog = logos
+    .map(
+      (logo) => `- slug: ${logo.slug}
+  filename: ${logo.originalName || logo.filenameBase}
+  label: ${logo.filenameBase}
+  visual description: ${logo.logoDescription || "No visual description available."}`
+    )
+    .join("\n");
 
   const openai = client();
   const response = await openai.chat.completions.create({
@@ -164,47 +199,38 @@ async function determinePolicyProducts(departmentName, policies) {
     messages: [
       {
         role: "user",
-        content: `Extract the apparel/products that should be generated for ${departmentName} from these onboarding policy documents.
+        content: `Extract the exact apparel/products that should be generated for ${departmentName} from these onboarding policy documents.
 
-Look specifically for shirts, hats, pants, hoodies, jackets, or other gear. Include logo placement, garment color, allowed/required decoration notes, restrictions, and anything important for mockup generation.
+Use the uploaded logo catalog to decide which logo file belongs on each product. Do not create every logo/product combination unless the policy clearly says each uploaded logo should be used on that product.
+
+Look specifically for shirts, long sleeve shirts, hats, pants, hoodies, jackets, job shirts, polos, or other gear. Include logo placement, garment color, allowed/required decoration notes, restrictions, and anything important for mockup generation.
 
 Return JSON only as an array. Each object must have:
 - productType: short lowercase type such as "shirt", "hat", "pants"
 - productLabel: customer-facing product name
 - productPrompt: visual prompt phrase for image generation
 - productionNotes: concise instructions based on policy details
+- logoSlugs: array of exact logo slug values from the logo catalog that should be applied to this product. Use ["all"] only when the policy says all uploaded logos are valid for this product or the policy does not distinguish logos.
+- assignmentNotes: concise reason for why those logoSlugs apply
 
 If the documents do not clearly define products, return one default black heavyweight t-shirt item and say the policy should be verified.
+
+Uploaded logo catalog:
+${logoCatalog || "No logo catalog available. Use [\"all\"] for logoSlugs."}
 
 Policy text:
 ${policyText}`
       }
     ],
-    max_tokens: 1000
+    max_tokens: 1400
   });
 
   const text = response.choices[0]?.message?.content?.trim() || "[]";
   try {
-    const items = parseJsonArray(text).filter((item) => item.productLabel && item.productPrompt);
-    return items.length
-      ? items
-      : [
-          {
-            productType: "shirt",
-            productLabel: "Black heavyweight t-shirt",
-            productPrompt: "a black heavyweight t-shirt laid flat",
-            productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents."
-          }
-        ];
+    const items = normalizePolicyProducts(parseJsonArray(text));
+    return items.length ? items : defaultPolicyProducts();
   } catch (error) {
-    return [
-      {
-        productType: "shirt",
-        productLabel: "Black heavyweight t-shirt",
-        productPrompt: "a black heavyweight t-shirt laid flat",
-        productionNotes: "Default onboarding product. Verify exact garment requirements against the uploaded policy documents."
-      }
-    ];
+    return defaultPolicyProducts();
   }
 }
 

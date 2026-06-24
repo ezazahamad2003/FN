@@ -16,27 +16,73 @@
             <h1>FN Onboarding</h1>
           </div>
         </div>
-        <p class="muted">Connect Shopify and Google Drive once. When both tokens are saved, this page sends you straight to the onboarding console.</p>
-        <div class="setup-actions">
-          <a class="button" href="/auth/shopify">Connect Shopify</a>
-          <a class="button secondary" href="/auth/google">Connect Google Drive</a>
+        <p class="muted">Connect, disconnect, or switch the Shopify and Google Drive accounts used by onboarding.</p>
+        <div class="setup-service-list" id="setupServices">
+          <article class="auth-card checking">
+            <div>
+              <p class="eyebrow">Shopify</p>
+              <h2><span class="auth-dot"></span>Checking connection</h2>
+            </div>
+          </article>
+          <article class="auth-card checking">
+            <div>
+              <p class="eyebrow">Google Drive</p>
+              <h2><span class="auth-dot"></span>Checking connection</h2>
+            </div>
+          </article>
         </div>
-        <div class="status-grid">
-          <div class="status-pill" id="shopifyStatus">Shopify: checking</div>
-          <div class="status-pill" id="googleStatus">Google Drive: checking</div>
+        <div class="setup-actions">
+          <a class="button secondary" href="/">Back to Onboarding</a>
         </div>
       </section>
     </main>
     <script>
+      const services = [
+        { key: "shopify", label: "Shopify" },
+        { key: "google", label: "Google Drive" }
+      ];
+      const setupServices = document.getElementById("setupServices");
+
+      function renderService(service, connected) {
+        const statusText = connected ? "Connected and ready" : "Not connected";
+        const action = connected
+          ? '<button class="button ghost compact disconnect-service" type="button" data-service="' + service.key + '">Disconnect</button>'
+          : '<a class="button ghost compact" href="/auth/' + service.key + '">Connect</a>';
+        return '<article class="auth-card ' + (connected ? "connected" : "missing") + '">' +
+          '<div><p class="eyebrow">' + service.label + '</p>' +
+          '<h2><span class="auth-dot"></span>' + statusText + '</h2></div>' +
+          '<div class="auth-actions">' + action + '</div>' +
+        '</article>';
+      }
+
       async function refreshStatus() {
         const res = await fetch("/health");
         const status = await res.json();
-        document.getElementById("shopifyStatus").textContent = `Shopify: ${status.shopifyConnected ? "connected" : "not connected"}`;
-        document.getElementById("googleStatus").textContent = `Google Drive: ${status.googleConnected ? "connected" : "not connected"}`;
-        if (status.shopifyConnected && status.googleConnected) window.location.href = "/";
+        setupServices.innerHTML = services
+          .map((service) => renderService(service, service.key === "shopify" ? status.shopifyConnected : status.googleConnected))
+          .join("");
       }
+
+      document.addEventListener("click", async (event) => {
+        const button = event.target.closest(".disconnect-service");
+        if (!button) return;
+        const service = button.dataset.service;
+        const label = service === "shopify" ? "Shopify" : "Google Drive";
+        if (!window.confirm("Disconnect " + label + "? You can connect a different account after this.")) return;
+
+        button.disabled = true;
+        try {
+          const res = await fetch("/auth/" + service + "/disconnect", { method: "POST" });
+          if (!res.ok) throw new Error("Disconnect failed");
+          await refreshStatus();
+        } catch (error) {
+          alert("Could not disconnect " + label + ". Please try again.");
+        } finally {
+          button.disabled = false;
+        }
+      });
+
       refreshStatus();
-      setInterval(refreshStatus, 2500);
     </script>
   </body>
 </html>

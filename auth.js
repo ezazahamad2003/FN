@@ -54,6 +54,14 @@ function hasRequiredTokens() {
   return Boolean(process.env.SHOPIFY_ACCESS_TOKEN && process.env.GOOGLE_REFRESH_TOKEN);
 }
 
+function disconnectShopify() {
+  writeEnv({ SHOPIFY_ACCESS_TOKEN: "" });
+}
+
+function disconnectGoogle() {
+  writeEnv({ GOOGLE_REFRESH_TOKEN: "" });
+}
+
 function shopifyInstallUrl() {
   const state = crypto.randomBytes(16).toString("hex");
   const params = new URLSearchParams({
@@ -121,6 +129,8 @@ function openBrowser(url) {
 }
 
 module.exports = {
+  disconnectGoogle,
+  disconnectShopify,
   ensureEnvDefaults,
   exchangeGoogleCode,
   exchangeShopifyCode,

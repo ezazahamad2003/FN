@@ -90,20 +90,29 @@ async function refreshConnectionState() {
   }
 }
 
+function serviceKey(label) {
+  return label.toLowerCase().startsWith("shopify") ? "shopify" : "google";
+}
+
 function renderAuthCard(card, label, connected, fallbackText) {
   if (!card) return;
+  const service = serviceKey(label);
   card.className = `auth-card ${connected ? "connected" : "missing"}`;
   const statusText = fallbackText || (connected ? "Connected and ready" : "Not connected");
-  const action = connected ? "Review" : "Connect";
+  const action = connected
+    ? `<button class="button ghost compact disconnect-service" type="button" data-service="${service}">Disconnect</button>`
+    : `<a class="button ghost compact" href="/auth/${service}">Connect</a>`;
   card.innerHTML = `
     <div>
       <p class="eyebrow">${label}</p>
       <h2><span class="auth-dot"></span>${statusText}</h2>
     </div>
-    <a class="button ghost compact" href="/setup">${action}</a>
+    <div class="auth-actions">
+      ${connected ? '<a class="button ghost compact" href="/setup">Review</a>' : ""}
+      ${action}
+    </div>
   `;
 }
-
 function parseSseChunk(buffer, onEvent) {
   const events = buffer.split("\n\n");
   const remainder = events.pop() || "";
@@ -178,6 +187,25 @@ form.addEventListener("submit", async (event) => {
 
 clearLog.addEventListener("click", () => {
   log.innerHTML = '<li class="empty-log">Waiting for an onboarding run.</li>';
+});
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest(".disconnect-service");
+  if (!button) return;
+  const service = button.dataset.service;
+  const label = service === "shopify" ? "Shopify" : "Google Drive";
+  if (!window.confirm(`Disconnect ${label}? You can connect a different account after this.`)) return;
+
+  button.disabled = true;
+  try {
+    const res = await fetch(`/auth/${service}/disconnect`, { method: "POST" });
+    if (!res.ok) throw new Error("Disconnect failed");
+    await refreshConnectionState();
+  } catch (error) {
+    alert(`Could not disconnect ${label}. Please try again.`);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 logoInput.addEventListener("change", () => updateFileCount(logoInput, logoCount, "logo", "logos"));

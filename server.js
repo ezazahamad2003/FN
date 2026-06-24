@@ -4,6 +4,8 @@ const express = require("express");
 const multer = require("multer");
 const dotenv = require("dotenv");
 const {
+  disconnectGoogle,
+  disconnectShopify,
   ensureEnvDefaults,
   exchangeGoogleCode,
   exchangeShopifyCode,
@@ -144,6 +146,18 @@ function filesByField(files, field) {
   return (files || []).filter((file) => file.fieldname === field);
 }
 
+function resolveProductLogos(product, logoRuns) {
+  const requestedSlugs = Array.isArray(product.logoSlugs)
+    ? product.logoSlugs.map((value) => String(value).toLowerCase().trim()).filter(Boolean)
+    : [];
+
+  if (!requestedSlugs.length || requestedSlugs.includes("all")) return logoRuns;
+
+  const logosBySlug = new Map(logoRuns.map((logo) => [logo.slug.toLowerCase(), logo]));
+  const selected = requestedSlugs.map((logoSlug) => logosBySlug.get(logoSlug)).filter(Boolean);
+  return selected.length ? selected : logoRuns;
+}
+
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
@@ -153,7 +167,6 @@ app.get("/health", (req, res) => {
 });
 
 app.get("/setup", (req, res) => {
-  if (hasRequiredTokens()) return res.redirect("/");
   return res.sendFile(path.join(__dirname, "public", "setup.html"));
 });
 
@@ -169,6 +182,16 @@ app.get("/callback", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.post("/auth/shopify/disconnect", (req, res) => {
+  disconnectShopify();
+  res.json({ ok: true, service: "shopify", connected: false });
+});
+
+app.post("/auth/google/disconnect", (req, res) => {
+  disconnectGoogle();
+  res.json({ ok: true, service: "google", connected: false });
 });
 
 app.get("/auth/google", (req, res) => {
@@ -274,6 +297,7 @@ app.post(
 
     const logoRuns = logos.map((file) => ({
       file,
+      originalName: file.originalname,
       filenameBase: titleCase(file.originalname),
       slug: slug(file.originalname)
     }));
@@ -297,20 +321,30 @@ app.post(
         }
       });
 
-      const policyProducts = await runStep(res, 4, "Extract products from policy documents", async () => {
-        return determinePolicyProducts(departmentName, policies);
+      const policyProducts = await runStep(res, 4, "Extract products and logo assignments from policy documents", async () => {
+        return determinePolicyProducts(departmentName, policies, logoRuns);
       });
 
       await runStep(res, 5, "Generate and save product images", async () => {
-        productRuns = logoRuns.flatMap((logo) =>
-          policyProducts.map((product) => ({
-            ...product,
-            logo,
-            logoDescription: logo.logoDescription,
-            logoFilenameBase: logo.filenameBase,
-            slug: `${logo.slug || "department-logo"}-${slug(product.productLabel || product.productType || "product")}`,
-            title: `${departmentName} - ${product.productLabel} - ${logo.filenameBase}`
-          }))
+        productRuns = policyProducts.flatMap((product) =>
+          resolveProductLogos(product, logoRuns).map((logo) => {
+            const productionNotes = [
+              product.productionNotes,
+              product.assignmentNotes ? `Logo assignment: ${product.assignmentNotes}` : ""
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+            return {
+              ...product,
+              productionNotes,
+              logo,
+              logoDescription: logo.logoDescription,
+              logoFilenameBase: logo.filenameBase,
+              slug: `${logo.slug || "department-logo"}-${slug(product.productLabel || product.productType || "product")}`,
+              title: `${departmentName} - ${product.productLabel} - ${logo.filenameBase}`
+            };
+          })
         );
 
         for (const item of productRuns) {
