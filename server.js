@@ -170,8 +170,12 @@ app.get("/setup", (req, res) => {
   return res.sendFile(path.join(__dirname, "public", "setup.html"));
 });
 
-app.get("/auth/shopify", (req, res) => {
-  res.redirect(shopifyInstallUrl());
+app.get("/auth/shopify", (req, res, next) => {
+  try {
+    res.redirect(shopifyInstallUrl());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/callback", async (req, res, next) => {
@@ -194,8 +198,12 @@ app.post("/auth/google/disconnect", (req, res) => {
   res.json({ ok: true, service: "google", connected: false });
 });
 
-app.get("/auth/google", (req, res) => {
-  res.redirect(googleInstallUrl());
+app.get("/auth/google", (req, res, next) => {
+  try {
+    res.redirect(googleInstallUrl());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/google/callback", async (req, res, next) => {

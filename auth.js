@@ -31,25 +31,38 @@ function readEnvFile() {
   }, {});
 }
 
+const TOKEN_ENV_KEYS = ["SHOPIFY_ACCESS_TOKEN", "GOOGLE_REFRESH_TOKEN"];
+const ENV_KEYS = [...Object.keys(DEFAULT_ENV), ...TOKEN_ENV_KEYS];
+
+function valueFromEnvOrFile(key, fileEnv, updates = {}) {
+  if (Object.prototype.hasOwnProperty.call(updates, key)) return updates[key] || "";
+  return process.env[key] || fileEnv[key] || DEFAULT_ENV[key] || "";
+}
+
+function buildRuntimeEnv(fileEnv = readEnvFile(), updates = {}) {
+  return ENV_KEYS.reduce((acc, key) => {
+    acc[key] = valueFromEnvOrFile(key, fileEnv, updates);
+    return acc;
+  }, {});
+}
+
 function writeEnv(updates) {
-  const next = { ...DEFAULT_ENV, ...readEnvFile(), ...updates };
-  const body = Object.entries(next)
-    .map(([key, value]) => `${key}=${value || ""}`)
-    .join("\n");
+  const next = buildRuntimeEnv(readEnvFile(), updates);
+  const body = ENV_KEYS.map((key) => `${key}=${next[key] || ""}`).join("\n");
   fs.writeFileSync(ENV_PATH, `${body}\n`, "utf8");
   Object.assign(process.env, next);
 }
 
 function ensureEnvDefaults() {
   const existing = readEnvFile();
-  const missing = Object.keys(DEFAULT_ENV).filter((key) => !(key in existing));
+  const next = buildRuntimeEnv(existing);
+  const missing = ENV_KEYS.filter((key) => !(key in existing));
   if (!fs.existsSync(ENV_PATH) || missing.length) {
-    writeEnv(existing);
-  } else {
-    Object.assign(process.env, existing);
+    const body = ENV_KEYS.map((key) => `${key}=${next[key] || ""}`).join("\n");
+    fs.writeFileSync(ENV_PATH, `${body}\n`, "utf8");
   }
+  Object.assign(process.env, next);
 }
-
 function hasRequiredTokens() {
   return Boolean(process.env.SHOPIFY_ACCESS_TOKEN && process.env.GOOGLE_REFRESH_TOKEN);
 }
@@ -62,7 +75,15 @@ function disconnectGoogle() {
   writeEnv({ GOOGLE_REFRESH_TOKEN: "" });
 }
 
+function requireEnv(keys, service) {
+  const missing = keys.filter((key) => !process.env[key]);
+  if (missing.length) {
+    throw new Error(`${service} is missing required configuration: ${missing.join(", ")}. Check the Render environment variables or local .env file.`);
+  }
+}
+
 function shopifyInstallUrl() {
+  requireEnv(["SHOPIFY_STORE", "SHOPIFY_CLIENT_ID", "SHOPIFY_REDIRECT"], "Shopify OAuth");
   const state = crypto.randomBytes(16).toString("hex");
   const params = new URLSearchParams({
     client_id: process.env.SHOPIFY_CLIENT_ID,
@@ -72,8 +93,8 @@ function shopifyInstallUrl() {
   });
   return `https://${process.env.SHOPIFY_STORE}/admin/oauth/authorize?${params}`;
 }
-
 async function exchangeShopifyCode(code) {
+  requireEnv(["SHOPIFY_STORE", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET"], "Shopify OAuth");
   const res = await fetch(`https://${process.env.SHOPIFY_STORE}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -92,6 +113,7 @@ async function exchangeShopifyCode(code) {
 }
 
 function googleClient() {
+  requireEnv(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT"], "Google OAuth");
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
