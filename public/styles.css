@@ -275,6 +275,9 @@ h3 {
 .setup-actions { flex-wrap: wrap; gap: 8px; }
 .auth-actions { justify-content: flex-end; }
 .setup-service-list { display: grid; gap: 12px; margin-top: 18px; }
+.shopify-connect { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.shopify-connect input { width: min(220px, 100%); min-height: 36px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); color: var(--text); padding: 0 12px; font-weight: 720; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 .field-group { display: grid; gap: 8px; margin-bottom: 17px; }
 label,
@@ -425,7 +428,9 @@ button:disabled { cursor: wait; filter: saturate(0.65); opacity: 0.7; transform:
   button { width: 100%; }
   .auth-card { align-items: stretch; flex-direction: column; }
   .auth-actions,
-  .product-actions { justify-content: stretch; }
+  .product-actions,
+  .shopify-connect { justify-content: stretch; }
+  .shopify-connect input { width: 100%; }
 }
 
 @media (max-width: 540px) {

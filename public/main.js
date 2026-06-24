@@ -84,7 +84,7 @@ async function refreshConnectionState() {
     const ready = status.shopifyConnected && status.googleConnected;
     connectionState.className = `connection-card ${ready ? "ready" : "attention"}`;
     connectionState.innerHTML = `<span class="pulse"></span><span>${ready ? "Ready" : "Needs auth"}</span>`;
-    renderAuthCard(shopifyAuthCard, "Shopify", status.shopifyConnected);
+    renderAuthCard(shopifyAuthCard, "Shopify", status.shopifyConnected, status.shopifyStore ? `Connected to ${status.shopifyStore}` : "");
     renderAuthCard(googleAuthCard, "Google Drive", status.googleConnected);
   } catch (error) {
     connectionState.className = "connection-card attention";
@@ -103,9 +103,10 @@ function renderAuthCard(card, label, connected, fallbackText) {
   const service = serviceKey(label);
   card.className = `auth-card ${connected ? "connected" : "missing"}`;
   const statusText = fallbackText || (connected ? "Connected" : "Not connected");
+  const connectHref = service === "shopify" ? "/setup" : `/auth/${service}`;
   const action = connected
     ? `<button class="button ghost compact disconnect-service" type="button" data-service="${service}">Disconnect</button>`
-    : `<a class="button ghost compact" href="/auth/${service}">Connect</a>`;
+    : `<a class="button ghost compact" href="${connectHref}">Connect</a>`;
   card.innerHTML = `
     <div>
       <p class="eyebrow">${label}</p>

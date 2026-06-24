@@ -10,7 +10,7 @@ const DEFAULT_ENV = {
   SHOPIFY_STORE: "",
   SHOPIFY_CLIENT_ID: "",
   SHOPIFY_CLIENT_SECRET: "",
-  SHOPIFY_SCOPES: "read_products,write_products,read_files,write_files,read_publications,write_publications",
+  SHOPIFY_SCOPES: "write_products",
   SHOPIFY_REDIRECT: "",
   GOOGLE_CLIENT_ID: "",
   GOOGLE_CLIENT_SECRET: "",
@@ -82,20 +82,63 @@ function requireEnv(keys, service) {
   }
 }
 
-function shopifyInstallUrl() {
-  requireEnv(["SHOPIFY_STORE", "SHOPIFY_CLIENT_ID", "SHOPIFY_REDIRECT"], "Shopify OAuth");
+function normalizeShopifyStore(input) {
+  const raw = String(input || "").trim().toLowerCase();
+  if (!raw) return "";
+  const candidate = raw.includes("://") ? raw : `https://${raw}`;
+  let host = "";
+  let pathname = "";
+  try {
+    const parsed = new URL(candidate);
+    host = parsed.hostname;
+    pathname = parsed.pathname;
+  } catch (error) {
+    host = raw.split("/")[0];
+  }
+  let handle = host;
+  if (host === "admin.shopify.com") {
+    handle = pathname.split("/").filter(Boolean)[1] || "";
+  }
+  handle = handle.replace(/^admin\./, "").replace(/\.myshopify\.com$/, "");
+  if (!handle) return "";
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(handle)) {
+    throw new Error("Enter a valid Shopify store handle, like dmaidy-n1, or a myshopify.com domain.");
+  }
+  return `${handle}.myshopify.com`;
+}
+function shopifyScopes() {
+  const scopes = String(process.env.SHOPIFY_SCOPES || DEFAULT_ENV.SHOPIFY_SCOPES)
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return scopes.includes("write_products") ? "write_products" : DEFAULT_ENV.SHOPIFY_SCOPES;
+}
+
+function shopifyRedirectUri(origin) {
+  if (origin) return new URL("/callback", origin).toString();
+  requireEnv(["SHOPIFY_REDIRECT"], "Shopify OAuth");
+  return process.env.SHOPIFY_REDIRECT;
+}
+
+function shopifyInstallUrl(shop, origin) {
+  requireEnv(["SHOPIFY_CLIENT_ID"], "Shopify OAuth");
+  const store = normalizeShopifyStore(shop || process.env.SHOPIFY_STORE);
+  if (!store) throw new Error("Enter a Shopify store before connecting.");
   const state = crypto.randomBytes(16).toString("hex");
   const params = new URLSearchParams({
     client_id: process.env.SHOPIFY_CLIENT_ID,
-    scope: process.env.SHOPIFY_SCOPES,
-    redirect_uri: process.env.SHOPIFY_REDIRECT,
+    scope: shopifyScopes(),
+    redirect_uri: shopifyRedirectUri(origin),
     state
   });
-  return `https://${process.env.SHOPIFY_STORE}/admin/oauth/authorize?${params}`;
+  return `https://${store}/admin/oauth/authorize?${params}`;
 }
-async function exchangeShopifyCode(code) {
-  requireEnv(["SHOPIFY_STORE", "SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET"], "Shopify OAuth");
-  const res = await fetch(`https://${process.env.SHOPIFY_STORE}/admin/oauth/access_token`, {
+
+async function exchangeShopifyCode(code, shop) {
+  requireEnv(["SHOPIFY_CLIENT_ID", "SHOPIFY_CLIENT_SECRET"], "Shopify OAuth");
+  const store = normalizeShopifyStore(shop || process.env.SHOPIFY_STORE);
+  if (!store) throw new Error("Shopify did not return a store for this authorization.");
+  const res = await fetch(`https://${store}/admin/oauth/access_token`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -108,10 +151,9 @@ async function exchangeShopifyCode(code) {
   if (!res.ok || !json.access_token) {
     throw new Error(json.error_description || json.error || "Shopify token exchange failed");
   }
-  writeEnv({ SHOPIFY_ACCESS_TOKEN: json.access_token });
+  writeEnv({ SHOPIFY_STORE: store, SHOPIFY_ACCESS_TOKEN: json.access_token });
   return json.access_token;
 }
-
 function googleClient() {
   requireEnv(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT"], "Google OAuth");
   return new google.auth.OAuth2(

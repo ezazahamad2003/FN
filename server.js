@@ -43,6 +43,8 @@ const upload = multer({
 });
 const PORT = Number(process.env.PORT || 3456);
 
+app.set("trust proxy", true);
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -146,6 +148,11 @@ function filesByField(files, field) {
   return (files || []).filter((file) => file.fieldname === field);
 }
 
+function requestOrigin(req) {
+  const proto = req.get("x-forwarded-proto") || req.protocol;
+  return proto + "://" + req.get("host");
+}
+
 function resolveProductLogos(product, logoRuns) {
   const requestedSlugs = Array.isArray(product.logoSlugs)
     ? product.logoSlugs.map((value) => String(value).toLowerCase().trim()).filter(Boolean)
@@ -162,6 +169,7 @@ app.get("/health", (req, res) => {
   res.json({
     ok: true,
     shopifyConnected: Boolean(process.env.SHOPIFY_ACCESS_TOKEN),
+    shopifyStore: process.env.SHOPIFY_STORE || "",
     googleConnected: Boolean(process.env.GOOGLE_REFRESH_TOKEN)
   });
 });
@@ -172,7 +180,7 @@ app.get("/setup", (req, res) => {
 
 app.get("/auth/shopify", (req, res, next) => {
   try {
-    res.redirect(shopifyInstallUrl());
+    res.redirect(shopifyInstallUrl(req.query.shop, requestOrigin(req)));
   } catch (error) {
     next(error);
   }
@@ -181,7 +189,7 @@ app.get("/auth/shopify", (req, res, next) => {
 app.get("/callback", async (req, res, next) => {
   try {
     if (!req.query.code) throw new Error("Missing Shopify OAuth code.");
-    await exchangeShopifyCode(req.query.code);
+    await exchangeShopifyCode(req.query.code, req.query.shop);
     res.redirect(hasRequiredTokens() ? "/" : "/setup?shopify=connected");
   } catch (error) {
     next(error);

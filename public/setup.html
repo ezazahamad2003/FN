@@ -45,11 +45,21 @@
       ];
       const setupServices = document.getElementById("setupServices");
 
-      function renderService(service, connected) {
-        const statusText = connected ? "Connected and ready" : "Not connected";
-        const action = connected
+      function renderService(service, connected, status) {
+        const shopifyStore = status.shopifyStore || "";
+        const statusText = connected
+          ? service.key === "shopify" && shopifyStore ? "Connected to " + shopifyStore : "Connected and ready"
+          : "Not connected";
+        let action = connected
           ? '<button class="button ghost compact disconnect-service" type="button" data-service="' + service.key + '">Disconnect</button>'
           : '<a class="button compact" href="/auth/' + service.key + '">Connect</a>';
+        if (service.key === "shopify" && !connected) {
+          action = '<form class="shopify-connect" data-shopify-connect>' +
+            '<label class="sr-only" for="shopifyStore">Shopify store</label>' +
+            '<input id="shopifyStore" name="shop" type="text" placeholder="store-handle" autocomplete="off" required>' +
+            '<button class="button compact" type="submit">Connect</button>' +
+          '</form>';
+        }
         return '<article class="auth-card ' + (connected ? "connected" : "missing") + '">' +
           '<div><p class="eyebrow">' + service.label + '</p>' +
           '<h2><span class="auth-dot"></span>' + statusText + '</h2></div>' +
@@ -61,9 +71,19 @@
         const res = await fetch("/health");
         const status = await res.json();
         setupServices.innerHTML = services
-          .map((service) => renderService(service, service.key === "shopify" ? status.shopifyConnected : status.googleConnected))
+          .map((service) => renderService(service, service.key === "shopify" ? status.shopifyConnected : status.googleConnected, status))
           .join("");
       }
+
+      document.addEventListener("submit", (event) => {
+        const form = event.target.closest("[data-shopify-connect]");
+        if (!form) return;
+        event.preventDefault();
+        const input = form.querySelector('input[name="shop"]');
+        const shop = input.value.trim();
+        if (!shop) return;
+        window.location.href = "/auth/shopify?shop=" + encodeURIComponent(shop);
+      });
 
       document.addEventListener("click", async (event) => {
         const button = event.target.closest(".disconnect-service");
