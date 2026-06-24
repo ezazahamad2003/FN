@@ -1,5 +1,6 @@
 const OpenAI = require("openai");
 const fetch = require("node-fetch");
+const { PDFParse } = require("pdf-parse");
 
 function client() {
   if (!process.env.OPENAI_API_KEY) {
@@ -69,11 +70,32 @@ async function generateProductDescription(departmentName, product) {
     ],
     max_tokens: 180
   });
-  const text = response.choices[0]?.message?.content?.trim() || "";
+  const text = (response.choices[0]?.message?.content?.trim() || "")
+    .replace(/^```[a-z]*\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
   return text.startsWith("<p>") ? text : `<p>${text.replace(/^"|"$/g, "")}</p>`;
 }
 
-function extractReadableText(file) {
+async function extractReadableText(file) {
+  // PDFs are compressed binary, so naive utf8 decoding yields garbage. Parse
+  // them properly so the policy's garment list actually reaches the model.
+  const isPdf =
+    file.mimetype === "application/pdf" ||
+    (file.originalname || "").toLowerCase().endsWith(".pdf");
+  if (isPdf) {
+    let parser;
+    try {
+      parser = new PDFParse({ data: file.buffer });
+      const result = await parser.getText();
+      return (result.text || "").replace(/\s+/g, " ").trim().slice(0, 12000);
+    } catch (error) {
+      return "";
+    } finally {
+      if (parser) await parser.destroy().catch(() => {});
+    }
+  }
+
   const textTypes = [
     "text/",
     "application/json",
@@ -92,9 +114,14 @@ function extractReadableText(file) {
 }
 
 async function extractPolicyInstructions(departmentName, policies, productItems) {
-  const policyText = policies
-    .map((file) => `File: ${file.originalname}\n${extractReadableText(file) || "No readable text extracted from this file."}`)
-    .join("\n\n");
+  const policyText = (
+    await Promise.all(
+      policies.map(
+        async (file) =>
+          `File: ${file.originalname}\n${(await extractReadableText(file)) || "No readable text extracted from this file."}`
+      )
+    )
+  ).join("\n\n");
   const productContext = productItems
     .map((item) => `${item.title}: ${item.logoDescription}. Product: ${item.productLabel}. Notes: ${item.productionNotes}`)
     .join("\n\n");
@@ -176,9 +203,14 @@ function normalizePolicyProducts(items) {
 }
 
 async function determinePolicyProducts(departmentName, policies, logos = []) {
-  const policyText = policies
-    .map((file) => `File: ${file.originalname}\n${extractReadableText(file) || "No readable text extracted from this file."}`)
-    .join("\n\n");
+  const policyText = (
+    await Promise.all(
+      policies.map(
+        async (file) =>
+          `File: ${file.originalname}\n${(await extractReadableText(file)) || "No readable text extracted from this file."}`
+      )
+    )
+  ).join("\n\n");
 
   if (!policyText.trim()) {
     return defaultPolicyProducts();
