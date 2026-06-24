@@ -2,4 +2,3 @@ node_modules/
 server.out.log
 server.err.log
 .env
-data/issues.json

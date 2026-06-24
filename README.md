@@ -67,12 +67,6 @@ Set `GDRIVE_PARENT_FOLDER_ID` to the parent Drive folder where department folder
 GDRIVE_PARENT_FOLDER_ID=1a-ij6tDLgUUAi-mZdMPFM6qlsYzQ3_6z
 ```
 
-## Issues
-
-The app includes an `/issues` page for small-team feedback. Users can create issues with optional images, and mark an issue complete to remove it from the open list.
-
-Issue storage is local JSON at `data/issues.json`. On Render's free/container filesystem this is lightweight but not permanent across rebuilds. For heavier use, move issues into a database.
-
 ## Policy-Driven Product Images
 
 The current product mockup workflow reads the uploaded policy documents and asks GPT-4o to infer which products should be generated, such as shirts, hats, pants, hoodies, or jackets. It then generates product images for each product/logo combination and creates matching Shopify products.

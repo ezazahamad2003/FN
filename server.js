@@ -1,5 +1,4 @@
 const path = require("path");
-const fs = require("fs");
 const express = require("express");
 const multer = require("multer");
 const dotenv = require("dotenv");
@@ -39,8 +38,6 @@ dotenv.config();
 startTokenAutoRefresh();
 
 const app = express();
-const DATA_DIR = path.join(__dirname, "data");
-const ISSUES_PATH = path.join(DATA_DIR, "issues.json");
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024, files: 30 }
@@ -52,21 +49,6 @@ app.set("trust proxy", true);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
-
-function ensureDataStore() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(ISSUES_PATH)) fs.writeFileSync(ISSUES_PATH, "[]", "utf8");
-}
-
-function readIssues() {
-  ensureDataStore();
-  return JSON.parse(fs.readFileSync(ISSUES_PATH, "utf8"));
-}
-
-function writeIssues(issues) {
-  ensureDataStore();
-  fs.writeFileSync(ISSUES_PATH, JSON.stringify(issues, null, 2), "utf8");
-}
 
 function titleCase(input) {
   return input
@@ -231,43 +213,6 @@ app.get("/google/callback", async (req, res, next) => {
 app.get("/", (req, res) => {
   if (!hasRequiredTokens()) return res.redirect("/setup");
   res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-app.get("/issues", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "issues.html"));
-});
-
-app.get("/api/issues", (req, res) => {
-  res.json({ issues: readIssues() });
-});
-
-app.post("/api/issues", upload.array("images", 6), (req, res) => {
-  const title = String(req.body.title || "").trim();
-  const details = String(req.body.details || "").trim();
-  if (!title) return res.status(400).json({ error: "Issue title is required." });
-
-  const issues = readIssues();
-  const issue = {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    title,
-    details,
-    createdAt: new Date().toISOString(),
-    images: (req.files || []).map((file) => ({
-      name: file.originalname,
-      mimeType: file.mimetype,
-      dataUrl: `data:${file.mimetype};base64,${file.buffer.toString("base64")}`
-    }))
-  };
-  issues.unshift(issue);
-  writeIssues(issues);
-  res.status(201).json({ issue });
-});
-
-app.delete("/api/issues/:id", (req, res) => {
-  const issues = readIssues();
-  const next = issues.filter((issue) => issue.id !== req.params.id);
-  writeIssues(next);
-  res.json({ ok: true });
 });
 
 app.post(
