@@ -222,7 +222,6 @@ app.get("/", (req, res) => {
 });
 
 app.get("/issues", (req, res) => {
-  if (!hasRequiredTokens()) return res.redirect("/setup");
   res.sendFile(path.join(__dirname, "public", "issues.html"));
 });
 
