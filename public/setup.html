@@ -3,94 +3,128 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>FN Onboarding Setup</title>
+    <title>FN Onboarding · Connections</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
+    <!--
+      Setup screen — one job: connect or disconnect Shopify + Google Drive.
+      States covered: checking, connected (with store name), and missing
+      (Shopify shows a store-handle input; Google links straight to OAuth).
+    -->
     <main class="setup-shell">
-      <section class="setup-panel">
+      <section class="card card-pad setup-panel">
         <div class="brand-lockup setup-brand">
-          <div class="brand-mark">FN</div>
-          <div>
-            <p class="eyebrow">Account access</p>
-            <h1>Connections</h1>
-          </div>
+          <span class="brand-mark">FN</span>
+          <span>
+            <span class="sub">Account access</span>
+            <span class="title" style="display:block">Connections</span>
+          </span>
         </div>
-        <div class="setup-copy">
-          <h2>Manage the accounts used for onboarding runs.</h2>
-        </div>
-        <div class="setup-service-list" id="setupServices">
-          <article class="auth-card checking">
-            <div>
-              <p class="eyebrow">Shopify</p>
-              <h2><span class="auth-dot"></span>Checking connection</h2>
+
+        <h2>Connect the accounts used for onboarding runs.</h2>
+        <p class="muted" style="margin-top:var(--space-2)">Both Shopify and Google Drive must be connected before you can run an onboarding.</p>
+
+        <div class="setup-list" id="setupServices">
+          <article class="service-card" data-state="checking">
+            <div class="info">
+              <span class="glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+              </span>
+              <div>
+                <div class="name">Shopify</div>
+                <div class="state"><span class="dot"></span><span class="state-text">Checking…</span></div>
+              </div>
             </div>
-          </article>
-          <article class="auth-card checking">
-            <div>
-              <p class="eyebrow">Google Drive</p>
-              <h2><span class="auth-dot"></span>Checking connection</h2>
-            </div>
+            <div class="actions"></div>
           </article>
         </div>
+
         <div class="setup-actions">
-          <a class="button secondary" href="/">Back to Onboarding</a>
+          <a class="btn btn-ghost" href="/">← Back to onboarding</a>
         </div>
       </section>
     </main>
+
     <script>
       const services = [
-        { key: "shopify", label: "Shopify" },
-        { key: "google", label: "Google Drive" }
+        {
+          key: "shopify",
+          label: "Shopify",
+          glyph: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>'
+        },
+        {
+          key: "google",
+          label: "Google Drive",
+          glyph: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 15 4-7h10l4 7"/><path d="m7 8 5 9"/><path d="m17 8-5 9"/><path d="M3 15h18l-4 6H7Z"/></svg>'
+        }
       ];
       const setupServices = document.getElementById("setupServices");
 
-      function renderService(service, connected, status) {
-        const shopifyStore = status.shopifyStore || "";
-        const statusText = connected
-          ? service.key === "shopify" && shopifyStore ? "Connected to " + shopifyStore : "Connected and ready"
-          : "Not connected";
-        let action = connected
-          ? '<button class="button ghost compact disconnect-service" type="button" data-service="' + service.key + '">Disconnect</button>'
-          : '<a class="button compact" href="/auth/' + service.key + '">Connect</a>';
-        if (service.key === "shopify" && !connected) {
-          action = '<form class="shopify-connect" data-shopify-connect>' +
-            '<label class="sr-only" for="shopifyStore">Shopify store</label>' +
-            '<input id="shopifyStore" name="shop" type="text" placeholder="store-handle" autocomplete="off" required>' +
-            '<button class="button compact" type="submit">Connect</button>' +
-          '</form>';
+      function escapeHtml(value) {
+        return String(value == null ? "" : value).replace(/[&<>"']/g, function (c) {
+          return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c];
+        });
+      }
+
+      function actionFor(service, connected, store) {
+        if (connected) {
+          return '<button class="btn btn-danger-ghost btn-sm disconnect-service" type="button" data-service="' + service.key + '">Disconnect</button>';
         }
-        return '<article class="auth-card ' + (connected ? "connected" : "missing") + '">' +
-          '<div><p class="eyebrow">' + service.label + '</p>' +
-          '<h2><span class="auth-dot"></span>' + statusText + '</h2></div>' +
-          '<div class="auth-actions">' + action + '</div>' +
-        '</article>';
+        if (service.key === "shopify") {
+          return '<form class="shopify-connect" data-shopify-connect>' +
+              '<label class="sr-only" for="shopifyStore">Shopify store handle</label>' +
+              '<input id="shopifyStore" name="shop" type="text" placeholder="store-handle" autocomplete="off" required>' +
+              '<button class="btn btn-secondary btn-sm" type="submit">Connect</button>' +
+            '</form>';
+        }
+        return '<a class="btn btn-secondary btn-sm" href="/auth/' + service.key + '">Connect</a>';
+      }
+
+      function renderService(service, connected, store) {
+        var stateText = connected
+          ? (service.key === "shopify" && store ? "Connected · " + escapeHtml(store) : "Connected")
+          : "Not connected";
+        return '<article class="service-card" data-state="' + (connected ? "connected" : "missing") + '">' +
+            '<div class="info">' +
+              '<span class="glyph" aria-hidden="true">' + service.glyph + '</span>' +
+              '<div>' +
+                '<div class="name">' + service.label + '</div>' +
+                '<div class="state"><span class="dot"></span><span class="state-text">' + stateText + '</span></div>' +
+              '</div>' +
+            '</div>' +
+            '<div class="actions">' + actionFor(service, connected, store) + '</div>' +
+          '</article>';
       }
 
       async function refreshStatus() {
-        const res = await fetch("/health");
-        const status = await res.json();
-        setupServices.innerHTML = services
-          .map((service) => renderService(service, service.key === "shopify" ? status.shopifyConnected : status.googleConnected, status))
-          .join("");
+        try {
+          const status = await (await fetch("/health")).json();
+          setupServices.innerHTML = services
+            .map(function (service) {
+              const connected = service.key === "shopify" ? status.shopifyConnected : status.googleConnected;
+              return renderService(service, connected, status.shopifyStore || "");
+            })
+            .join("");
+        } catch (error) {
+          setupServices.innerHTML = '<p class="muted">Could not load connection status. Refresh to try again.</p>';
+        }
       }
 
-      document.addEventListener("submit", (event) => {
+      document.addEventListener("submit", function (event) {
         const form = event.target.closest("[data-shopify-connect]");
         if (!form) return;
         event.preventDefault();
-        const input = form.querySelector('input[name="shop"]');
-        const shop = input.value.trim();
-        if (!shop) return;
-        window.location.href = "/auth/shopify?shop=" + encodeURIComponent(shop);
+        const shop = form.querySelector('input[name="shop"]').value.trim();
+        if (shop) window.location.href = "/auth/shopify?shop=" + encodeURIComponent(shop);
       });
 
-      document.addEventListener("click", async (event) => {
+      document.addEventListener("click", async function (event) {
         const button = event.target.closest(".disconnect-service");
         if (!button) return;
         const service = button.dataset.service;
         const label = service === "shopify" ? "Shopify" : "Google Drive";
-        if (!window.confirm("Disconnect " + label + "? You can connect a different account after this.")) return;
+        if (!window.confirm("Disconnect " + label + "? You can connect a different account afterwards.")) return;
 
         button.disabled = true;
         try {
@@ -98,8 +132,7 @@
           if (!res.ok) throw new Error("Disconnect failed");
           await refreshStatus();
         } catch (error) {
-          alert("Could not disconnect " + label + ". Please try again.");
-        } finally {
+          window.alert("Could not disconnect " + label + ". Please try again.");
           button.disabled = false;
         }
       });

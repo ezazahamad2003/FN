@@ -4,103 +4,254 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FN Onboarding</title>
+    <meta name="description" content="Build Drive assets, product mockups, and Shopify listings from one intake.">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
-    <main class="app-shell">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <div class="app-shell">
+      <!-- ───────────────────────── Topbar ───────────────────────── -->
       <header class="topbar">
         <a class="brand-lockup" href="/" aria-label="FN Onboarding home">
-          <div class="brand-mark">FN</div>
-          <div>
-            <p class="eyebrow">Operations console</p>
-            <h1>Onboarding</h1>
-          </div>
+          <span class="brand-mark">FN</span>
+          <span>
+            <span class="sub">Operations console</span>
+            <span class="title" style="display:block">Onboarding</span>
+          </span>
         </a>
-        <nav class="topbar-actions" aria-label="Primary navigation">
-          <div class="connection-card" id="connectionState">
-            <span class="pulse"></span>
-            <span>Checking services</span>
-          </div>
-          <a class="button ghost compact" href="/setup">Connections</a>
-        </nav>
+        <div class="topbar-actions">
+          <span class="status-pill" id="connectionPill" data-state="checking" role="status" aria-live="polite">
+            <span class="dot"></span><span class="txt">Checking services…</span>
+          </span>
+          <a class="btn btn-ghost btn-sm" href="/setup">Connections</a>
+        </div>
       </header>
 
-      <section class="page-intro">
-        <div>
+      <main id="main">
+        <!-- ───────────────────────── Hero ───────────────────────── -->
+        <section class="hero">
           <p class="eyebrow">New department package</p>
-          <h2>Build Drive assets, product mockups, and Shopify listings from one intake.</h2>
-        </div>
-        <div class="workflow-strip" aria-label="Onboarding workflow">
-          <span>Drive</span>
-          <span>Mockups</span>
-          <span>Manual</span>
-          <span>Shopify</span>
-        </div>
-      </section>
-
-      <section class="auth-grid" aria-label="Authentication status">
-        <article class="auth-card checking" id="shopifyAuthCard">
-          <div>
-            <p class="eyebrow">Shopify</p>
-            <h2><span class="auth-dot"></span>Checking connection</h2>
-          </div>
-          <a class="button ghost compact" href="/setup">Setup</a>
-        </article>
-        <article class="auth-card checking" id="googleAuthCard">
-          <div>
-            <p class="eyebrow">Google Drive</p>
-            <h2><span class="auth-dot"></span>Checking connection</h2>
-          </div>
-          <a class="button ghost compact" href="/setup">Setup</a>
-        </article>
-      </section>
-
-      <section class="workspace">
-        <form id="onboardForm" class="panel form-panel">
-          <div class="panel-heading stacked">
-            <p class="eyebrow">Intake</p>
-            <h2>Department Package</h2>
-          </div>
-          <div class="field-group">
-            <label for="departmentName">Department Name</label>
-            <input id="departmentName" name="departmentName" type="text" placeholder="Sacramento Fire Department" autocomplete="organization" required>
-          </div>
-          <div class="field-group">
-            <label for="logos">Logo Files</label>
-            <div class="file-control">
-              <input id="logos" name="logos" type="file" accept="image/*" multiple required>
-              <span class="file-label">Choose logo images</span>
-              <span class="file-count" id="logoCount">No logos selected</span>
-            </div>
-          </div>
-          <div class="field-group">
-            <label for="policies">Policy Documents</label>
-            <div class="file-control">
-              <input id="policies" name="policies" type="file" accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" multiple>
-              <span class="file-label">Choose policy docs</span>
-              <span class="file-count" id="policyCount">No policies selected</span>
-            </div>
-          </div>
-          <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
-          <button class="button primary full run-button" type="submit" id="runButton">Run Onboarding</button>
-        </form>
-
-        <section class="panel log-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="eyebrow">Live run</p>
-              <h2>Status Log</h2>
-            </div>
-            <button class="icon-button" id="clearLog" type="button" title="Clear log">Clear</button>
-          </div>
-          <ol id="log" class="log">
-            <li class="empty-log">Waiting for an onboarding run.</li>
-          </ol>
+          <h2>Turn one intake into Drive assets, product mockups, and live Shopify listings.</h2>
+          <p>Add the department name, drop in logos and policy documents, then run a single automated workflow.</p>
         </section>
-      </section>
 
-      <section id="summary" class="summary" hidden></section>
-    </main>
+        <!-- ─────────────────── Connection cards ─────────────────── -->
+        <section class="connections" aria-label="Service connections">
+          <article class="service-card" id="shopifyCard" data-state="checking">
+            <div class="info">
+              <span class="glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+              </span>
+              <div>
+                <div class="name">Shopify</div>
+                <div class="state"><span class="dot"></span><span class="state-text">Checking…</span></div>
+              </div>
+            </div>
+            <div class="actions"></div>
+          </article>
+
+          <article class="service-card" id="googleCard" data-state="checking">
+            <div class="info">
+              <span class="glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 15 4-7h10l4 7"/><path d="m7 8 5 9"/><path d="m17 8-5 9"/><path d="M3 15h18l-4 6H7Z"/></svg>
+              </span>
+              <div>
+                <div class="name">Google Drive</div>
+                <div class="state"><span class="dot"></span><span class="state-text">Checking…</span></div>
+              </div>
+            </div>
+            <div class="actions"></div>
+          </article>
+        </section>
+
+        <!-- ───────────────────────── Workspace ───────────────────────── -->
+        <div class="workspace">
+          <!-- Intake form -->
+          <form id="onboardForm" class="card card-pad" novalidate>
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Intake</p>
+                <h2>Department package</h2>
+              </div>
+            </div>
+
+            <div class="field">
+              <label for="departmentName">Department name</label>
+              <input id="departmentName" name="departmentName" type="text"
+                     placeholder="Sacramento Fire Department" autocomplete="organization"
+                     aria-describedby="departmentError">
+              <p class="hint" id="departmentError" hidden style="color:var(--danger)"></p>
+            </div>
+
+            <div class="field">
+              <label for="logos">Logo files</label>
+              <div class="dropzone" data-dropzone="logos">
+                <input id="logos" name="logos" type="file" accept="image/*" multiple aria-describedby="logoError">
+                <span class="dz-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                </span>
+                <span class="dz-title"><b>Click to upload</b> or drag &amp; drop</span>
+                <span class="dz-sub">PNG, JPG or SVG — one or more logos</span>
+              </div>
+              <div class="thumbs" id="logoThumbs"></div>
+              <p class="hint" id="logoError" hidden style="color:var(--danger)"></p>
+            </div>
+
+            <div class="field">
+              <label for="policies">Policy documents <span style="color:var(--text-subtle);font-weight:600">(optional)</span></label>
+              <div class="dropzone" data-dropzone="policies">
+                <input id="policies" name="policies" type="file"
+                       accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                       multiple>
+                <span class="dz-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                </span>
+                <span class="dz-title"><b>Click to upload</b> or drag &amp; drop</span>
+                <span class="dz-sub">PDF, DOC, DOCX or TXT — drives product detection</span>
+              </div>
+              <div class="chips" id="policyChips"></div>
+            </div>
+
+            <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
+
+            <button class="btn btn-primary btn-block" type="submit" id="runButton">
+              <span class="btn-label">Run onboarding</span>
+            </button>
+          </form>
+
+          <!-- Run status -->
+          <section class="card card-pad run-status" id="runStatus" data-state="idle" aria-label="Run status">
+            <div class="card-head" style="margin-bottom:0">
+              <div class="run-head" role="status" aria-live="polite">
+                <p class="eyebrow">Live run</p>
+                <span class="label" id="runLabel">
+                  <span class="run-glyph" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+                  </span>
+                  Ready to run
+                </span>
+                <p class="sub" id="runSub">Fill in the form, then start an onboarding run.</p>
+              </div>
+            </div>
+
+            <div class="progress">
+              <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Onboarding progress" id="progressBar">
+                <div class="progress-fill" id="progressFill"></div>
+              </div>
+              <div class="progress-meta">
+                <span id="progressText">Not started</span>
+                <span id="progressPct">0%</span>
+              </div>
+            </div>
+
+            <div class="banner" id="runError" hidden>
+              <span class="b-glyph" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </span>
+              <span id="runErrorText"></span>
+            </div>
+
+            <div class="notices" id="runNotices"></div>
+
+            <div id="timeline">
+              <div class="phase">
+                <p class="phase-label">Google Drive</p>
+                <ol class="timeline">
+                  <li class="step" data-step="1" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Create department folders</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                  <li class="step" data-step="2" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Upload source files</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                </ol>
+              </div>
+
+              <div class="phase">
+                <p class="phase-label">AI analysis</p>
+                <ol class="timeline">
+                  <li class="step" data-step="3" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Analyze logos (Vision)</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                  <li class="step" data-step="4" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Detect products from policies</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                </ol>
+              </div>
+
+              <div class="phase">
+                <p class="phase-label">Generation</p>
+                <ol class="timeline">
+                  <li class="step" data-step="5" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Generate product images</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                  <li class="step" data-step="6" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Write descriptions &amp; manual</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                </ol>
+              </div>
+
+              <div class="phase">
+                <p class="phase-label">Shopify</p>
+                <ol class="timeline">
+                  <li class="step" data-step="7" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Create Shopify collection</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                  <li class="step" data-step="8" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Create Shopify products</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                  <li class="step" data-step="9" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Add products to collection</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                </ol>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- ───────────────────────── Summary ───────────────────────── -->
+        <section id="summary" class="summary card card-pad" hidden></section>
+      </main>
+    </div>
+
+    <!-- ───────────────────────── Conflict modal ───────────────────────── -->
+    <div class="modal-overlay" id="conflictModal" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflictTitle" aria-describedby="conflictDesc">
+        <div class="modal-head">
+          <span class="m-glyph" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          <div>
+            <h2 id="conflictTitle">Folder already exists</h2>
+          </div>
+        </div>
+        <p id="conflictDesc">A Drive folder for this department already exists. Overwrite it, or keep the existing folder and continue?</p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" type="button" data-conflict="cancel">Cancel</button>
+          <button class="btn btn-secondary" type="button" data-conflict="skip">Use existing</button>
+          <button class="btn btn-primary" type="button" data-conflict="overwrite">Overwrite</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/main.js"></script>
   </body>
 </html>
