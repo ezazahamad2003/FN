@@ -519,6 +519,7 @@ module.exports = {
   deleteCollection,
   deleteProduct,
   ensureManualCollection,
+  ensureManualCollectionWithImage,
   getAccessToken,
   shopifyConnected,
   startTokenAutoRefresh,
