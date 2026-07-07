@@ -103,6 +103,13 @@
 
             <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
 
+            <button class="btn btn-secondary btn-block" type="button" id="analyzeButton">
+              <span class="btn-label">Analyze policy &amp; draft email</span>
+            </button>
+            <p class="hint" style="text-align:center;margin-top:calc(-1 * var(--space-2))">
+              Reads the policy and drafts the gaps email — creates nothing. Do this first if the policy might be incomplete.
+            </p>
+
             <button class="btn btn-primary btn-block" type="submit" id="runButton">
               <span class="btn-label">Run onboarding</span>
             </button>
@@ -262,6 +269,9 @@
             </div>
           </aside>
         </div>
+
+        <!-- ─────────────── Pre-flight analysis (policy + email draft) ─────────────── -->
+        <section id="analysis" class="review card card-pad" hidden aria-label="Policy analysis and email draft"></section>
 
         <!-- ─────────────── Review & approve (before Shopify) ─────────────── -->
         <section id="review" class="review card card-pad" hidden aria-label="Review generated products before publishing"></section>

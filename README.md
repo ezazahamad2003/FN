@@ -88,7 +88,7 @@ color-coded as **stated by policy (green)** vs **fallback default (amber)**.
 
 ### Phase 2 — publish to Shopify (steps 8–10, after approval)
 
-8. Create or reuse a Shopify manual collection.
+8. Create or reuse a Shopify manual collection and set its image from the first uploaded logo.
 9. Create products via the **GraphQL Admin API**: one product per garment with
    **Front Logo × Size** options. By default **every uploaded logo is offered on
    every product** (the policy can explicitly restrict logos per garment).
@@ -108,8 +108,7 @@ After publishing, the summary shows a **"Delete run assets…"** option (availab
 for 24 hours, while the server keeps the run manifest in memory). It:
 
 - deletes the Shopify products created by that run,
-- deletes the collection **only if that leaves it empty** — a reused collection
-  that still holds products from earlier runs is kept,
+- deletes the Shopify collection for that run,
 - moves the department's Drive folder to trash (recoverable from Drive's trash
   for ~30 days).
 

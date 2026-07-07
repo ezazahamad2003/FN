@@ -897,6 +897,7 @@ input[aria-invalid="true"],
 .rv-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
 .rv-head h3 { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
 .rv-count { color: var(--text-subtle); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; }
+.rv-logos { color: var(--text-muted); font-size: var(--fs-xs); overflow-wrap: anywhere; }
 
 .meta-chips { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .m-chip {

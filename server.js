@@ -33,11 +33,10 @@ const {
   addProductToCollection,
   adminCollectionUrl,
   adminProductUrl,
-  countProductsInCollection,
   createProductWithVariants,
   deleteCollection,
   deleteProduct,
-  ensureManualCollection,
+  ensureManualCollectionWithImage,
   shopifyConnected,
   startTokenAutoRefresh,
   uploadProductImages,
@@ -73,8 +72,8 @@ app.use(express.static(path.join(__dirname, "public")));
  *
  * After a publish the run stays behind (buffers dropped) as a cleanup
  * manifest, so POST /cleanup can undo the whole run — delete its Shopify
- * products, delete the collection if that leaves it empty, and move the Drive
- * folder to trash — for up to 24 hours.
+ * products, delete the Shopify collection, and move the Drive folder to
+ * trash for up to 24 hours.
  */
 const pendingRuns = new Map();
 const RUN_TTL_MS = 60 * 60 * 1000;
@@ -281,6 +280,77 @@ app.get("/", (req, res) => {
    Phase 1 — analyze & generate (steps 1–7). Ends with a `review` event.
    Nothing is pushed to Shopify here.
    ------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   Pre-flight — analyze the policy and draft the gaps email WITHOUT creating
+   anything: no Drive folders, no images, no Shopify. Fast and side-effect
+   free, so the user can get the email out to the department first and only run
+   the full onboarding once the answers are in. Doesn't require Drive/Shopify
+   to be connected — only OpenAI.
+   ------------------------------------------------------------------------- */
+app.post(
+  "/analyze",
+  upload.fields([
+    { name: "logos", maxCount: 20 },
+    { name: "policies", maxCount: 20 },
+    { name: "followUps", maxCount: 20 }
+  ]),
+  async (req, res) => {
+    try {
+      const departmentName = String(req.body.departmentName || "").trim();
+      const followUpText = String(req.body.followUpText || "");
+      const uploadedFiles = req.files || {};
+      const allFiles = [
+        ...(uploadedFiles.logos || []),
+        ...(uploadedFiles.policies || []),
+        ...(uploadedFiles.followUps || [])
+      ];
+      const logos = filesByField(allFiles, "logos");
+      const policies = filesByField(allFiles, "policies");
+      const followUps = filesByField(allFiles, "followUps");
+
+      const policyText = await collectPolicyText(policies, followUps, followUpText);
+      if (!policyText.trim()) {
+        return res.status(400).json({ error: "Add a policy document (or paste follow-up text) to analyze." });
+      }
+
+      // Logo catalog by filename only — no Vision call in the pre-flight keeps
+      // it fast; logo assignment still works from the names.
+      const logoRuns = logos.map((file) => ({
+        originalName: file.originalname,
+        filenameBase: titleCase(file.originalname),
+        slug: slug(file.originalname),
+        logoDescription: ""
+      }));
+      dedupeLogoLabels(logoRuns);
+
+      const deptForPrompt = departmentName || "the department";
+      const products = await determinePolicyProducts(deptForPrompt, policyText, logoRuns);
+      const gaps = await analyzePolicyGaps(deptForPrompt, policyText, products, logoRuns);
+
+      res.json({
+        departmentName,
+        gaps: { confidence: gaps.confidence, missing: gaps.missing },
+        emailDraft: gaps.emailDraft,
+        products: products.map((product) => ({
+          productLabel: product.productLabel,
+          garmentColor: product.garmentColor,
+          brandStyle: product.brandStyle,
+          fabricDetails: product.fabricDetails,
+          placement: product.placement || resolvePlacement(product).replace(/-/g, " "),
+          placementStated: Boolean(product.placement),
+          decorationMethod: product.decorationMethod,
+          sizes: product.sizes.length ? product.sizes : DEFAULT_SIZES,
+          sizesStated: product.sizes.length > 0,
+          logos: resolveProductLogos(product, logoRuns).map((logo) => logo.filenameBase)
+        }))
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
 app.post(
   "/onboard",
   upload.fields([
@@ -450,6 +520,12 @@ app.post(
         folders,
         manual,
         productRuns,
+        collectionImage: logoRuns[0]
+          ? {
+              buffer: logoRuns[0].file.buffer,
+              alt: `${departmentName} logo`
+            }
+          : null,
         expiresAt: Date.now() + RUN_TTL_MS
       });
 
@@ -522,7 +598,7 @@ app.post("/publish", async (req, res) => {
 
   try {
     const collection = await runStep(res, 8, "Create Shopify collection", async () => {
-      return ensureManualCollection(run.departmentName);
+      return ensureManualCollectionWithImage(run.departmentName, run.collectionImage);
     });
 
     await runStep(res, 9, "Create Shopify products with variants", async () => {
@@ -628,10 +704,9 @@ app.post("/discard", (req, res) => {
 });
 
 /* ---------------------------------------------------------------------------
-   Undo a published run: delete its Shopify products, delete the collection
-   only if that leaves it empty (a reused collection with other products is
-   kept), and move the Drive department folder to trash (recoverable from
-   Drive's trash for ~30 days).
+   Undo a published run: delete its Shopify products, delete the Shopify
+   collection for the run, and move the Drive department folder to trash
+   (recoverable from Drive's trash for ~30 days).
    ------------------------------------------------------------------------- */
 app.post("/cleanup", async (req, res) => {
   const runId = String(req.body?.runId || "");
@@ -644,12 +719,11 @@ app.post("/cleanup", async (req, res) => {
     });
   }
 
-  const { collectionId, collectionTitle, productGids, driveFolderId } = run.cleanup;
+  const { collectionId, productGids, driveFolderId } = run.cleanup;
   const result = {
     ok: true,
     deletedProducts: 0,
     collectionDeleted: false,
-    collectionKept: null,
     driveTrashed: false,
     errors: []
   };
@@ -664,13 +738,8 @@ app.post("/cleanup", async (req, res) => {
   }
 
   try {
-    const remaining = await countProductsInCollection(collectionId);
-    if (remaining === 0) {
-      await deleteCollection(collectionId);
-      result.collectionDeleted = true;
-    } else {
-      result.collectionKept = `"${collectionTitle}" still contains ${remaining} other product${remaining === 1 ? "" : "s"}, so it was kept.`;
-    }
+    await deleteCollection(collectionId);
+    result.collectionDeleted = true;
   } catch (error) {
     result.errors.push(`Collection: ${error.message}`);
   }

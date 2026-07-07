@@ -11,7 +11,7 @@
        ending in a `summary` event (steps 8–10). Runs only on user approval.
      • POST /discard { runId } → drops the pending run.
      • POST /cleanup { runId } → undoes a published run (delete its Shopify
-       products, delete the collection if then empty, trash the Drive folder).
+       products, delete the Shopify collection, trash the Drive folder).
        Available for 24h after publish.
      • GET  /health → { shopifyConnected, shopifyStore, googleConnected }
      • POST /auth/{shopify|google}/disconnect
@@ -40,6 +40,8 @@ const policyChips = el("policyChips");
 const followUpInput = el("followUps");
 const followUpChips = el("followUpChips");
 const review = el("review");
+const analysis = el("analysis");
+const analyzeButton = el("analyzeButton");
 
 const runStatus = el("runStatus");
 const runLabel = el("runLabel");
@@ -144,7 +146,7 @@ async function runCleanup(data) {
   const confirmed = window.confirm(
     "Delete everything this run created?\n\n" +
       `- ${count} Shopify product${count === 1 ? "" : "s"}\n` +
-      `- Collection "${collectionName}" (deleted only if empty afterwards)\n` +
+      `- Collection "${collectionName}"\n` +
       "- Drive folder (moved to Drive trash, recoverable for ~30 days)\n\n" +
       "Products and the collection cannot be restored from here."
   );
@@ -165,7 +167,7 @@ async function runCleanup(data) {
 
     const lines = [
       `${result.deletedProducts} product${result.deletedProducts === 1 ? "" : "s"} deleted`,
-      result.collectionDeleted ? "collection deleted" : result.collectionKept || "collection kept",
+      result.collectionDeleted ? "collection deleted" : "collection could not be deleted",
       result.driveTrashed ? "Drive folder moved to trash" : "Drive folder could not be trashed"
     ];
     zone.dataset.state = result.ok ? "done" : "partial";
@@ -205,7 +207,7 @@ function renderSummary(data) {
     <div class="cleanup-zone" id="cleanupZone">
       <div class="cz-text">
         <p class="cz-title">Need to undo this run?</p>
-        <p class="cz-sub">Deletes the ${count} Shopify product${count === 1 ? "" : "s"} created just now, deletes the collection if that leaves it empty, and moves the Drive folder to trash (recoverable for ~30 days). Available for 24 hours after publishing.</p>
+        <p class="cz-sub">Deletes the ${count} Shopify product${count === 1 ? "" : "s"} created just now, deletes the Shopify collection, and moves the Drive folder to trash (recoverable for ~30 days). Available for 24 hours after publishing.</p>
       </div>
       <button class="btn btn-danger-ghost" type="button" id="cleanupBtn">Delete run assets…</button>
     </div>`
@@ -253,37 +255,173 @@ function metaChip(label, value, stated) {
   return `<span class="m-chip" data-known="${stated ? "true" : "false"}"><b>${escapeHtml(label)}</b>${escapeHtml(value)}</span>`;
 }
 
+// Shared gap report + email draft markup, used by both the pre-flight analysis
+// panel and the post-generation review panel.
+function gapReportMarkup(gaps, note) {
+  return gaps.missing.length
+    ? `<div class="gap-report" data-tone="warn">
+        <p class="gap-title">The policy document does not cover ${gaps.missing.length} production ${gaps.missing.length === 1 ? "detail" : "details"}:</p>
+        <ul class="gap-list">
+          ${gaps.missing.map((m) => `<li><b>${escapeHtml(m.topic)}</b>${m.detail ? ` — ${escapeHtml(m.detail)}` : ""}</li>`).join("")}
+        </ul>
+        <p class="gap-note">${escapeHtml(note)}</p>
+      </div>`
+    : `<div class="gap-report" data-tone="ok">
+        <p class="gap-title">Policy covers everything needed for production.</p>
+      </div>`;
+}
+
+function emailDraftMarkup(draft, { copyId, bodyId, driveUrl }) {
+  if (!draft) return "";
+  return `<div class="email-draft">
+      <div class="email-head">
+        <p class="eyebrow">Email draft — ask the department for the missing details</p>
+        <div class="email-actions">
+          <button class="btn btn-secondary btn-sm" type="button" id="${copyId}">Copy email</button>
+          ${driveUrl ? `<a class="btn btn-ghost btn-sm" href="${escapeHtml(driveUrl)}" target="_blank" rel="noreferrer">Open in Drive</a>` : ""}
+        </div>
+      </div>
+      <p class="email-subject"><b>Subject:</b> ${escapeHtml(draft.subject)}</p>
+      <textarea class="email-body" id="${bodyId}" readonly rows="10" aria-label="Email draft body">${escapeHtml(draft.body)}</textarea>
+    </div>`;
+}
+
+async function copyEmail(draft, button, bodyId) {
+  if (!draft) return;
+  const text = `Subject: ${draft.subject}\n\n${draft.body}`;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const body = el(bodyId);
+    if (body) {
+      body.focus();
+      body.select();
+      document.execCommand("copy");
+    }
+  }
+  const original = button.textContent;
+  button.textContent = "Copied ✓";
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1600);
+}
+
+/* -----------------------------------------------------------------------------
+   Pre-flight analysis panel — policy gaps + email draft, created by the
+   "Analyze policy & draft email" button. No Drive/Shopify side effects.
+   -------------------------------------------------------------------------- */
+let analysisEmailDraft = null;
+
+function renderAnalysis(data) {
+  analysisEmailDraft = data.emailDraft || null;
+  const gaps = data.gaps || { missing: [], confidence: "low" };
+  const conf = CONFIDENCE_META[gaps.confidence] || CONFIDENCE_META.low;
+
+  const gapsHtml = gapReportMarkup(
+    gaps,
+    "Send the email draft below to the department. When they reply, paste it into “Department follow-up answers” (or attach it) and click Run onboarding — the gaps fill in. Nothing has been created yet."
+  );
+  const emailHtml = emailDraftMarkup(data.emailDraft, {
+    copyId: "copyEmailBtnAnalysis",
+    bodyId: "emailBodyAnalysis"
+  });
+
+  const productsHtml = data.products
+    .map((p) => {
+      const chips = [
+        metaChip("Color", p.garmentColor || "not stated", Boolean(p.garmentColor)),
+        metaChip("Placement", p.placement + (p.placementStated ? "" : " (default)"), p.placementStated),
+        metaChip("Sizes", p.sizes.join(", ") + (p.sizesStated ? "" : " (default)"), p.sizesStated),
+        p.brandStyle ? metaChip("Style", p.brandStyle, true) : "",
+        p.fabricDetails ? metaChip("Fabric", p.fabricDetails, true) : "",
+        p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : ""
+      ]
+        .filter(Boolean)
+        .join("");
+      const logoLine = p.logos && p.logos.length
+        ? `<p class="rv-logos">Logos: ${escapeHtml(p.logos.join(", "))}</p>`
+        : "";
+      return `
+        <article class="rv-product">
+          <div class="rv-head"><h3>${escapeHtml(p.productLabel)}</h3></div>
+          <div class="meta-chips">${chips}</div>
+          ${logoLine}
+        </article>`;
+    })
+    .join("");
+
+  const count = data.products.length;
+  analysis.hidden = false;
+  analysis.innerHTML = `
+    <div class="review-head">
+      <div>
+        <p class="eyebrow">Policy analysis · nothing created yet</p>
+        <h2>${count} ${count === 1 ? "product" : "products"} detected from the policy</h2>
+      </div>
+      <span class="confidence" data-tone="${conf.tone}">${conf.label}</span>
+    </div>
+    ${gapsHtml}
+    ${emailHtml}
+    <div class="rv-products">${productsHtml}</div>
+  `;
+  analysis.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  const copyBtn = el("copyEmailBtnAnalysis");
+  if (copyBtn) copyBtn.addEventListener("click", () => copyEmail(analysisEmailDraft, copyBtn, "emailBodyAnalysis"));
+}
+
+async function runAnalyze() {
+  const hasPolicy = policyInput.files.length > 0 || followUpInput.files.length > 0 || el("followUpText").value.trim();
+  if (!hasPolicy) {
+    setRunHeader("idle", "Add a policy first", "Upload a policy document (or paste follow-up text) to analyze.");
+    addNotice("Add a policy document (or follow-up text) before analyzing.");
+    return;
+  }
+
+  const btn = el("analyzeButton");
+  btn.disabled = true;
+  runButton.disabled = true;
+  btn.querySelector(".btn-label").textContent = "Analyzing…";
+  btn.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
+  setRunHeader("running", "Analyzing policy", "Reading the document and drafting the gaps email. Nothing is being created.");
+
+  try {
+    const res = await fetch("/analyze", { method: "POST", body: new FormData(form) });
+    const payload = await res.json().catch(() => ({ error: "Analysis failed." }));
+    if (!res.ok) throw new Error(payload.error || "Analysis failed.");
+    renderAnalysis(payload);
+    const gapCount = payload.gaps?.missing?.length || 0;
+    setRunHeader(
+      "idle",
+      gapCount ? "Policy analyzed — email drafted" : "Policy analyzed — looks complete",
+      gapCount ? "Send the drafted email, then add the reply and run onboarding." : "You can run onboarding whenever ready."
+    );
+  } catch (err) {
+    setRunHeader("error", "Analysis failed", "The policy could not be analyzed.");
+    showRunError(err.message || "Analysis failed.");
+  } finally {
+    btn.disabled = false;
+    runButton.disabled = false;
+    btn.querySelector(".spinner")?.remove();
+    btn.querySelector(".btn-label").textContent = "Analyze policy & draft email";
+  }
+}
+
 function renderReview(data) {
   activeRunId = data.runId;
   activeEmailDraft = data.emailDraft || null;
   const gaps = data.gaps || { missing: [], confidence: "low" };
   const conf = CONFIDENCE_META[gaps.confidence] || CONFIDENCE_META.low;
 
-  const gapsHtml = gaps.missing.length
-    ? `<div class="gap-report" data-tone="warn">
-        <p class="gap-title">The policy document does not cover ${gaps.missing.length} production ${gaps.missing.length === 1 ? "detail" : "details"}:</p>
-        <ul class="gap-list">
-          ${gaps.missing.map((m) => `<li><b>${escapeHtml(m.topic)}</b>${m.detail ? ` — ${escapeHtml(m.detail)}` : ""}</li>`).join("")}
-        </ul>
-        <p class="gap-note">Send the email draft below, then paste the answers into “Department follow-up answers” and re-run to fill these in. Unstated details fall back to marked defaults — nothing was invented.</p>
-      </div>`
-    : `<div class="gap-report" data-tone="ok">
-        <p class="gap-title">Policy covers everything needed for production. Safe to publish.</p>
-      </div>`;
-
-  const emailHtml = data.emailDraft
-    ? `<div class="email-draft">
-        <div class="email-head">
-          <p class="eyebrow">Email draft — ask the department for the missing details</p>
-          <div class="email-actions">
-            <button class="btn btn-secondary btn-sm" type="button" id="copyEmailBtn">Copy email</button>
-            ${data.emailDraftDocUrl ? `<a class="btn btn-ghost btn-sm" href="${escapeHtml(data.emailDraftDocUrl)}" target="_blank" rel="noreferrer">Open in Drive</a>` : ""}
-          </div>
-        </div>
-        <p class="email-subject"><b>Subject:</b> ${escapeHtml(data.emailDraft.subject)}</p>
-        <textarea class="email-body" id="emailBody" readonly rows="10" aria-label="Email draft body">${escapeHtml(data.emailDraft.body)}</textarea>
-      </div>`
-    : "";
+  const gapsHtml = gapReportMarkup(
+    gaps,
+    "Send the email draft below, then paste the answers into “Department follow-up answers” and re-run to fill these in. Unstated details fall back to marked defaults — nothing was invented."
+  );
+  const emailHtml = emailDraftMarkup(data.emailDraft, {
+    copyId: "copyEmailBtn",
+    bodyId: "emailBody",
+    driveUrl: data.emailDraftDocUrl
+  });
 
   const productsHtml = data.products
     .map((p) => {
@@ -346,25 +484,7 @@ function renderReview(data) {
   el("publishRunBtn").addEventListener("click", startPublish);
   el("discardRunBtn").addEventListener("click", discardRun);
   const copyBtn = el("copyEmailBtn");
-  if (copyBtn) copyBtn.addEventListener("click", () => copyEmailDraft(copyBtn));
-}
-
-async function copyEmailDraft(button) {
-  if (!activeEmailDraft) return;
-  const text = `Subject: ${activeEmailDraft.subject}\n\n${activeEmailDraft.body}`;
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const body = el("emailBody");
-    body.focus();
-    body.select();
-    document.execCommand("copy");
-  }
-  const original = button.textContent;
-  button.textContent = "Copied ✓";
-  setTimeout(() => {
-    button.textContent = original;
-  }, 1600);
+  if (copyBtn) copyBtn.addEventListener("click", () => copyEmail(activeEmailDraft, copyBtn, "emailBody"));
 }
 
 function setPublishBusy(busy) {
@@ -774,12 +894,15 @@ form.addEventListener("submit", async (e) => {
   summary.innerHTML = "";
   review.hidden = true;
   review.innerHTML = "";
+  analysis.hidden = true;
+  analysis.innerHTML = "";
   activeRunId = null;
   activeEmailDraft = null;
   conflictStrategy.value = "fail";
   resetTimeline();
   setRunHeader("running", "Starting…", "Uploading files and preparing the workspace.");
 
+  analyzeButton.disabled = true;
   runButton.disabled = true;
   runButton.querySelector(".btn-label").textContent = "Running…";
   runButton.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
@@ -790,6 +913,7 @@ form.addEventListener("submit", async (e) => {
     setRunHeader("error", "Run failed", "An unexpected error interrupted the run.");
     showRunError(err.message || "Unexpected error.");
   } finally {
+    analyzeButton.disabled = false;
     runButton.disabled = false;
     runButton.querySelector(".spinner")?.remove();
     runButton.querySelector(".btn-label").textContent = "Run onboarding";
@@ -838,6 +962,8 @@ document.addEventListener("click", async (e) => {
 departmentInput.addEventListener("input", () => {
   if (departmentInput.value.trim()) hideFieldError(departmentInput, departmentError);
 });
+
+analyzeButton.addEventListener("click", runAnalyze);
 
 wireDropzone("logos", logoInput, renderLogoThumbs, isImage);
 wireDropzone("policies", policyInput, renderPolicyChips, isDoc);

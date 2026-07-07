@@ -1,4 +1,5 @@
 const fetch = require("node-fetch");
+const sharp = require("sharp");
 
 // GraphQL Admin API. Product creation MUST use GraphQL: the store sells one
 // product per garment with a Front Logo variant per uploaded logo (30+ logos ×
@@ -153,6 +154,49 @@ async function ensureManualCollection(title) {
         published: true
       }
     })
+  });
+  return json.custom_collection;
+}
+
+async function collectionImageInput(image) {
+  if (!image?.buffer) return null;
+  const normalized = await sharp(image.buffer, { density: 300 })
+    .rotate()
+    .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true })
+    .png()
+    .toBuffer();
+  return {
+    attachment: normalized.toString("base64"),
+    alt: image.alt || ""
+  };
+}
+
+async function ensureManualCollectionWithImage(title, image) {
+  const imageInput = await collectionImageInput(image);
+  const existing = await findCollectionByTitle(title);
+  if (existing) {
+    if (!imageInput) return existing;
+    const json = await shopifyRequest(`/custom_collections/${existing.id}.json`, {
+      method: "PUT",
+      body: JSON.stringify({
+        custom_collection: {
+          id: existing.id,
+          image: imageInput
+        }
+      })
+    });
+    return json.custom_collection;
+  }
+
+  const custom_collection = {
+    title,
+    published: true
+  };
+  if (imageInput) custom_collection.image = imageInput;
+
+  const json = await shopifyRequest("/custom_collections.json", {
+    method: "POST",
+    body: JSON.stringify({ custom_collection })
   });
   return json.custom_collection;
 }
