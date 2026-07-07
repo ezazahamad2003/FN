@@ -262,11 +262,6 @@ function normalizePolicyProducts(items) {
   return items
     .filter((item) => item.productLabel && item.productPrompt)
     .map((item) => {
-      const logoSlugs = Array.isArray(item.logoSlugs)
-        ? item.logoSlugs
-        : item.logoSlug
-          ? [item.logoSlug]
-          : ["all"];
 
       const sizeChart =
         item.sizeChart && Array.isArray(item.sizeChart.headers) && Array.isArray(item.sizeChart.rows)
@@ -290,8 +285,8 @@ function normalizePolicyProducts(items) {
         sizes: Array.isArray(item.sizes) ? item.sizes.map((s) => String(s).trim()).filter(Boolean) : [],
         sizeChart,
         productionNotes: item.productionNotes || "Verify exact garment requirements against the uploaded policy documents.",
-        logoSlugs: logoSlugs.map((slug) => String(slug).trim()).filter(Boolean),
-        assignmentNotes: item.assignmentNotes || ""
+        logoSlugs: ["all"],
+        assignmentNotes: "All uploaded logos are offered as Front Logo variants for this product."
       };
     });
 }
@@ -321,7 +316,7 @@ async function determinePolicyProducts(departmentName, policyText, logos = []) {
 
 CRITICAL RULE — no invention: only use details explicitly stated in the documents. If a detail (color, brand, fabric, sizes, placement, decoration method, size chart) is NOT stated, return an empty string (or empty array / null) for that field. Never guess or fill in typical values.
 
-LOGO ASSIGNMENT — the store sells every garment with a "Front Logo" choice, so by default EVERY uploaded logo is offered on EVERY product: use ["all"]. Only restrict logoSlugs when the policy explicitly limits which logo may appear on a product (e.g. "hats shall carry only the Engine 1 logo").
+LOGO ASSIGNMENT — the store sells every garment, including hats, with the same "Front Logo" choice set. EVERY uploaded logo is offered on EVERY product. Always return logoSlugs as ["all"]. Do not restrict hats, caps, or any other garment to a single logo.
 
 Look specifically for shirts, long sleeve shirts, hats, pants, hoodies, jackets, job shirts, polos, or other gear.
 
@@ -337,13 +332,13 @@ Return JSON only: {"products": [...]} where each product object has:
 - sizes: array of size strings if the policy states the size range, else []
 - sizeChart: only if the documents contain an explicit size chart: {"headers": ["S","M",...], "rows": [{"label": "Chest", "values": ["19","20 1/2",...]}]}. Otherwise null. Copy numbers exactly.
 - productionNotes: concise instructions based only on stated policy details
-- logoSlugs: ["all"] by default (see LOGO ASSIGNMENT above); an explicit list of logo slug values only when the policy restricts logos for this product
-- assignmentNotes: concise reason for why those logoSlugs apply
+- logoSlugs: always ["all"] (see LOGO ASSIGNMENT above)
+- assignmentNotes: "All uploaded logos are offered as Front Logo variants."
 
 If the documents do not clearly define products, return {"products": []}.
 
 Uploaded logo catalog:
-${logoCatalog || 'No logo catalog available. Use ["all"] for logoSlugs.'}
+${logoCatalog || 'No logo catalog available. Still use ["all"] for logoSlugs.'}
 
 Policy text:
 ${policyText}`

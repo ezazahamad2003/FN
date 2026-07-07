@@ -189,15 +189,10 @@ function requestOrigin(req) {
 }
 
 function resolveProductLogos(product, logoRuns) {
-  const requestedSlugs = Array.isArray(product.logoSlugs)
-    ? product.logoSlugs.map((value) => String(value).toLowerCase().trim()).filter(Boolean)
-    : [];
-
-  if (!requestedSlugs.length || requestedSlugs.includes("all")) return logoRuns;
-
-  const logosBySlug = new Map(logoRuns.map((logo) => [logo.slug.toLowerCase(), logo]));
-  const selected = requestedSlugs.map((logoSlug) => logosBySlug.get(logoSlug)).filter(Boolean);
-  return selected.length ? selected : logoRuns;
+  // The store merchandises every garment, including hats, with the same Front
+  // Logo choice set. Policy extraction can still describe placement/method,
+  // but it cannot narrow Shopify variants down to one uploaded logo.
+  return logoRuns;
 }
 
 // Front Logo option values must be unique per product, so duplicate display

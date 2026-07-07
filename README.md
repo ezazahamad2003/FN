@@ -90,8 +90,8 @@ color-coded as **stated by policy (green)** vs **fallback default (amber)**.
 
 8. Create or reuse a Shopify manual collection and set its image from the first uploaded logo.
 9. Create products via the **GraphQL Admin API**: one product per garment with
-   **Front Logo × Size** options. By default **every uploaded logo is offered on
-   every product** (the policy can explicitly restrict logos per garment).
+   **Front Logo × Size** options. **Every uploaded logo is offered on
+   every product**, including hats and caps.
    GraphQL supports up to 2048 variants per product, so 30+ logos × 7 sizes
    (default XS–3XL) fit on a single product like the store's real listings.
    Each logo's mockup image is uploaded through staged uploads and attached to
