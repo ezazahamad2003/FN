@@ -178,7 +178,7 @@ h3 { font-size: var(--fs-base); line-height: 1.35; }
    Layout shells
    ========================================================================== */
 .app-shell {
-  width: min(1180px, calc(100% - var(--space-6)));
+  width: min(1400px, calc(100% - var(--space-6)));
   margin: 0 auto;
   padding: var(--space-5) 0 var(--space-8);
 }
@@ -276,27 +276,20 @@ h3 { font-size: var(--fs-base); line-height: 1.35; }
    ========================================================================== */
 .hero {
   margin-bottom: var(--space-5);
-  padding-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 .hero h2 {
-  max-width: 60ch;
-  font-size: var(--fs-2xl);
+  max-width: 72ch;
+  font-size: var(--fs-xl);
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .hero p { margin-top: var(--space-2); max-width: 64ch; color: var(--text-muted); }
 
 /* =============================================================================
-   Connection cards row
+   Connection cards (now compact, inside the right rail)
    ========================================================================== */
-.connections {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
-  margin-bottom: var(--space-5);
-}
-
 .service-card {
   display: flex;
   align-items: center;
@@ -306,8 +299,8 @@ h3 { font-size: var(--fs-base); line-height: 1.35; }
   border: 1px solid var(--border);
   border-left-width: 3px;
   border-radius: var(--radius-md);
-  background: var(--surface);
-  padding: var(--space-4);
+  background: var(--surface-2);
+  padding: var(--space-3);
   transition: border-color var(--t-fast), background var(--t-fast);
 }
 .service-card .info { min-width: 0; display: flex; align-items: center; gap: var(--space-3); }
@@ -345,13 +338,82 @@ h3 { font-size: var(--fs-base); line-height: 1.35; }
 .service-card[data-state="checking"] .state .dot { animation: pulse 1.4s ease-in-out infinite; }
 
 /* =============================================================================
-   Workspace (form + run status)
+   Workspace — 3 columns: inputs (big) · run status (normal) · rail (small)
    ========================================================================== */
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.05fr) 260px;
   gap: var(--space-4);
   align-items: start;
+}
+
+/* -----------------------------------------------------------------------------
+   Right rail — compact connections + quick reference
+   -------------------------------------------------------------------------- */
+.rail {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+  position: sticky;
+  top: var(--space-4);
+}
+.rail-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+.rail-title {
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+}
+
+/* Connection cards stack vertically in the narrow rail. */
+.rail .service-card { flex-direction: column; align-items: stretch; gap: var(--space-3); }
+.rail .service-card .info { align-items: flex-start; }
+.rail .service-card .glyph { width: 32px; height: 32px; }
+.rail .service-card .name { font-size: var(--fs-sm); }
+.rail .service-card .state { font-size: var(--fs-xs); align-items: flex-start; overflow-wrap: anywhere; }
+.rail .service-card .state .dot { margin-top: 4px; }
+.rail .service-card .state-text { overflow-wrap: anywhere; }
+.rail .service-card .actions { justify-content: stretch; }
+.rail .service-card .actions .btn { flex: 1; }
+
+.rail-flow {
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.rail-flow li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.rail-flow li span {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+}
+.rail-note {
+  margin-top: var(--space-1);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
 }
 
 .card {
@@ -974,9 +1036,20 @@ input[aria-invalid="true"],
 /* =============================================================================
    Responsive — checked at 1280 / 768 / 375
    ========================================================================== */
-@media (max-width: 900px) {
+/* Wide but not huge: drop the rail under the two working columns. */
+@media (max-width: 1160px) {
+  .workspace { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+  .rail {
+    grid-column: 1 / -1;
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+}
+
+@media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; }
-  .connections { grid-template-columns: 1fr; }
+  .rail { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 560px) {
