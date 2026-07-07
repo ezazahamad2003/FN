@@ -719,6 +719,175 @@ input[aria-invalid="true"],
 .product-card .pc-title { font-size: var(--fs-sm); font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
 .product-card .pc-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
+/* Cleanup zone — undo a published run (danger action, deliberately quiet). */
+.cleanup-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  border: 1px dashed var(--danger-border);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+}
+.cleanup-zone .cz-text { display: grid; gap: var(--space-1); flex: 1 1 320px; }
+.cleanup-zone .cz-title { font-weight: 700; color: var(--danger); font-size: var(--fs-sm); }
+.cleanup-zone .cz-sub { color: var(--text-muted); font-size: var(--fs-xs); }
+.cleanup-zone[data-state="done"] {
+  border-style: solid;
+  border-color: var(--success-border);
+  background: var(--success-soft);
+}
+.cleanup-zone[data-state="done"] .cz-title { color: var(--success); }
+.cleanup-zone[data-state="partial"] {
+  border-style: solid;
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+}
+.cleanup-zone[data-state="partial"] .cz-title { color: var(--warn); }
+
+/* =============================================================================
+   Review gate — generated assets shown for approval before anything is
+   published to Shopify. Color coding: warn = policy gaps, success = complete.
+   ========================================================================== */
+.review { margin-top: var(--space-5); display: grid; gap: var(--space-5); }
+.review[hidden] { display: none; }
+
+.review-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.review-head h2 { margin: 0; }
+
+.confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.confidence[data-tone="ok"] { color: var(--success); background: var(--success-soft); border: 1px solid var(--success-border); }
+.confidence[data-tone="warn"] { color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn-border); }
+
+.gap-report {
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+  font-size: var(--fs-sm);
+}
+.gap-report[data-tone="warn"] { background: var(--warn-soft); border: 1px solid var(--warn-border); }
+.gap-report[data-tone="ok"] { background: var(--success-soft); border: 1px solid var(--success-border); }
+.gap-report .gap-title { font-weight: 700; }
+.gap-report[data-tone="warn"] .gap-title { color: var(--warn); }
+.gap-report[data-tone="ok"] .gap-title { color: var(--success); }
+.gap-list { margin: 0; padding-left: var(--space-5); display: grid; gap: var(--space-2); color: var(--text); }
+.gap-list b { color: var(--text); }
+.gap-report .gap-note { color: var(--text-muted); font-size: var(--fs-xs); }
+
+.email-draft {
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-md);
+  background: var(--info-soft);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+.email-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.email-head .eyebrow { color: var(--info); }
+.email-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.email-subject { font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; }
+.email-body {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  padding: var(--space-3);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.rv-products { display: grid; gap: var(--space-4); }
+.rv-product {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+.rv-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.rv-head h3 { margin: 0; font-size: var(--fs-lg); overflow-wrap: anywhere; }
+.rv-count { color: var(--text-subtle); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; }
+
+.meta-chips { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.m-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+.m-chip b { color: var(--text-subtle); font-weight: 700; text-transform: uppercase; font-size: 0.65rem; letter-spacing: 0.04em; }
+/* A detail actually stated by the policy reads as confirmed… */
+.m-chip[data-known="true"] { border-color: var(--success-border); background: var(--success-soft); color: var(--text); }
+.m-chip[data-known="true"] b { color: var(--success); }
+/* …a fallback/default reads as needs-attention. */
+.m-chip[data-known="false"] { border-color: var(--warn-border); background: var(--warn-soft); }
+.m-chip[data-known="false"] b { color: var(--warn); }
+
+.rv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-3);
+}
+.rv-img {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+.rv-img img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; background: #fff; }
+.rv-img figcaption {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+}
+.review-actions .rv-spacer { flex: 1; }
+
 /* =============================================================================
    Modal (folder conflict) — accessible, Escape + backdrop close
    ========================================================================== */
@@ -821,4 +990,7 @@ input[aria-invalid="true"],
   .summary-head { flex-direction: column; align-items: flex-start; }
   .summary-actions .btn { flex: 1; }
   .modal-actions .btn { flex: 1; }
+  .review-head { flex-direction: column; align-items: flex-start; }
+  .review-actions { flex-direction: column; align-items: stretch; }
+  .review-actions .rv-spacer { display: none; }
 }

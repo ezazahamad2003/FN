@@ -2,3 +2,7 @@ node_modules/
 server.out.log
 server.err.log
 .env
+
+# Local tooling and test artifacts
+.claude/settings.local.json
+test-run/

@@ -1,12 +1,20 @@
 const fetch = require("node-fetch");
 
-const API_VERSION = "2024-01";
+// GraphQL Admin API. Product creation MUST use GraphQL: the store sells one
+// product per garment with a Front Logo variant per uploaded logo (30+ logos ×
+// 7 sizes on real departments), and REST products are capped at 100 variants.
+// GraphQL supports up to 2048 variants per product.
+const API_VERSION = "2024-07";
 
 // Re-mint the token a few minutes before it actually expires so requests never
 // race the expiry boundary.
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 // Proactive background refresh interval — comfortably inside the ~24h token life.
 const TOKEN_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
+
+const DEFAULT_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
+// GraphQL variant cap per product. Beyond this the caller splits per logo.
+const MAX_VARIANTS = 2048;
 
 let cachedToken = null;
 let tokenExpiresAt = 0;
@@ -102,6 +110,32 @@ async function shopifyRequest(path, options = {}) {
   return json;
 }
 
+async function graphql(query, variables = {}) {
+  const json = await shopifyRequest("/graphql.json", {
+    method: "POST",
+    body: JSON.stringify({ query, variables })
+  });
+  if (json.errors?.length) {
+    throw new Error(`Shopify GraphQL: ${JSON.stringify(json.errors)}`);
+  }
+  return json.data;
+}
+
+function assertNoUserErrors(operation, userErrors) {
+  if (userErrors?.length) {
+    throw new Error(`Shopify ${operation}: ${userErrors.map((e) => e.message).join("; ")}`);
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/* ---------------------------------------------------------------------------
+   Collections — REST custom collections + collects (unaffected by the
+   variant limits that deprecate REST product endpoints).
+   ------------------------------------------------------------------------- */
+
 async function findCollectionByTitle(title) {
   const params = new URLSearchParams({ title, limit: "250" });
   const json = await shopifyRequest(`/custom_collections.json?${params}`);
@@ -123,34 +157,6 @@ async function ensureManualCollection(title) {
   return json.custom_collection;
 }
 
-async function createProduct({ title, bodyHtml, price }) {
-  const json = await shopifyRequest("/products.json", {
-    method: "POST",
-    body: JSON.stringify({
-      product: {
-        title,
-        body_html: bodyHtml,
-        status: "active",
-        variants: [{ price }]
-      }
-    })
-  });
-  return json.product;
-}
-
-async function uploadProductImage(productId, filename, buffer) {
-  const json = await shopifyRequest(`/products/${productId}/images.json`, {
-    method: "POST",
-    body: JSON.stringify({
-      image: {
-        attachment: buffer.toString("base64"),
-        filename
-      }
-    })
-  });
-  return json.image;
-}
-
 async function addProductToCollection(productId, collectionId) {
   const json = await shopifyRequest("/collects.json", {
     method: "POST",
@@ -164,6 +170,295 @@ async function addProductToCollection(productId, collectionId) {
   return json.collect;
 }
 
+/* ---------------------------------------------------------------------------
+   Products — GraphQL productSet with Front Logo × Size variants.
+   ------------------------------------------------------------------------- */
+
+const PRODUCT_SET_MUTATION = `
+mutation productSet($input: ProductSetInput!, $synchronous: Boolean!) {
+  productSet(input: $input, synchronous: $synchronous) {
+    product { id legacyResourceId title }
+    productSetOperation { id status }
+    userErrors { code field message }
+  }
+}`;
+
+const PRODUCT_OPERATION_QUERY = `
+query productOperation($id: ID!) {
+  productOperation(id: $id) {
+    ... on ProductSetOperation {
+      id
+      status
+      product { id legacyResourceId title }
+      userErrors { code field message }
+    }
+  }
+}`;
+
+const PRODUCT_VARIANTS_QUERY = `
+query productVariants($id: ID!, $after: String) {
+  product(id: $id) {
+    id
+    legacyResourceId
+    title
+    variants(first: 250, after: $after) {
+      nodes { id title selectedOptions { name value } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+async function fetchAllVariants(productGid) {
+  const variants = [];
+  let after = null;
+  let product = null;
+  do {
+    const data = await graphql(PRODUCT_VARIANTS_QUERY, { id: productGid, after });
+    product = data.product;
+    if (!product) throw new Error(`Shopify product ${productGid} not found after creation.`);
+    variants.push(...product.variants.nodes);
+    after = product.variants.pageInfo.hasNextPage ? product.variants.pageInfo.endCursor : null;
+  } while (after);
+  return { product, variants };
+}
+
+// Create one product per garment, matching the store's merchandising: options
+// "Front Logo" (one value per logo) and "Size". Single-logo products get only
+// a Size option. Large departments (30+ logos × 7 sizes) go through the async
+// productSet path, which supports up to 2048 variants.
+async function createProductWithVariants({ title, bodyHtml, price, productType, vendor, tags, logoValues = [], sizes = [] }) {
+  const sizeValues = sizes.length ? sizes : DEFAULT_SIZES;
+  const useLogoOption = logoValues.length > 1;
+
+  const productOptions = useLogoOption
+    ? [
+        { name: "Front Logo", position: 1, values: logoValues.map((name) => ({ name })) },
+        { name: "Size", position: 2, values: sizeValues.map((name) => ({ name })) }
+      ]
+    : [{ name: "Size", position: 1, values: sizeValues.map((name) => ({ name })) }];
+
+  const variants = [];
+  if (useLogoOption) {
+    for (const logo of logoValues) {
+      for (const size of sizeValues) {
+        variants.push({
+          optionValues: [
+            { optionName: "Front Logo", name: logo },
+            { optionName: "Size", name: size }
+          ],
+          price
+        });
+      }
+    }
+  } else {
+    for (const size of sizeValues) {
+      variants.push({ optionValues: [{ optionName: "Size", name: size }], price });
+    }
+  }
+  if (variants.length > MAX_VARIANTS) {
+    throw new Error(`${title}: ${variants.length} variants exceed Shopify's ${MAX_VARIANTS}-variant limit. Split the product or reduce sizes/logos.`);
+  }
+
+  const input = {
+    title,
+    descriptionHtml: bodyHtml,
+    status: "ACTIVE",
+    productType: productType || "",
+    vendor: vendor || "",
+    tags: tags || [],
+    productOptions,
+    variants
+  };
+
+  // Synchronous productSet caps at 100 variants; larger products run as an
+  // async operation that we poll to completion.
+  const synchronous = variants.length <= 100;
+  const data = await graphql(PRODUCT_SET_MUTATION, { input, synchronous });
+  assertNoUserErrors("productSet", data.productSet.userErrors);
+
+  let productGid = data.productSet.product?.id || null;
+  if (!synchronous) {
+    const operationId = data.productSet.productSetOperation?.id;
+    if (!operationId) throw new Error("Shopify productSet did not return an operation id.");
+    const deadline = Date.now() + 180 * 1000;
+    for (;;) {
+      const poll = await graphql(PRODUCT_OPERATION_QUERY, { id: operationId });
+      const operation = poll.productOperation;
+      assertNoUserErrors("productSet operation", operation?.userErrors);
+      if (operation?.status === "COMPLETE") {
+        productGid = operation.product?.id;
+        break;
+      }
+      if (Date.now() > deadline) throw new Error(`Shopify productSet for "${title}" timed out.`);
+      await sleep(2000);
+    }
+  }
+  if (!productGid) throw new Error(`Shopify did not return a product for "${title}".`);
+
+  const { product, variants: createdVariants } = await fetchAllVariants(productGid);
+  return {
+    productGid,
+    productId: String(product.legacyResourceId),
+    title: product.title,
+    variants: createdVariants,
+    variantCount: createdVariants.length,
+    useLogoOption
+  };
+}
+
+// Map each Front Logo option value to its variant GIDs so every logo's mockup
+// image can be attached to exactly its variants.
+function variantIdsByLogo(variants, useLogoOption) {
+  const map = new Map();
+  for (const variant of variants) {
+    const key = useLogoOption
+      ? variant.selectedOptions.find((option) => option.name === "Front Logo")?.value || "__all__"
+      : "__all__";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(variant.id);
+  }
+  return map;
+}
+
+/* ---------------------------------------------------------------------------
+   Product images — staged upload → productCreateMedia → attach to variants.
+   GraphQL media has no base64 attachment path, so images go through Shopify's
+   staged upload targets (multipart POST via the Node 18+ global fetch).
+   ------------------------------------------------------------------------- */
+
+const STAGED_UPLOADS_MUTATION = `
+mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+  stagedUploadsCreate(input: $input) {
+    stagedTargets { url resourceUrl parameters { name value } }
+    userErrors { field message }
+  }
+}`;
+
+const PRODUCT_CREATE_MEDIA_MUTATION = `
+mutation productCreateMedia($productId: ID!, $media: [CreateMediaInput!]!) {
+  productCreateMedia(productId: $productId, media: $media) {
+    media { ... on MediaImage { id status } }
+    mediaUserErrors { code field message }
+  }
+}`;
+
+const MEDIA_STATUS_QUERY = `
+query mediaStatus($ids: [ID!]!) {
+  nodes(ids: $ids) { ... on MediaImage { id status } }
+}`;
+
+const VARIANT_APPEND_MEDIA_MUTATION = `
+mutation productVariantAppendMedia($productId: ID!, $variantMedia: [ProductVariantAppendMediaInput!]!) {
+  productVariantAppendMedia(productId: $productId, variantMedia: $variantMedia) {
+    product { id }
+    userErrors { code field message }
+  }
+}`;
+
+async function stagedUpload(filename, buffer) {
+  const data = await graphql(STAGED_UPLOADS_MUTATION, {
+    input: [{ filename, mimeType: "image/png", httpMethod: "POST", resource: "IMAGE" }]
+  });
+  assertNoUserErrors("stagedUploadsCreate", data.stagedUploadsCreate.userErrors);
+  const target = data.stagedUploadsCreate.stagedTargets?.[0];
+  if (!target) throw new Error("Shopify did not return a staged upload target.");
+
+  // Node 18+ global FormData/Blob (node-fetch@2 lacks multipart support).
+  const form = new FormData();
+  for (const param of target.parameters) form.append(param.name, param.value);
+  form.append("file", new Blob([buffer], { type: "image/png" }), filename);
+  const uploadRes = await globalThis.fetch(target.url, { method: "POST", body: form });
+  if (!uploadRes.ok) {
+    throw new Error(`Staged image upload failed (${uploadRes.status}): ${(await uploadRes.text()).slice(0, 300)}`);
+  }
+  return target.resourceUrl;
+}
+
+async function waitForMediaReady(mediaIds) {
+  const deadline = Date.now() + 90 * 1000;
+  let pending = [...mediaIds];
+  while (pending.length) {
+    const data = await graphql(MEDIA_STATUS_QUERY, { ids: pending });
+    const failed = (data.nodes || []).filter((node) => node && node.status === "FAILED");
+    if (failed.length) throw new Error(`Shopify media processing failed for ${failed.map((f) => f.id).join(", ")}`);
+    pending = (data.nodes || []).filter((node) => node && node.status !== "READY").map((node) => node.id);
+    if (!pending.length) break;
+    if (Date.now() > deadline) throw new Error("Timed out waiting for Shopify media processing.");
+    await sleep(1500);
+  }
+}
+
+// Upload every logo's mockup and bind it to that logo's variants. `images` is
+// [{ filename, buffer, alt, variantIds }].
+async function uploadProductImages(productGid, images) {
+  if (!images.length) return [];
+
+  const media = [];
+  for (const image of images) {
+    const resourceUrl = await stagedUpload(image.filename, image.buffer);
+    media.push({ originalSource: resourceUrl, alt: image.alt || "", mediaContentType: "IMAGE" });
+  }
+
+  const created = await graphql(PRODUCT_CREATE_MEDIA_MUTATION, { productId: productGid, media });
+  assertNoUserErrors("productCreateMedia", created.productCreateMedia.mediaUserErrors);
+  // productCreateMedia returns media in input order, so index-align with images.
+  const mediaIds = (created.productCreateMedia.media || []).map((node) => node.id);
+  if (mediaIds.length !== images.length) {
+    throw new Error(`Shopify created ${mediaIds.length} of ${images.length} product images.`);
+  }
+
+  await waitForMediaReady(mediaIds);
+
+  const variantMedia = images
+    .map((image, index) => ({ mediaIds: [mediaIds[index]], variantIds: image.variantIds || [] }))
+    .filter((entry) => entry.variantIds.length)
+    .flatMap((entry) => entry.variantIds.map((variantId) => ({ variantId, mediaIds: entry.mediaIds })));
+  if (variantMedia.length) {
+    const appended = await graphql(VARIANT_APPEND_MEDIA_MUTATION, { productId: productGid, variantMedia });
+    assertNoUserErrors("productVariantAppendMedia", appended.productVariantAppendMedia.userErrors);
+  }
+  return mediaIds;
+}
+
+/* ---------------------------------------------------------------------------
+   Cleanup (undo a published run).
+   ------------------------------------------------------------------------- */
+
+const PRODUCT_DELETE_MUTATION = `
+mutation productDelete($input: ProductDeleteInput!) {
+  productDelete(input: $input) {
+    deletedProductId
+    userErrors { field message }
+  }
+}`;
+
+const COLLECTION_COUNT_QUERY = `
+query collectionProductsCount($id: ID!) {
+  collection(id: $id) { id productsCount { count } }
+}`;
+
+// Deleting an already-deleted resource is treated as success so cleanup can be
+// retried safely.
+async function deleteProduct(productGid) {
+  const data = await graphql(PRODUCT_DELETE_MUTATION, { input: { id: productGid } });
+  const errors = data.productDelete.userErrors || [];
+  const alreadyGone = errors.every((e) => /does not exist|not found/i.test(e.message));
+  if (errors.length && !alreadyGone) assertNoUserErrors("productDelete", errors);
+}
+
+async function deleteCollection(collectionId) {
+  try {
+    await shopifyRequest(`/custom_collections/${collectionId}.json`, { method: "DELETE" });
+  } catch (error) {
+    if (!/^Shopify 404/.test(String(error?.message || ""))) throw error;
+  }
+}
+
+async function countProductsInCollection(collectionId) {
+  const data = await graphql(COLLECTION_COUNT_QUERY, { id: `gid://shopify/Collection/${collectionId}` });
+  return Number(data.collection?.productsCount?.count || 0);
+}
+
 function adminCollectionUrl(collectionId) {
   return `https://${process.env.SHOPIFY_STORE}/admin/collections/${collectionId}`;
 }
@@ -173,13 +468,19 @@ function adminProductUrl(productId) {
 }
 
 module.exports = {
+  DEFAULT_SIZES,
+  MAX_VARIANTS,
   addProductToCollection,
   adminCollectionUrl,
   adminProductUrl,
-  createProduct,
+  countProductsInCollection,
+  createProductWithVariants,
+  deleteCollection,
+  deleteProduct,
   ensureManualCollection,
   getAccessToken,
   shopifyConnected,
   startTokenAutoRefresh,
-  uploadProductImage
+  uploadProductImages,
+  variantIdsByLogo
 };

@@ -113,6 +113,24 @@
               <div class="chips" id="policyChips"></div>
             </div>
 
+            <div class="field">
+              <label for="followUpText">Department follow-up answers <span style="color:var(--text-subtle);font-weight:600">(optional)</span></label>
+              <textarea id="followUpText" name="followUpText" rows="4"
+                        placeholder="Paste the department's replies to the policy-gaps email — placements, colors, garment styles, sizes…"></textarea>
+              <div class="dropzone" data-dropzone="followUps">
+                <input id="followUps" name="followUps" type="file"
+                       accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                       multiple>
+                <span class="dz-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2Z"/><polyline points="22,6 12,13 2,6"/></svg>
+                </span>
+                <span class="dz-title"><b>Click to upload</b> or drag &amp; drop</span>
+                <span class="dz-sub">Follow-up emails or updated policy docs from the department</span>
+              </div>
+              <div class="chips" id="followUpChips"></div>
+              <p class="hint">If the policy doc is missing details, the run pauses and drafts an email asking for them. Add the answers here and re-run to fill the gaps.</p>
+            </div>
+
             <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
 
             <button class="btn btn-primary btn-block" type="submit" id="runButton">
@@ -184,39 +202,44 @@
                     <span class="step-name">Detect products from policies</span>
                     <span class="step-state">Pending</span>
                   </li>
+                  <li class="step" data-step="5" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Check policy completeness</span>
+                    <span class="step-state">Pending</span>
+                  </li>
                 </ol>
               </div>
 
               <div class="phase">
                 <p class="phase-label">Generation</p>
                 <ol class="timeline">
-                  <li class="step" data-step="5" data-state="pending">
-                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
-                    <span class="step-name">Generate product images</span>
-                    <span class="step-state">Pending</span>
-                  </li>
                   <li class="step" data-step="6" data-state="pending">
                     <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
-                    <span class="step-name">Write descriptions &amp; manual</span>
+                    <span class="step-name">Generate product images (exact logo)</span>
+                    <span class="step-state">Pending</span>
+                  </li>
+                  <li class="step" data-step="7" data-state="pending">
+                    <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
+                    <span class="step-name">Write descriptions, manual &amp; gap email</span>
                     <span class="step-state">Pending</span>
                   </li>
                 </ol>
               </div>
 
               <div class="phase">
-                <p class="phase-label">Shopify</p>
+                <p class="phase-label">Shopify — after your approval</p>
                 <ol class="timeline">
-                  <li class="step" data-step="7" data-state="pending">
+                  <li class="step" data-step="8" data-state="pending">
                     <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
                     <span class="step-name">Create Shopify collection</span>
                     <span class="step-state">Pending</span>
                   </li>
-                  <li class="step" data-step="8" data-state="pending">
+                  <li class="step" data-step="9" data-state="pending">
                     <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
-                    <span class="step-name">Create Shopify products</span>
+                    <span class="step-name">Create Shopify products (variants)</span>
                     <span class="step-state">Pending</span>
                   </li>
-                  <li class="step" data-step="9" data-state="pending">
+                  <li class="step" data-step="10" data-state="pending">
                     <span class="node" aria-hidden="true"><span class="spinner"></span><svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>
                     <span class="step-name">Add products to collection</span>
                     <span class="step-state">Pending</span>
@@ -226,6 +249,9 @@
             </div>
           </section>
         </div>
+
+        <!-- ─────────────── Review & approve (before Shopify) ─────────────── -->
+        <section id="review" class="review card card-pad" hidden aria-label="Review generated products before publishing"></section>
 
         <!-- ───────────────────────── Summary ───────────────────────── -->
         <section id="summary" class="summary card card-pad" hidden></section>

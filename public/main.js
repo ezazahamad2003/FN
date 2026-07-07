@@ -1,19 +1,27 @@
 /* =============================================================================
    FN Onboarding — front-end controller
    -----------------------------------------------------------------------------
-   Backend contract is unchanged:
-     • POST /onboard (multipart: departmentName, logos[], policies[], conflictStrategy)
+   Backend contract:
+     • POST /onboard (multipart: departmentName, logos[], policies[],
+       followUps[], followUpText, conflictStrategy)
        → 400/401 JSON error, 409 JSON folder-conflict, or an SSE stream of
-         `status` / `error` / `summary` events (each with a `step` + `state`).
+         `status` / `error` events ending in a `review` event (steps 1–7).
+       Nothing is published to Shopify in this phase.
+     • POST /publish { runId } → SSE stream of `status` / `error` events
+       ending in a `summary` event (steps 8–10). Runs only on user approval.
+     • POST /discard { runId } → drops the pending run.
+     • POST /cleanup { runId } → undoes a published run (delete its Shopify
+       products, delete the collection if then empty, trash the Drive folder).
+       Available for 24h after publish.
      • GET  /health → { shopifyConnected, shopifyStore, googleConnected }
      • POST /auth/{shopify|google}/disconnect
 
    This file only owns presentation: it maps SSE `step`/`state` onto a visual
-   timeline + progress bar, renders file previews, and handles the folder
-   conflict with an accessible modal instead of window.confirm.
+   timeline + progress bar, renders file previews, renders the review gate,
+   and handles the folder conflict with an accessible modal.
    ========================================================================== */
 
-const TOTAL_STEPS = 9; // steps rendered in the timeline (10 = summary event)
+const TOTAL_STEPS = 10; // 7 analyze/generate + 3 publish (review gate between)
 
 const el = (id) => document.getElementById(id);
 
@@ -29,6 +37,9 @@ const logoError = el("logoError");
 const logoThumbs = el("logoThumbs");
 const policyInput = el("policies");
 const policyChips = el("policyChips");
+const followUpInput = el("followUps");
+const followUpChips = el("followUpChips");
+const review = el("review");
 
 const runStatus = el("runStatus");
 const runLabel = el("runLabel");
@@ -127,6 +138,52 @@ function showRunError(message) {
 /* -----------------------------------------------------------------------------
    Summary
    -------------------------------------------------------------------------- */
+async function runCleanup(data) {
+  const count = data.cleanup?.productCount ?? data.products.length;
+  const collectionName = data.cleanup?.collectionTitle || data.departmentName || "the department collection";
+  const confirmed = window.confirm(
+    "Delete everything this run created?\n\n" +
+      `- ${count} Shopify product${count === 1 ? "" : "s"}\n` +
+      `- Collection "${collectionName}" (deleted only if empty afterwards)\n` +
+      "- Drive folder (moved to Drive trash, recoverable for ~30 days)\n\n" +
+      "Products and the collection cannot be restored from here."
+  );
+  if (!confirmed) return;
+
+  const zone = el("cleanupZone");
+  const btn = el("cleanupBtn");
+  btn.disabled = true;
+  btn.textContent = "Deleting…";
+  try {
+    const res = await fetch("/cleanup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId: data.runId })
+    });
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(result.error || "Cleanup failed.");
+
+    const lines = [
+      `${result.deletedProducts} product${result.deletedProducts === 1 ? "" : "s"} deleted`,
+      result.collectionDeleted ? "collection deleted" : result.collectionKept || "collection kept",
+      result.driveTrashed ? "Drive folder moved to trash" : "Drive folder could not be trashed"
+    ];
+    zone.dataset.state = result.ok ? "done" : "partial";
+    zone.innerHTML = `
+      <div class="cz-text">
+        <p class="cz-title">${result.ok ? "Run assets deleted" : "Cleanup finished with issues"}</p>
+        <p class="cz-sub">${escapeHtml(lines.join(" · "))}${
+          result.errors?.length ? `<br>${escapeHtml(result.errors.join(" · "))}` : ""
+        }</p>
+      </div>`;
+    addNotice(result.ok ? "Cleanup complete — this run's assets were removed." : "Cleanup finished with issues — see the summary panel.");
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Delete run assets…";
+    window.alert(err.message || "Cleanup failed.");
+  }
+}
+
 function renderSummary(data) {
   const count = data.products.length;
   const products = data.products
@@ -142,6 +199,17 @@ function renderSummary(data) {
         </div>
       </article>`)
     .join("");
+
+  const cleanupHtml = data.runId
+    ? `
+    <div class="cleanup-zone" id="cleanupZone">
+      <div class="cz-text">
+        <p class="cz-title">Need to undo this run?</p>
+        <p class="cz-sub">Deletes the ${count} Shopify product${count === 1 ? "" : "s"} created just now, deletes the collection if that leaves it empty, and moves the Drive folder to trash (recoverable for ~30 days). Available for 24 hours after publishing.</p>
+      </div>
+      <button class="btn btn-danger-ghost" type="button" id="cleanupBtn">Delete run assets…</button>
+    </div>`
+    : "";
 
   summary.hidden = false;
   summary.innerHTML = `
@@ -160,8 +228,198 @@ function renderSummary(data) {
       </div>
     </div>
     <div class="product-grid">${products}</div>
+    ${cleanupHtml}
   `;
+  const cleanupBtn = el("cleanupBtn");
+  if (cleanupBtn) cleanupBtn.addEventListener("click", () => runCleanup(data));
   summary.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/* -----------------------------------------------------------------------------
+   Review gate — everything is generated but NOTHING is on Shopify yet.
+   The user sees the gap report, the email draft, and every product image,
+   then explicitly approves (publish) or discards.
+   -------------------------------------------------------------------------- */
+let activeRunId = null;
+let activeEmailDraft = null;
+
+const CONFIDENCE_META = {
+  high: { label: "High confidence", tone: "ok" },
+  medium: { label: "Medium confidence — review carefully", tone: "warn" },
+  low: { label: "Low confidence — policy has gaps", tone: "warn" }
+};
+
+function metaChip(label, value, stated) {
+  return `<span class="m-chip" data-known="${stated ? "true" : "false"}"><b>${escapeHtml(label)}</b>${escapeHtml(value)}</span>`;
+}
+
+function renderReview(data) {
+  activeRunId = data.runId;
+  activeEmailDraft = data.emailDraft || null;
+  const gaps = data.gaps || { missing: [], confidence: "low" };
+  const conf = CONFIDENCE_META[gaps.confidence] || CONFIDENCE_META.low;
+
+  const gapsHtml = gaps.missing.length
+    ? `<div class="gap-report" data-tone="warn">
+        <p class="gap-title">The policy document does not cover ${gaps.missing.length} production ${gaps.missing.length === 1 ? "detail" : "details"}:</p>
+        <ul class="gap-list">
+          ${gaps.missing.map((m) => `<li><b>${escapeHtml(m.topic)}</b>${m.detail ? ` — ${escapeHtml(m.detail)}` : ""}</li>`).join("")}
+        </ul>
+        <p class="gap-note">Send the email draft below, then paste the answers into “Department follow-up answers” and re-run to fill these in. Unstated details fall back to marked defaults — nothing was invented.</p>
+      </div>`
+    : `<div class="gap-report" data-tone="ok">
+        <p class="gap-title">Policy covers everything needed for production. Safe to publish.</p>
+      </div>`;
+
+  const emailHtml = data.emailDraft
+    ? `<div class="email-draft">
+        <div class="email-head">
+          <p class="eyebrow">Email draft — ask the department for the missing details</p>
+          <div class="email-actions">
+            <button class="btn btn-secondary btn-sm" type="button" id="copyEmailBtn">Copy email</button>
+            ${data.emailDraftDocUrl ? `<a class="btn btn-ghost btn-sm" href="${escapeHtml(data.emailDraftDocUrl)}" target="_blank" rel="noreferrer">Open in Drive</a>` : ""}
+          </div>
+        </div>
+        <p class="email-subject"><b>Subject:</b> ${escapeHtml(data.emailDraft.subject)}</p>
+        <textarea class="email-body" id="emailBody" readonly rows="10" aria-label="Email draft body">${escapeHtml(data.emailDraft.body)}</textarea>
+      </div>`
+    : "";
+
+  const productsHtml = data.products
+    .map((p) => {
+      const chips = [
+        metaChip("Color", p.garmentColor || "not stated", Boolean(p.garmentColor)),
+        metaChip("Placement", p.placement + (p.placementStated ? "" : " (default)"), p.placementStated),
+        metaChip("Sizes", p.sizes.join(", ") + (p.sizesStated ? "" : " (default)"), p.sizesStated),
+        p.brandStyle ? metaChip("Style", p.brandStyle, true) : "",
+        p.fabricDetails ? metaChip("Fabric", p.fabricDetails, true) : "",
+        p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : ""
+      ]
+        .filter(Boolean)
+        .join("");
+      const images = p.images
+        .map(
+          (img) => `
+          <figure class="rv-img">
+            <img src="${escapeHtml(img.thumbnail)}" alt="${escapeHtml(p.title)} — ${escapeHtml(img.logoLabel)}" loading="lazy">
+            <figcaption>${escapeHtml(img.logoLabel)}</figcaption>
+          </figure>`
+        )
+        .join("");
+      return `
+        <article class="rv-product">
+          <div class="rv-head">
+            <h3>${escapeHtml(p.title)}</h3>
+            <span class="rv-count">${p.images.length} logo ${p.images.length === 1 ? "variant" : "variants"}</span>
+          </div>
+          <div class="meta-chips">${chips}</div>
+          <div class="rv-grid">${images}</div>
+        </article>`;
+    })
+    .join("");
+
+  const productCount = data.products.length;
+  review.hidden = false;
+  review.innerHTML = `
+    <div class="review-head">
+      <div>
+        <p class="eyebrow">Review before publishing</p>
+        <h2>${productCount} ${productCount === 1 ? "product" : "products"} generated — nothing is on Shopify yet</h2>
+      </div>
+      <span class="confidence" data-tone="${conf.tone}">${conf.label}</span>
+    </div>
+    ${gapsHtml}
+    ${emailHtml}
+    <div class="rv-products">${productsHtml}</div>
+    <div class="review-actions">
+      <a class="btn btn-ghost" href="${escapeHtml(data.driveFolderUrl)}" target="_blank" rel="noreferrer">Drive folder</a>
+      ${data.manualUrl ? `<a class="btn btn-ghost" href="${escapeHtml(data.manualUrl)}" target="_blank" rel="noreferrer">Manual doc</a>` : ""}
+      <span class="rv-spacer" aria-hidden="true"></span>
+      <button class="btn btn-danger-ghost" type="button" id="discardRunBtn">Discard run</button>
+      <button class="btn btn-primary" type="button" id="publishRunBtn">
+        <span class="btn-label">Approve &amp; publish to Shopify</span>
+      </button>
+    </div>
+  `;
+  review.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  el("publishRunBtn").addEventListener("click", startPublish);
+  el("discardRunBtn").addEventListener("click", discardRun);
+  const copyBtn = el("copyEmailBtn");
+  if (copyBtn) copyBtn.addEventListener("click", () => copyEmailDraft(copyBtn));
+}
+
+async function copyEmailDraft(button) {
+  if (!activeEmailDraft) return;
+  const text = `Subject: ${activeEmailDraft.subject}\n\n${activeEmailDraft.body}`;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const body = el("emailBody");
+    body.focus();
+    body.select();
+    document.execCommand("copy");
+  }
+  const original = button.textContent;
+  button.textContent = "Copied ✓";
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1600);
+}
+
+function setPublishBusy(busy) {
+  const publishBtn = el("publishRunBtn");
+  const discardBtn = el("discardRunBtn");
+  if (publishBtn) {
+    publishBtn.disabled = busy;
+    publishBtn.querySelector(".btn-label").textContent = busy ? "Publishing…" : "Approve & publish to Shopify";
+  }
+  if (discardBtn) discardBtn.disabled = busy;
+}
+
+async function startPublish() {
+  if (!activeRunId) return;
+  setPublishBusy(true);
+  setRunHeader("running", "Publishing to Shopify", "Creating collection, products with variants, and images.");
+  try {
+    const res = await fetch("/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId: activeRunId })
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: "Publish failed." }));
+      setRunHeader("error", "Publish failed", "The publish request could not start.");
+      showRunError(payload.error || "Publish failed.");
+      setPublishBusy(false);
+      return;
+    }
+    await readSseStream(res);
+  } catch (err) {
+    setRunHeader("error", "Publish failed", "An unexpected error interrupted publishing.");
+    showRunError(err.message || "Unexpected error.");
+    setPublishBusy(false);
+  }
+}
+
+async function discardRun() {
+  if (!activeRunId) return;
+  if (!window.confirm("Discard this run? Drive files are kept; nothing will be published to Shopify.")) return;
+  try {
+    await fetch("/discard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runId: activeRunId })
+    });
+  } catch {
+    /* discard is best-effort; the run also expires server-side */
+  }
+  activeRunId = null;
+  activeEmailDraft = null;
+  review.hidden = true;
+  review.innerHTML = "";
+  setRunHeader("idle", "Run discarded", "Nothing was published. Adjust the inputs and run again.");
+  addNotice("Run discarded — Drive assets were kept.");
 }
 
 /* -----------------------------------------------------------------------------
@@ -216,22 +474,30 @@ function renderLogoThumbs() {
   if (files.length) hideFieldError(logoInput, logoError);
 }
 
+function docChipHtml(file, removeAttr, index) {
+  return `
+    <div class="chip">
+      <span class="chip-glyph" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      <span class="chip-name">${escapeHtml(file.name)}</span>
+      <span class="chip-size">${formatBytes(file.size)}</span>
+      <button class="file-remove" type="button" ${removeAttr}="${index}" aria-label="Remove ${escapeHtml(file.name)}">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>`;
+}
+
 function renderPolicyChips() {
   const files = [...policyInput.files];
-  policyChips.innerHTML = files
-    .map((file, i) => `
-      <div class="chip">
-        <span class="chip-glyph" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/></svg>
-        </span>
-        <span class="chip-name">${escapeHtml(file.name)}</span>
-        <span class="chip-size">${formatBytes(file.size)}</span>
-        <button class="file-remove" type="button" data-remove-policy="${i}" aria-label="Remove ${escapeHtml(file.name)}">
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>`)
-    .join("");
+  policyChips.innerHTML = files.map((file, i) => docChipHtml(file, "data-remove-policy", i)).join("");
   syncDropzone("policies", files.length);
+}
+
+function renderFollowUpChips() {
+  const files = [...followUpInput.files];
+  followUpChips.innerHTML = files.map((file, i) => docChipHtml(file, "data-remove-followup", i)).join("");
+  syncDropzone("followUps", files.length);
 }
 
 function syncDropzone(name, count) {
@@ -331,10 +597,16 @@ async function refreshConnectionState() {
         ? '<button class="btn btn-danger-ghost btn-sm disconnect" type="button" data-service="shopify">Disconnect</button>'
         : '<a class="btn btn-secondary btn-sm" href="/setup">Connect</a>'
     );
+    const googleAccounts = status.googleAccountCount || (status.googleConnected ? 1 : 0);
+    const googleText = !status.googleConnected
+      ? "Not connected"
+      : googleAccounts > 1
+        ? `Connected · ${googleAccounts} accounts (failover)`
+        : "Connected";
     renderServiceCard(
       googleCard,
       status.googleConnected,
-      status.googleConnected ? "Connected" : "Not connected",
+      googleText,
       status.googleConnected
         ? '<button class="btn btn-danger-ghost btn-sm disconnect" type="button" data-service="google">Disconnect</button>'
         : '<a class="btn btn-secondary btn-sm" href="/auth/google">Connect</a>'
@@ -431,13 +703,33 @@ function handleEvent(event, payload) {
     updateProgress();
     setRunHeader("error", "Run failed", `Stopped at step ${payload.step || "?"}.`);
     showRunError(payload.error || "Onboarding failed.");
+    setPublishBusy(false);
+  } else if (event === "review") {
+    setRunHeader("idle", "Awaiting your review", "Assets are generated — approve to publish to Shopify, or discard.");
+    renderReview(payload);
   } else if (event === "summary") {
     setRunHeader("success", "Onboarding complete", "All assets created and published.");
     progressFill.style.width = "100%";
     progressPct.textContent = "100%";
     progressText.textContent = `${TOTAL_STEPS} of ${TOTAL_STEPS} steps`;
     progressBar.setAttribute("aria-valuenow", "100");
+    // Keep the review panel (gap report + email draft stay reachable) but
+    // retire the action bar — this run is already published.
+    review.querySelector(".review-actions")?.remove();
+    activeRunId = null;
     renderSummary(payload);
+  }
+}
+
+async function readSseStream(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    buffer = parseSseChunk(buffer, handleEvent);
   }
 }
 
@@ -465,15 +757,7 @@ async function submitOnboarding() {
     return;
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    buffer = parseSseChunk(buffer, handleEvent);
-  }
+  await readSseStream(res);
 }
 
 /* -----------------------------------------------------------------------------
@@ -488,6 +772,10 @@ form.addEventListener("submit", async (e) => {
 
   summary.hidden = true;
   summary.innerHTML = "";
+  review.hidden = true;
+  review.innerHTML = "";
+  activeRunId = null;
+  activeEmailDraft = null;
   conflictStrategy.value = "fail";
   resetTimeline();
   setRunHeader("running", "Starting…", "Uploading files and preparing the workspace.");
@@ -522,6 +810,12 @@ document.addEventListener("click", async (e) => {
     renderPolicyChips();
     return;
   }
+  const followUpIdx = e.target.closest("[data-remove-followup]")?.dataset.removeFollowup;
+  if (followUpIdx !== undefined) {
+    setInputFiles(followUpInput, [...followUpInput.files].filter((_, i) => i !== Number(followUpIdx)));
+    renderFollowUpChips();
+    return;
+  }
 
   // disconnect a service
   const disconnect = e.target.closest(".disconnect");
@@ -547,4 +841,5 @@ departmentInput.addEventListener("input", () => {
 
 wireDropzone("logos", logoInput, renderLogoThumbs, isImage);
 wireDropzone("policies", policyInput, renderPolicyChips, isDoc);
+wireDropzone("followUps", followUpInput, renderFollowUpChips, isDoc);
 refreshConnectionState();

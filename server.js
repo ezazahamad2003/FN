@@ -1,4 +1,5 @@
 const path = require("path");
+const crypto = require("crypto");
 const express = require("express");
 const multer = require("multer");
 const dotenv = require("dotenv");
@@ -8,28 +9,39 @@ const {
   ensureEnvDefaults,
   exchangeGoogleCode,
   exchangeShopifyCode,
+  googleAccounts,
+  googleConnected,
   googleInstallUrl,
   hasRequiredTokens,
   openBrowser,
   shopifyInstallUrl
 } = require("./auth");
-const { createDepartmentFolders, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
+const { createDepartmentFolders, trashFile, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
 const {
   analyzeLogo,
+  analyzePolicyGaps,
+  collectPolicyText,
   determinePolicyProducts,
   extractPolicyInstructions,
-  generateMockup,
+  generateBlankGarment,
   generateProductDescription
 } = require("./ai");
+const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
 const {
+  DEFAULT_SIZES,
+  MAX_VARIANTS,
   addProductToCollection,
   adminCollectionUrl,
   adminProductUrl,
-  createProduct,
+  countProductsInCollection,
+  createProductWithVariants,
+  deleteCollection,
+  deleteProduct,
   ensureManualCollection,
   shopifyConnected,
   startTokenAutoRefresh,
-  uploadProductImage
+  uploadProductImages,
+  variantIdsByLogo
 } = require("./shopify");
 
 ensureEnvDefaults();
@@ -40,7 +52,7 @@ startTokenAutoRefresh();
 const app = express();
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 30 }
+  limits: { fileSize: 25 * 1024 * 1024, files: 50 }
 });
 const PORT = Number(process.env.PORT || 3456);
 
@@ -49,6 +61,31 @@ app.set("trust proxy", true);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
+/*
+ * Review gate: onboarding runs in two phases so nothing is published without
+ * an explicit approval.
+ *   Phase 1  POST /onboard  → Drive assets + AI analysis + generated images,
+ *            ends with a `review` SSE event (nothing touches Shopify).
+ *   Phase 2  POST /publish  → pushes the reviewed run to Shopify.
+ * Pending runs are held in memory with a TTL. On Render the filesystem and
+ * process are ephemeral — a restart drops pending runs, so approve promptly.
+ *
+ * After a publish the run stays behind (buffers dropped) as a cleanup
+ * manifest, so POST /cleanup can undo the whole run — delete its Shopify
+ * products, delete the collection if that leaves it empty, and move the Drive
+ * folder to trash — for up to 24 hours.
+ */
+const pendingRuns = new Map();
+const RUN_TTL_MS = 60 * 60 * 1000;
+const CLEANUP_TTL_MS = 24 * 60 * 60 * 1000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [runId, run] of pendingRuns) {
+    if (run.expiresAt < now) pendingRuns.delete(runId);
+  }
+}, 10 * 60 * 1000).unref();
 
 function titleCase(input) {
   return input
@@ -76,19 +113,19 @@ function escapeHtml(input) {
     .replace(/'/g, "&#039;");
 }
 
-function buildManualHtml(departmentName, items, instructions) {
+function buildManualHtml(departmentName, pages, instructions) {
   const instructionMap = new Map(instructions.map((entry) => [entry.title, entry.instructions]));
-  const pages = items
-    .map((item) => {
-      const note = instructionMap.get(item.title) || item.productionNotes || "Review uploaded policy documents before production.";
+  const sections = pages
+    .map((page) => {
+      const note = instructionMap.get(page.title) || page.productionNotes || "Review uploaded policy documents before production.";
       return `
         <section class="page">
-          <h1>${escapeHtml(item.title)}</h1>
-          <img src="${item.mockupDataUrl}" alt="${escapeHtml(item.title)} product image">
+          <h1>${escapeHtml(page.title)}</h1>
+          <img src="${page.mockupDataUrl}" alt="${escapeHtml(page.title)} product image">
           <h2>Product</h2>
-          <p>${escapeHtml(item.productLabel)}</p>
+          <p>${escapeHtml(page.productLabel)}</p>
           <h2>Logo Description</h2>
-          <p>${escapeHtml(item.logoDescription)}</p>
+          <p>${escapeHtml(page.logoDescription)}</p>
           <h2>Production Instructions</h2>
           <p>${escapeHtml(note)}</p>
         </section>
@@ -109,7 +146,20 @@ function buildManualHtml(departmentName, items, instructions) {
       img { display: block; width: 520px; max-width: 100%; margin: 12px 0 18px; }
     </style>
   </head>
-  <body>${pages}</body>
+  <body>${sections}</body>
+</html>`;
+}
+
+function buildEmailDraftHtml(emailDraft) {
+  const bodyHtml = escapeHtml(emailDraft.body).replace(/\r?\n/g, "<br>");
+  return `<!doctype html>
+<html>
+  <head><meta charset="utf-8"></head>
+  <body style="font-family: Arial, sans-serif; color: #111;">
+    <p><b>Subject:</b> ${escapeHtml(emailDraft.subject)}</p>
+    <hr>
+    <p>${bodyHtml}</p>
+  </body>
 </html>`;
 }
 
@@ -151,12 +201,24 @@ function resolveProductLogos(product, logoRuns) {
   return selected.length ? selected : logoRuns;
 }
 
+// Front Logo option values must be unique per product, so duplicate display
+// names (e.g. "station-1.png" and "Station_1.jpg") get a numeric suffix.
+function dedupeLogoLabels(logoRuns) {
+  const used = new Map();
+  for (const logo of logoRuns) {
+    const count = (used.get(logo.filenameBase) || 0) + 1;
+    used.set(logo.filenameBase, count);
+    if (count > 1) logo.filenameBase = `${logo.filenameBase} (${count})`;
+  }
+}
+
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
     shopifyConnected: shopifyConnected(),
     shopifyStore: process.env.SHOPIFY_STORE || "",
-    googleConnected: Boolean(process.env.GOOGLE_REFRESH_TOKEN)
+    googleConnected: googleConnected(),
+    googleAccountCount: googleAccounts().length
   });
 });
 
@@ -215,18 +277,30 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+/* ---------------------------------------------------------------------------
+   Phase 1 — analyze & generate (steps 1–7). Ends with a `review` event.
+   Nothing is pushed to Shopify here.
+   ------------------------------------------------------------------------- */
 app.post(
   "/onboard",
   upload.fields([
     { name: "logos", maxCount: 20 },
-    { name: "policies", maxCount: 20 }
+    { name: "policies", maxCount: 20 },
+    { name: "followUps", maxCount: 20 }
   ]),
   async (req, res) => {
     const departmentName = String(req.body.departmentName || "").trim();
+    const followUpText = String(req.body.followUpText || "");
     const conflictStrategy = req.body.conflictStrategy || "fail";
     const uploadedFiles = req.files || {};
-    const logos = filesByField([...(uploadedFiles.logos || []), ...(uploadedFiles.policies || [])], "logos");
-    const policies = filesByField([...(uploadedFiles.logos || []), ...(uploadedFiles.policies || [])], "policies");
+    const allFiles = [
+      ...(uploadedFiles.logos || []),
+      ...(uploadedFiles.policies || []),
+      ...(uploadedFiles.followUps || [])
+    ];
+    const logos = filesByField(allFiles, "logos");
+    const policies = filesByField(allFiles, "policies");
+    const followUps = filesByField(allFiles, "followUps");
 
     if (!departmentName) {
       return res.status(400).json({ step: 0, error: "Department Name is required." });
@@ -234,7 +308,7 @@ app.post(
     if (!logos.length) {
       return res.status(400).json({ step: 0, error: "Upload at least one logo image." });
     }
-    if (!shopifyConnected() || !process.env.GOOGLE_REFRESH_TOKEN) {
+    if (!shopifyConnected() || !googleConnected()) {
       return res.status(401).json({ step: 0, error: "Connect Shopify and Google Drive before onboarding." });
     }
 
@@ -265,6 +339,7 @@ app.post(
       filenameBase: titleCase(file.originalname),
       slug: slug(file.originalname)
     }));
+    dedupeLogoLabels(logoRuns);
     let productRuns = [];
 
     try {
@@ -274,7 +349,7 @@ app.post(
         for (const item of logoRuns) {
           item.driveFile = await uploadBuffer(item.file, folders.logos.id);
         }
-        for (const file of policies) {
+        for (const file of [...policies, ...followUps]) {
           await uploadBuffer(file, folders.root.id);
         }
       });
@@ -285,102 +360,126 @@ app.post(
         }
       });
 
+      const policyText = await collectPolicyText(policies, followUps, followUpText);
+
       const policyProducts = await runStep(res, 4, "Extract products and logo assignments from policy documents", async () => {
-        return determinePolicyProducts(departmentName, policies, logoRuns);
+        return determinePolicyProducts(departmentName, policyText, logoRuns);
       });
 
-      await runStep(res, 5, "Generate and save product images", async () => {
-        productRuns = policyProducts.flatMap((product) =>
-          resolveProductLogos(product, logoRuns).map((logo) => {
-            const productionNotes = [
-              product.productionNotes,
-              product.assignmentNotes ? `Logo assignment: ${product.assignmentNotes}` : ""
-            ]
-              .filter(Boolean)
-              .join(" ");
+      const gaps = await runStep(res, 5, "Check policy completeness", async () => {
+        return analyzePolicyGaps(departmentName, policyText, policyProducts, logoRuns);
+      });
 
-            return {
-              ...product,
-              productionNotes,
-              logo,
-              logoDescription: logo.logoDescription,
-              logoFilenameBase: logo.filenameBase,
-              slug: `${logo.slug || "department-logo"}-${slug(product.productLabel || product.productType || "product")}`,
-              title: `${departmentName} - ${product.productLabel} - ${logo.filenameBase}`
-            };
-          })
-        );
+      await runStep(res, 6, "Generate product images (exact logo compositing)", async () => {
+        // Product titles match the store's convention: garment name only
+        // (brand included when the policy states it). The department lives in
+        // the collection and tags, like the real listings.
+        productRuns = policyProducts.map((product) => ({
+          ...product,
+          logos: resolveProductLogos(product, logoRuns),
+          placementKey: resolvePlacement(product),
+          slug: slug(product.productLabel || product.productType || "product"),
+          title: product.productLabel,
+          logoVariants: []
+        }));
 
         for (const item of productRuns) {
-          item.mockupBuffer = await generateMockup({
+          // One blank garment base per product; the exact uploaded logo file is
+          // composited on top, so the artwork is never redrawn by the model.
+          item.baseBuffer = await generateBlankGarment({
             productPrompt: item.productPrompt,
-            logoDescription: item.logoDescription,
-            productionNotes: item.productionNotes
+            garmentColor: item.garmentColor
           });
-          item.mockupDataUrl = `data:image/png;base64,${item.mockupBuffer.toString("base64")}`;
-          item.productImageDriveFile = await uploadGeneratedImage(
-            `${item.slug || "department-product"}-product-image.png`,
-            item.mockupBuffer,
-            folders.productImages.id
-          );
+
+          for (const logo of item.logos) {
+            let mockupBuffer;
+            try {
+              mockupBuffer = await compositeLogoOnGarment(item.baseBuffer, logo.file.buffer, item.placementKey);
+            } catch (error) {
+              throw new Error(`Could not place logo "${logo.originalName}" on ${item.productLabel}: ${error.message}`);
+            }
+            const driveFile = await uploadGeneratedImage(
+              `${item.slug}-${logo.slug || "logo"}-product-image.png`,
+              mockupBuffer,
+              folders.productImages.id
+            );
+            item.logoVariants.push({
+              logo,
+              mockupBuffer,
+              mockupDataUrl: `data:image/png;base64,${mockupBuffer.toString("base64")}`,
+              driveFile
+            });
+          }
         }
       });
 
-      await runStep(res, 6, "Generate product descriptions and manual", async () => {
+      let manual = null;
+      let emailDraftDoc = null;
+      await runStep(res, 7, "Write descriptions, manual, and gap email draft", async () => {
         for (const item of productRuns) {
           item.descriptionHtml = await generateProductDescription(departmentName, item);
         }
-        const instructions = await extractPolicyInstructions(departmentName, policies, productRuns);
-        const manualHtml = buildManualHtml(departmentName, productRuns, instructions);
-        const manual = await uploadHtmlDocument(`${departmentName} Manual`, manualHtml, folders.root.id);
-        for (const item of productRuns) {
-          item.manual = manual;
-        }
-      });
 
-      const collection = await runStep(res, 7, "Create Shopify collection", async () => {
-        return ensureManualCollection(departmentName);
-      });
+        const pages = productRuns.flatMap((item) =>
+          item.logoVariants.map((lv) => ({
+            title: `${item.title} - ${lv.logo.filenameBase}`,
+            mockupDataUrl: lv.mockupDataUrl,
+            productLabel: item.productLabel,
+            logoDescription: lv.logo.logoDescription,
+            productionNotes: [item.productionNotes, item.assignmentNotes ? `Logo assignment: ${item.assignmentNotes}` : ""]
+              .filter(Boolean)
+              .join(" ")
+          }))
+        );
+        const instructions = await extractPolicyInstructions(departmentName, policyText, pages);
+        const manualHtml = buildManualHtml(departmentName, pages, instructions);
+        manual = await uploadHtmlDocument(`${departmentName} Manual`, manualHtml, folders.root.id);
 
-      await runStep(res, 8, "Create Shopify products", async () => {
-        for (const item of productRuns) {
-          const product = await createProduct({
-            title: item.title,
-            bodyHtml: item.descriptionHtml,
-            price: "60.00"
-          });
-          const image = await uploadProductImage(
-            product.id,
-            `${item.slug || "department-logo"}-mockup.png`,
-            item.mockupBuffer
+        if (gaps.emailDraft) {
+          emailDraftDoc = await uploadHtmlDocument(
+            `${departmentName} - Policy Questions Email Draft`,
+            buildEmailDraftHtml(gaps.emailDraft),
+            folders.root.id
           );
-          item.product = product;
-          item.productImage = image;
         }
       });
 
-      await runStep(res, 9, "Add products to collection", async () => {
-        for (const item of productRuns) {
-          await addProductToCollection(item.product.id, collection.id);
-        }
+      const runId = crypto.randomUUID();
+      pendingRuns.set(runId, {
+        departmentName,
+        folders,
+        manual,
+        productRuns,
+        expiresAt: Date.now() + RUN_TTL_MS
       });
 
-      const summary = {
+      sendEvent(res, "review", {
+        runId,
+        departmentName,
         driveFolderUrl: folders.url,
-        manualUrl: productRuns[0]?.manual?.webViewLink || null,
-        shopifyCollectionUrl: adminCollectionUrl(collection.id),
+        manualUrl: manual?.webViewLink || null,
+        emailDraftDocUrl: emailDraftDoc?.webViewLink || null,
+        gaps: { confidence: gaps.confidence, missing: gaps.missing },
+        emailDraft: gaps.emailDraft,
         products: productRuns.map((item) => ({
-          title: item.product.title,
-          id: String(item.product.id),
-          url: adminProductUrl(item.product.id),
-          driveImageUrl: item.productImageDriveFile?.webViewLink || null,
-          mockupGenerated: true,
-          thumbnail: item.mockupDataUrl
+          title: item.title,
+          productLabel: item.productLabel,
+          garmentColor: item.garmentColor,
+          brandStyle: item.brandStyle,
+          fabricDetails: item.fabricDetails,
+          placement: item.placement || item.placementKey.replace(/-/g, " "),
+          placementStated: Boolean(item.placement),
+          decorationMethod: item.decorationMethod,
+          sizes: item.sizes.length ? item.sizes : DEFAULT_SIZES,
+          sizesStated: item.sizes.length > 0,
+          productionNotes: item.productionNotes,
+          images: item.logoVariants.map((lv) => ({
+            logoLabel: lv.logo.filenameBase,
+            thumbnail: lv.mockupDataUrl,
+            driveUrl: lv.driveFile?.webViewLink || null
+          }))
         }))
-      };
-
-      sendEvent(res, "summary", summary);
-      sendEvent(res, "status", { step: 10, state: "complete", message: "Step 10 complete: final summary ready" });
+      });
       res.end();
     } catch (error) {
       sendEvent(res, "error", {
@@ -391,6 +490,202 @@ app.post(
     }
   }
 );
+
+/* ---------------------------------------------------------------------------
+   Phase 2 — publish to Shopify (steps 8–10). Only runs after the user
+   approves the review.
+   ------------------------------------------------------------------------- */
+app.post("/publish", async (req, res) => {
+  const runId = String(req.body?.runId || "");
+  const run = pendingRuns.get(runId);
+  if (!run || run.published) {
+    return res.status(410).json({
+      step: 8,
+      error: run?.published
+        ? "This run was already published."
+        : "This run has expired or the server restarted. Re-run onboarding — the Drive folder can be reused."
+    });
+  }
+  if (!shopifyConnected()) {
+    return res.status(401).json({ step: 8, error: "Shopify is not connected." });
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive"
+  });
+
+  const price = process.env.DEFAULT_PRODUCT_PRICE || "24.00";
+  const vendor = process.env.DEFAULT_PRODUCT_VENDOR || "";
+  const createdProducts = [];
+
+  try {
+    const collection = await runStep(res, 8, "Create Shopify collection", async () => {
+      return ensureManualCollection(run.departmentName);
+    });
+
+    await runStep(res, 9, "Create Shopify products with variants", async () => {
+      for (const item of run.productRuns) {
+        const sizes = item.sizes.length ? item.sizes : DEFAULT_SIZES;
+
+        // One product per garment with Front Logo × Size variants (GraphQL,
+        // up to 2048 variants — covers 30+ logos × 7 sizes on one product,
+        // matching the store's real listings). Splitting per logo only kicks
+        // in past that hard limit.
+        const plans =
+          item.logoVariants.length > 1 && item.logoVariants.length * sizes.length <= MAX_VARIANTS
+            ? [{ title: item.title, logoVariants: item.logoVariants }]
+            : item.logoVariants.map((lv) => ({
+                title: item.logoVariants.length > 1 ? `${item.title} - ${lv.logo.filenameBase}` : item.title,
+                logoVariants: [lv]
+              }));
+
+        for (const plan of plans) {
+          const product = await createProductWithVariants({
+            title: plan.title,
+            bodyHtml: item.descriptionHtml,
+            price,
+            productType: item.productType,
+            vendor,
+            tags: [run.departmentName],
+            logoValues: plan.logoVariants.map((lv) => lv.logo.filenameBase),
+            sizes
+          });
+
+          const idsByLogo = variantIdsByLogo(product.variants, product.useLogoOption);
+          await uploadProductImages(
+            product.productGid,
+            plan.logoVariants.map((lv) => ({
+              filename: `${item.slug}-${lv.logo.slug || "logo"}-mockup.png`,
+              buffer: lv.mockupBuffer,
+              alt: `${plan.title} — ${lv.logo.filenameBase}`,
+              variantIds: idsByLogo.get(product.useLogoOption ? lv.logo.filenameBase : "__all__") || []
+            }))
+          );
+
+          createdProducts.push({
+            title: product.title,
+            id: product.productId,
+            url: adminProductUrl(product.productId),
+            driveImageUrl: plan.logoVariants[0]?.driveFile?.webViewLink || null,
+            thumbnail: plan.logoVariants[0]?.mockupDataUrl || null,
+            variantCount: product.variantCount,
+            logoCount: plan.logoVariants.length,
+            productId: product.productId,
+            productGid: product.productGid
+          });
+        }
+      }
+    });
+
+    await runStep(res, 10, "Add products to collection", async () => {
+      for (const created of createdProducts) {
+        await addProductToCollection(created.productId, collection.id);
+      }
+    });
+
+    // Convert the pending run into a light cleanup manifest so the whole run
+    // can be undone from the UI. Buffers are dropped to free memory.
+    pendingRuns.set(runId, {
+      departmentName: run.departmentName,
+      published: true,
+      cleanup: {
+        collectionId: collection.id,
+        collectionTitle: collection.title,
+        productGids: createdProducts.map((created) => created.productGid),
+        driveFolderId: run.folders.root.id
+      },
+      expiresAt: Date.now() + CLEANUP_TTL_MS
+    });
+
+    sendEvent(res, "summary", {
+      runId,
+      departmentName: run.departmentName,
+      driveFolderUrl: run.folders.url,
+      manualUrl: run.manual?.webViewLink || null,
+      shopifyCollectionUrl: adminCollectionUrl(collection.id),
+      cleanup: {
+        productCount: createdProducts.length,
+        collectionTitle: collection.title
+      },
+      products: createdProducts.map(({ productId, productGid, ...rest }) => rest)
+    });
+    res.end();
+  } catch (error) {
+    sendEvent(res, "error", {
+      step: error.step || 8,
+      error: error.message
+    });
+    res.end();
+  }
+});
+
+app.post("/discard", (req, res) => {
+  const runId = String(req.body?.runId || "");
+  pendingRuns.delete(runId);
+  res.json({ ok: true });
+});
+
+/* ---------------------------------------------------------------------------
+   Undo a published run: delete its Shopify products, delete the collection
+   only if that leaves it empty (a reused collection with other products is
+   kept), and move the Drive department folder to trash (recoverable from
+   Drive's trash for ~30 days).
+   ------------------------------------------------------------------------- */
+app.post("/cleanup", async (req, res) => {
+  const runId = String(req.body?.runId || "");
+  const run = pendingRuns.get(runId);
+  if (!run || !run.published || !run.cleanup) {
+    return res.status(410).json({
+      error:
+        "Cleanup is no longer available for this run (expired or the server restarted). " +
+        "Delete the products/collection in Shopify admin and the folder in Drive manually."
+    });
+  }
+
+  const { collectionId, collectionTitle, productGids, driveFolderId } = run.cleanup;
+  const result = {
+    ok: true,
+    deletedProducts: 0,
+    collectionDeleted: false,
+    collectionKept: null,
+    driveTrashed: false,
+    errors: []
+  };
+
+  for (const productGid of productGids) {
+    try {
+      await deleteProduct(productGid);
+      result.deletedProducts += 1;
+    } catch (error) {
+      result.errors.push(`Product ${productGid}: ${error.message}`);
+    }
+  }
+
+  try {
+    const remaining = await countProductsInCollection(collectionId);
+    if (remaining === 0) {
+      await deleteCollection(collectionId);
+      result.collectionDeleted = true;
+    } else {
+      result.collectionKept = `"${collectionTitle}" still contains ${remaining} other product${remaining === 1 ? "" : "s"}, so it was kept.`;
+    }
+  } catch (error) {
+    result.errors.push(`Collection: ${error.message}`);
+  }
+
+  try {
+    await trashFile(driveFolderId);
+    result.driveTrashed = true;
+  } catch (error) {
+    result.errors.push(`Drive folder: ${error.message}`);
+  }
+
+  result.ok = result.errors.length === 0;
+  if (result.ok) pendingRuns.delete(runId);
+  res.json(result);
+});
 
 app.use((err, req, res, next) => {
   console.error(err);

@@ -15,8 +15,16 @@ const DEFAULT_ENV = {
   GOOGLE_CLIENT_ID: "",
   GOOGLE_CLIENT_SECRET: "",
   GOOGLE_REDIRECT: "",
+  // Optional second Google account (failover). The refresh token lives in
+  // GOOGLE_REFRESH_TOKEN_2; client id/secret default to the primary app if the
+  // second account authorized the same OAuth client.
+  GOOGLE_CLIENT_ID_2: "",
+  GOOGLE_CLIENT_SECRET_2: "",
   GDRIVE_PARENT_FOLDER_ID: "",
   OPENAI_API_KEY: "",
+  OPENAI_IMAGE_MODEL: "",
+  DEFAULT_PRODUCT_PRICE: "",
+  DEFAULT_PRODUCT_VENDOR: "",
   PORT: "3456"
 };
 
@@ -31,7 +39,7 @@ function readEnvFile() {
   }, {});
 }
 
-const TOKEN_ENV_KEYS = ["SHOPIFY_ACCESS_TOKEN", "GOOGLE_REFRESH_TOKEN"];
+const TOKEN_ENV_KEYS = ["SHOPIFY_ACCESS_TOKEN", "GOOGLE_REFRESH_TOKEN", "GOOGLE_REFRESH_TOKEN_2"];
 const ENV_KEYS = [...Object.keys(DEFAULT_ENV), ...TOKEN_ENV_KEYS];
 
 function valueFromEnvOrFile(key, fileEnv, updates = {}) {
@@ -72,8 +80,48 @@ function shopifyConfigured() {
   );
 }
 
+// Ordered list of connected Google accounts. The app uses the first that has a
+// working token and fails over to the next, so a single dead token never takes
+// Drive down. Both accounts are expected to share GDRIVE_PARENT_FOLDER_ID, which
+// keeps every folder id and link identical no matter which account writes.
+function googleAccounts() {
+  const accounts = [];
+  if (process.env.GOOGLE_REFRESH_TOKEN) {
+    accounts.push({
+      id: "primary",
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET
+    });
+  }
+  if (process.env.GOOGLE_REFRESH_TOKEN_2) {
+    accounts.push({
+      id: "secondary",
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN_2,
+      clientId: process.env.GOOGLE_CLIENT_ID_2 || process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET_2 || process.env.GOOGLE_CLIENT_SECRET
+    });
+  }
+  return accounts;
+}
+
+function googleConnected() {
+  return googleAccounts().length > 0;
+}
+
+// Build an OAuth2 client for Drive use from a single account's credentials.
+// Redirect URI is not needed here — that only matters for the consent flow.
+function googleDriveAuth(account) {
+  if (!account || !account.clientId || !account.clientSecret) {
+    throw new Error("Google is missing client credentials (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).");
+  }
+  const client = new google.auth.OAuth2(account.clientId, account.clientSecret);
+  client.setCredentials({ refresh_token: account.refreshToken });
+  return client;
+}
+
 function hasRequiredTokens() {
-  return Boolean(shopifyConfigured() && process.env.GOOGLE_REFRESH_TOKEN);
+  return Boolean(shopifyConfigured() && googleConnected());
 }
 
 function disconnectShopify() {
@@ -81,7 +129,7 @@ function disconnectShopify() {
 }
 
 function disconnectGoogle() {
-  writeEnv({ GOOGLE_REFRESH_TOKEN: "" });
+  writeEnv({ GOOGLE_REFRESH_TOKEN: "", GOOGLE_REFRESH_TOKEN_2: "" });
 }
 
 function requireEnv(keys, service) {
@@ -187,8 +235,15 @@ async function exchangeGoogleCode(code) {
   if (!tokens.refresh_token) {
     throw new Error("Google did not return a refresh token. Reconnect with consent and try again.");
   }
-  writeEnv({ GOOGLE_REFRESH_TOKEN: tokens.refresh_token });
-  return tokens.refresh_token;
+  const refreshToken = tokens.refresh_token;
+  // Fill the primary slot when it is empty or the same account re-consented;
+  // otherwise a different account lands in the secondary (failover) slot.
+  if (!process.env.GOOGLE_REFRESH_TOKEN || refreshToken === process.env.GOOGLE_REFRESH_TOKEN) {
+    writeEnv({ GOOGLE_REFRESH_TOKEN: refreshToken });
+  } else {
+    writeEnv({ GOOGLE_REFRESH_TOKEN_2: refreshToken });
+  }
+  return refreshToken;
 }
 
 function openBrowser(url) {
@@ -207,7 +262,10 @@ module.exports = {
   ensureEnvDefaults,
   exchangeGoogleCode,
   exchangeShopifyCode,
+  googleAccounts,
   googleClient,
+  googleConnected,
+  googleDriveAuth,
   googleInstallUrl,
   hasRequiredTokens,
   openBrowser,
