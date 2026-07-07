@@ -184,6 +184,8 @@ async function setCollectionImage(collectionId, imageInput) {
   return json.custom_collection;
 }
 
+// Shopify reliably accepts base64 `attachment` for collection images on update.
+// Create/reuse the collection first, then PUT the image in a separate request.
 async function ensureManualCollectionWithImage(title, image) {
   const collection = await ensureManualCollection(title);
   if (!image?.buffer) return collection;
@@ -192,8 +194,7 @@ async function ensureManualCollectionWithImage(title, image) {
     const imageInput = await collectionImageInput(image);
     return await setCollectionImage(collection.id, imageInput);
   } catch (error) {
-    console.warn(`Shopify collection image skipped for "${title}": ${error.message}`);
-    return collection;
+    throw new Error(`Collection image upload failed for "${title}": ${error.message}`);
   }
 }
 
