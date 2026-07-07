@@ -136,6 +136,25 @@ function showRunError(message) {
   runError.hidden = false;
   runErrorText.textContent = message;
 }
+function clearReviewError() {
+  review.querySelector(".publish-error")?.remove();
+}
+
+function showReviewError(message) {
+  if (!review || review.hidden) return;
+  clearReviewError();
+  const error = document.createElement("div");
+  error.className = "publish-error gap-report";
+  error.dataset.tone = "warn";
+  error.innerHTML = `
+    <p class="gap-title">Publish failed</p>
+    <p class="gap-note">${escapeHtml(message || "Shopify publishing failed.")}</p>
+  `;
+  const actions = review.querySelector(".review-actions");
+  if (actions) actions.before(error);
+  else review.appendChild(error);
+  error.scrollIntoView({ behavior: "smooth", block: "center" });
+}
 
 /* -----------------------------------------------------------------------------
    Summary
@@ -299,8 +318,16 @@ async function copyEmail(draft, button, bodyId) {
       document.execCommand("copy");
     }
   }
+
+  const panel = button.closest(".email-draft");
+  if (panel) {
+    panel.remove();
+    addNotice("Email draft copied and hidden.");
+    return;
+  }
+
   const original = button.textContent;
-  button.textContent = "Copied ✓";
+  button.textContent = "Copied";
   setTimeout(() => {
     button.textContent = original;
   }, 1600);
@@ -500,6 +527,7 @@ function setPublishBusy(busy) {
 async function startPublish() {
   if (!activeRunId) return;
   setPublishBusy(true);
+  clearReviewError();
   setRunHeader("running", "Publishing to Shopify", "Creating collection, products with variants, and images.");
   try {
     const res = await fetch("/publish", {
@@ -511,6 +539,7 @@ async function startPublish() {
       const payload = await res.json().catch(() => ({ error: "Publish failed." }));
       setRunHeader("error", "Publish failed", "The publish request could not start.");
       showRunError(payload.error || "Publish failed.");
+      showReviewError(payload.error || "Publish failed.");
       setPublishBusy(false);
       return;
     }
@@ -518,6 +547,7 @@ async function startPublish() {
   } catch (err) {
     setRunHeader("error", "Publish failed", "An unexpected error interrupted publishing.");
     showRunError(err.message || "Unexpected error.");
+    showReviewError(err.message || "Unexpected error.");
     setPublishBusy(false);
   }
 }
@@ -823,6 +853,7 @@ function handleEvent(event, payload) {
     updateProgress();
     setRunHeader("error", "Run failed", `Stopped at step ${payload.step || "?"}.`);
     showRunError(payload.error || "Onboarding failed.");
+    showReviewError(payload.error || "Onboarding failed.");
     setPublishBusy(false);
   } else if (event === "review") {
     setRunHeader("idle", "Awaiting your review", "Assets are generated — approve to publish to Shopify, or discard.");
@@ -835,6 +866,7 @@ function handleEvent(event, payload) {
     progressBar.setAttribute("aria-valuenow", "100");
     // Keep the review panel (gap report + email draft stay reachable) but
     // retire the action bar — this run is already published.
+    clearReviewError();
     review.querySelector(".review-actions")?.remove();
     activeRunId = null;
     renderSummary(payload);

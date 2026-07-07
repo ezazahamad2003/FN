@@ -171,34 +171,30 @@ async function collectionImageInput(image) {
   };
 }
 
-async function ensureManualCollectionWithImage(title, image) {
-  const imageInput = await collectionImageInput(image);
-  const existing = await findCollectionByTitle(title);
-  if (existing) {
-    if (!imageInput) return existing;
-    const json = await shopifyRequest(`/custom_collections/${existing.id}.json`, {
-      method: "PUT",
-      body: JSON.stringify({
-        custom_collection: {
-          id: existing.id,
-          image: imageInput
-        }
-      })
-    });
-    return json.custom_collection;
-  }
-
-  const custom_collection = {
-    title,
-    published: true
-  };
-  if (imageInput) custom_collection.image = imageInput;
-
-  const json = await shopifyRequest("/custom_collections.json", {
-    method: "POST",
-    body: JSON.stringify({ custom_collection })
+async function setCollectionImage(collectionId, imageInput) {
+  const json = await shopifyRequest(`/custom_collections/${collectionId}.json`, {
+    method: "PUT",
+    body: JSON.stringify({
+      custom_collection: {
+        id: collectionId,
+        image: imageInput
+      }
+    })
   });
   return json.custom_collection;
+}
+
+async function ensureManualCollectionWithImage(title, image) {
+  const collection = await ensureManualCollection(title);
+  if (!image?.buffer) return collection;
+
+  try {
+    const imageInput = await collectionImageInput(image);
+    return await setCollectionImage(collection.id, imageInput);
+  } catch (error) {
+    console.warn(`Shopify collection image skipped for "${title}": ${error.message}`);
+    return collection;
+  }
 }
 
 async function addProductToCollection(productId, collectionId) {
