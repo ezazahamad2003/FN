@@ -122,6 +122,17 @@ async function graphql(query, variables = {}) {
   return json.data;
 }
 
+// Shopify accepts either a numeric legacy id or a full gid in most inputs, but
+// GraphQL node lookups need the gid form. Callers pass whichever they have.
+function gid(resource, id) {
+  const value = String(id);
+  return value.startsWith("gid://") ? value : `gid://shopify/${resource}/${value}`;
+}
+
+function legacyIdOf(value) {
+  return String(value).split("/").pop();
+}
+
 function assertNoUserErrors(operation, userErrors) {
   if (userErrors?.length) {
     throw new Error(`Shopify ${operation}: ${userErrors.map((e) => e.message).join("; ")}`);
@@ -521,6 +532,9 @@ module.exports = {
   ensureManualCollection,
   ensureManualCollectionWithImage,
   getAccessToken,
+  gid,
+  graphql,
+  legacyIdOf,
   shopifyConnected,
   startTokenAutoRefresh,
   uploadProductImages,

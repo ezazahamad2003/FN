@@ -24,8 +24,15 @@ const {
   determinePolicyProducts,
   extractPolicyInstructions,
   generateBlankGarment,
-  generateProductDescription
+  generateProductDescription,
+  planCustomProduct
 } = require("./ai");
+const {
+  getCollectionWithProducts,
+  getProduct,
+  listCollections,
+  updateProduct
+} = require("./catalog");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
 const {
   DEFAULT_SIZES,
@@ -750,6 +757,237 @@ app.post("/cleanup", async (req, res) => {
   if (result.ok) pendingRuns.delete(runId);
   res.json(result);
 });
+
+/* ---------------------------------------------------------------------------
+   Catalog API — browse and edit what is already live in Shopify.
+   Onboarding creates a department; these routes are how the console then
+   works with it. Every Shopify collection is treated as one department.
+   ------------------------------------------------------------------------- */
+
+function requireShopify(res) {
+  if (shopifyConnected()) return true;
+  res.status(401).json({ error: "Shopify is not connected. Open Connections to link the store." });
+  return false;
+}
+
+// Shopify's own errors are the useful ones here (a frozen store answers 402
+// "Unavailable Shop", a bad id answers 404), so they are passed through rather
+// than flattened into a generic failure.
+function catalogError(res, error) {
+  const message = String(error?.message || "Shopify request failed.");
+  const status = /^Shopify (4\d\d|5\d\d)/.test(message) ? 502 : 500;
+  console.error("Catalog API:", message);
+  res.status(status).json({ error: message });
+}
+
+app.get("/api/collections", async (req, res) => {
+  if (!requireShopify(res)) return;
+  try {
+    res.json({ collections: await listCollections() });
+  } catch (error) {
+    catalogError(res, error);
+  }
+});
+
+app.get("/api/collections/:id", async (req, res) => {
+  if (!requireShopify(res)) return;
+  try {
+    res.json(await getCollectionWithProducts(req.params.id));
+  } catch (error) {
+    catalogError(res, error);
+  }
+});
+
+app.get("/api/products/:id", async (req, res) => {
+  if (!requireShopify(res)) return;
+  try {
+    res.json({ product: await getProduct(req.params.id) });
+  } catch (error) {
+    catalogError(res, error);
+  }
+});
+
+app.patch("/api/products/:id", async (req, res) => {
+  if (!requireShopify(res)) return;
+  const body = req.body || {};
+  const fields = {};
+  for (const key of ["title", "descriptionHtml", "productType", "vendor", "status", "tags", "price"]) {
+    if (body[key] !== undefined) fields[key] = body[key];
+  }
+
+  if (fields.title !== undefined && !String(fields.title).trim()) {
+    return res.status(400).json({ error: "Product title cannot be empty." });
+  }
+  if (fields.price !== undefined && String(fields.price).trim()) {
+    const price = Number(fields.price);
+    if (!Number.isFinite(price) || price < 0) {
+      return res.status(400).json({ error: "Price must be a number of 0 or more." });
+    }
+  }
+  if (fields.status !== undefined && !["ACTIVE", "DRAFT", "ARCHIVED"].includes(fields.status)) {
+    return res.status(400).json({ error: "Status must be ACTIVE, DRAFT, or ARCHIVED." });
+  }
+  if (!Object.keys(fields).length) {
+    return res.status(400).json({ error: "No editable fields were supplied." });
+  }
+
+  try {
+    res.json({ product: await updateProduct(req.params.id, fields) });
+  } catch (error) {
+    catalogError(res, error);
+  }
+});
+
+/* ---------------------------------------------------------------------------
+   Create one product inside an existing department, from a description plus
+   logos — the manual counterpart to policy-driven onboarding. Streams SSE
+   because the image generation step takes tens of seconds.
+   ------------------------------------------------------------------------- */
+app.post(
+  "/api/collections/:id/products",
+  upload.fields([{ name: "logos", maxCount: 20 }]),
+  async (req, res) => {
+    if (!requireShopify(res)) return;
+
+    const collectionId = req.params.id;
+    const description = String(req.body.description || "").trim();
+    const logos = req.files?.logos || [];
+    const price = String(req.body.price || "").trim() || process.env.DEFAULT_PRODUCT_PRICE || "24.00";
+    const sizes = String(req.body.sizes || "")
+      .split(",")
+      .map((size) => size.trim())
+      .filter(Boolean);
+    const hints = {
+      productLabel: String(req.body.productLabel || "").trim(),
+      productType: String(req.body.productType || "").trim(),
+      garmentColor: String(req.body.garmentColor || "").trim()
+    };
+    const placementInput = String(req.body.placement || "").trim();
+    const vendor = String(req.body.vendor || "").trim() || process.env.DEFAULT_PRODUCT_VENDOR || "";
+
+    if (!description) {
+      return res.status(400).json({ error: "Describe the product before creating it." });
+    }
+    if (!logos.length) {
+      return res.status(400).json({ error: "Upload at least one logo image." });
+    }
+    if (!Number.isFinite(Number(price)) || Number(price) < 0) {
+      return res.status(400).json({ error: "Price must be a number of 0 or more." });
+    }
+
+    let collection;
+    try {
+      collection = (await getCollectionWithProducts(collectionId)).collection;
+    } catch (error) {
+      return catalogError(res, error);
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive"
+    });
+
+    const logoRuns = logos.map((file) => ({
+      file,
+      originalName: file.originalname,
+      filenameBase: titleCase(file.originalname),
+      slug: slug(file.originalname)
+    }));
+    dedupeLogoLabels(logoRuns);
+
+    try {
+      const plan = await runStep(res, 1, "Read the description", async () =>
+        planCustomProduct(description, hints)
+      );
+
+      const product = {
+        ...plan,
+        sizes: sizes.length ? sizes : DEFAULT_SIZES,
+        placement: placementInput,
+        productionNotes: description,
+        sizeChart: null
+      };
+      // An explicit placement wins; otherwise fall back to the same garment-aware
+      // default the onboarding pipeline uses (hats to the front panel, everything
+      // else to the left chest).
+      const placementKey = placementInput
+        ? resolvePlacement({ placement: placementInput, productType: product.productType, productLabel: product.productLabel })
+        : resolvePlacement(product);
+
+      const baseBuffer = await runStep(res, 2, "Generate the blank garment photo", async () =>
+        generateBlankGarment({ productPrompt: product.productPrompt, garmentColor: product.garmentColor })
+      );
+
+      const logoVariants = await runStep(res, 3, "Composite the uploaded logos", async () => {
+        const variants = [];
+        for (const logo of logoRuns) {
+          let mockupBuffer;
+          try {
+            mockupBuffer = await compositeLogoOnGarment(baseBuffer, logo.file.buffer, placementKey);
+          } catch (error) {
+            throw new Error(`Could not place logo "${logo.originalName}": ${error.message}`);
+          }
+          variants.push({ logo, mockupBuffer, mockupDataUrl: `data:image/png;base64,${mockupBuffer.toString("base64")}` });
+        }
+        return variants;
+      });
+
+      const descriptionHtml = await runStep(res, 4, "Write the product description", async () =>
+        generateProductDescription(collection.title, {
+          ...product,
+          placement: placementInput || placementKey.replace(/-/g, " ")
+        })
+      );
+
+      const created = await runStep(res, 5, "Create the Shopify product", async () => {
+        const productSlug = slug(product.productLabel || product.productType || "product");
+        const shopifyProduct = await createProductWithVariants({
+          title: product.productLabel,
+          bodyHtml: descriptionHtml,
+          price,
+          productType: product.productType,
+          vendor,
+          tags: [collection.title],
+          logoValues: logoVariants.map((lv) => lv.logo.filenameBase),
+          sizes: product.sizes
+        });
+
+        const idsByLogo = variantIdsByLogo(shopifyProduct.variants, shopifyProduct.useLogoOption);
+        await uploadProductImages(
+          shopifyProduct.productGid,
+          logoVariants.map((lv) => ({
+            filename: `${productSlug}-${lv.logo.slug || "logo"}-mockup.png`,
+            buffer: lv.mockupBuffer,
+            alt: `${product.productLabel} — ${lv.logo.filenameBase}`,
+            variantIds: idsByLogo.get(shopifyProduct.useLogoOption ? lv.logo.filenameBase : "__all__") || []
+          }))
+        );
+        return shopifyProduct;
+      });
+
+      await runStep(res, 6, "Add the product to the department", async () =>
+        addProductToCollection(created.productId, collection.id)
+      );
+
+      sendEvent(res, "created", {
+        product: {
+          id: created.productId,
+          title: created.title,
+          url: adminProductUrl(created.productId),
+          variantCount: created.variantCount,
+          logoCount: logoVariants.length,
+          thumbnail: logoVariants[0]?.mockupDataUrl || null
+        },
+        collection: { id: collection.id, title: collection.title }
+      });
+      res.end();
+    } catch (error) {
+      sendEvent(res, "error", { step: error.step || 0, error: error.message });
+      res.end();
+    }
+  }
+);
 
 app.use((err, req, res, next) => {
   console.error(err);

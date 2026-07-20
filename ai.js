@@ -37,18 +37,24 @@ async function analyzeLogo(file) {
   return response.choices[0]?.message?.content?.trim() || "";
 }
 
-// Generate a BLANK garment photo only. The department logo is composited onto
-// this base afterwards (mockup.js) so the exact uploaded artwork is preserved —
-// the image model never attempts to redraw logos or text.
-async function generateBlankGarment({ productPrompt, garmentColor }) {
-  const openai = client();
+// How many times a garment base is regenerated before we accept it. Image
+// models drift toward inventing chest text/logos even when told not to, so a
+// rejected render is retried rather than shipped.
+const BLANK_GARMENT_ATTEMPTS = 3;
+
+function blankGarmentPrompt(productPrompt, garmentColor) {
   const colorPhrase = garmentColor ? ` in ${garmentColor}` : "";
+  return `A professional studio product photograph of ${productPrompt}${colorPhrase}. The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
+}
+
+async function renderGarment(prompt) {
+  const openai = client();
   const response = await openai.images.generate({
     model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
     size: "1024x1024",
     quality: "medium",
     n: 1,
-    prompt: `A professional studio product photograph of ${productPrompt}${colorPhrase}. The garment is completely blank: no logo, no text, no lettering, no numbers, no graphics, no embroidery, no patches, no printed design of any kind. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`
+    prompt
   });
   const image = response.data?.[0];
   if (image?.b64_json) {
@@ -60,6 +66,153 @@ async function generateBlankGarment({ productPrompt, garmentColor }) {
   const imageRes = await fetch(url);
   if (!imageRes.ok) throw new Error(`Could not download generated garment image: ${imageRes.status}`);
   return imageRes.buffer();
+}
+
+// Gate on the one failure mode that actually reaches customers: the image model
+// rendering its own text or artwork onto a garment that is supposed to be
+// blank. Anything it invents is gibberish — misspelled words, fake crests, a
+// scribbled brand mark — and the real logo gets composited on top of it, so it
+// has to be caught before the base is used.
+async function inspectGarmentForArtwork(buffer) {
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `This image should show a completely blank garment with no decoration of any kind.
+
+Inspect the garment itself (ignore the background, and ignore plain fabric features such as seams, stitching, buttons, zippers, pockets, collars, and folds).
+
+Return JSON only: {"clean": true|false, "found": "short description of any text, letters, numbers, logos, emblems, patches, brand marks, or printed graphics visible on the garment"}
+
+Set "clean" to false if ANY lettering, numbering, logo, emblem, patch, label, or printed graphic appears on the garment, even faint, partial, or blurry. Set "clean" to true only if every surface of the garment is plain undecorated fabric.`
+          },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${buffer.toString("base64")}` } }
+        ]
+      }
+    ],
+    max_tokens: 200
+  });
+
+  try {
+    const parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() || "{}");
+    return { clean: parsed.clean === true, found: String(parsed.found || "") };
+  } catch (error) {
+    // An unparseable inspection must not block a run — the composite step still
+    // places the real logo correctly, so accept the base and move on.
+    return { clean: true, found: "" };
+  }
+}
+
+// Generate a BLANK garment photo only. The department logo is composited onto
+// this base afterwards (mockup.js) so the exact uploaded artwork is preserved —
+// the image model never attempts to redraw logos or text.
+//
+// Two layers keep gibberish out of the final product image:
+//   1. this function rejects any base render that already has invented text or
+//      artwork on it and tries again,
+//   2. mockup.compositeLogoOnGarment pastes the exact uploaded logo file, so
+//      the artwork that does appear is never model-drawn.
+async function generateBlankGarment({ productPrompt, garmentColor }) {
+  let prompt = blankGarmentPrompt(productPrompt, garmentColor);
+  let lastBuffer = null;
+  let lastFinding = "";
+
+  for (let attempt = 1; attempt <= BLANK_GARMENT_ATTEMPTS; attempt++) {
+    lastBuffer = await renderGarment(prompt);
+    const inspection = await inspectGarmentForArtwork(lastBuffer);
+    if (inspection.clean) return lastBuffer;
+
+    lastFinding = inspection.found;
+    // Name the offending artwork in the retry so the model stops reproducing it.
+    prompt = `${blankGarmentPrompt(productPrompt, garmentColor)} A previous attempt incorrectly included ${
+      inspection.found || "text and graphics"
+    } on the garment. Do not include that or anything like it. The garment must be entirely undecorated.`;
+  }
+
+  // Out of retries: the composite still lands the real logo on top, so ship the
+  // last render rather than failing the whole run, but make the reason visible.
+  console.warn(
+    `Blank garment for "${productPrompt}" still showed generated artwork after ${BLANK_GARMENT_ATTEMPTS} attempts (${lastFinding}). Using the last render.`
+  );
+  return lastBuffer;
+}
+
+// Turn the operator's free-text description of a garment ("navy job shirt,
+// heavyweight, quarter zip") into the structured fields the rest of the
+// pipeline already speaks. Used by the manual "create a product" flow, where a
+// person describes the item instead of a policy document defining it.
+//
+// Same no-invention rule as policy extraction: a detail the operator did not
+// give comes back empty rather than guessed, so the review chips keep telling
+// the truth about what is stated versus defaulted.
+async function planCustomProduct(description, hints = {}) {
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: `An operator is adding one custom garment to a fire department uniform store. Convert their description into structured product fields.
+
+CRITICAL RULE — no invention: use only what the description (and the operator-supplied values below) actually say. If a detail is not stated, return an empty string. Never guess fabric weights, brands, colors, or style numbers.
+
+Return JSON only with these keys:
+- productType: short lowercase type such as "shirt", "hat", "pants", "hoodie", "jacket"
+- productLabel: customer-facing product name; include the garment brand only if stated (e.g. "Next Level Cotton T-Shirt"). Never include the department name.
+- productPrompt: a visual phrase describing the BLANK garment for product photography (garment shape, cut, and material look only — never mention any logo, text, or decoration)
+- garmentColor: color if stated, else ""
+- brandStyle: brand and/or style number if stated, else ""
+- fabricDetails: fabric/material details if stated, else ""
+- decorationMethod: embroidery/screen print/heat transfer if stated, else ""
+
+Operator-supplied values (these win over anything inferred from the description):
+${JSON.stringify(
+  {
+    productLabel: hints.productLabel || "",
+    productType: hints.productType || "",
+    garmentColor: hints.garmentColor || ""
+  },
+  null,
+  2
+)}
+
+Description:
+${description}`
+      }
+    ],
+    max_tokens: 600
+  });
+
+  const fallbackLabel = hints.productLabel || "Custom Garment";
+  try {
+    const parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() || "{}");
+    return {
+      productType: hints.productType || parsed.productType || "product",
+      productLabel: hints.productLabel || parsed.productLabel || fallbackLabel,
+      productPrompt: parsed.productPrompt || `a ${hints.productType || "garment"} laid flat`,
+      garmentColor: hints.garmentColor || parsed.garmentColor || "",
+      brandStyle: parsed.brandStyle || "",
+      fabricDetails: parsed.fabricDetails || "",
+      decorationMethod: parsed.decorationMethod || ""
+    };
+  } catch (error) {
+    return {
+      productType: hints.productType || "product",
+      productLabel: fallbackLabel,
+      productPrompt: `a ${hints.productType || "garment"} laid flat`,
+      garmentColor: hints.garmentColor || "",
+      brandStyle: "",
+      fabricDetails: "",
+      decorationMethod: ""
+    };
+  }
 }
 
 function escapeHtml(input) {
@@ -445,5 +598,6 @@ module.exports = {
   determinePolicyProducts,
   extractPolicyInstructions,
   generateBlankGarment,
-  generateProductDescription
+  generateProductDescription,
+  planCustomProduct
 };

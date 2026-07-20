@@ -58,11 +58,56 @@ single revoked or expired token never takes Drive down.
 For durability on Render, set these as **dashboard environment variables** (not via
 the in-app Connect buttons), since Render's filesystem is ephemeral.
 
-## Workflow
+## The console
 
-The main UI accepts a department name, logo images, policy documents, and optional
-follow-up answers from the department. Onboarding runs in **two phases with a
-review gate in between — nothing is published to Shopify without explicit
+The app opens on **Departments** — every Shopify collection in the store, one
+card per fire department. The nav bar has two entries:
+
+| Nav item | Route | What it does |
+| --- | --- | --- |
+| **Departments** | `#/departments` | Browse all collections; click one to open it |
+| **Onboard new** | `#/onboarding` | The full policy-driven intake described below |
+
+Onboarding is what you run *once* to stand up a new department. Browsing and
+editing is the everyday task, so it is the landing view.
+
+### Departments → one department
+
+Opening a department lists its products with status, price, and variant count.
+From there:
+
+- **Edit** opens a drawer for title, price, status, product type, vendor, tags,
+  and description. Price applies to **every variant** on the product (the store
+  prices products flat across logo × size), and the drawer reports how many
+  variants were repriced.
+  - The description is stored as HTML. It is only sent to Shopify **if you
+    change it** — leave it alone and its existing formatting is preserved
+    byte-for-byte. If you do edit a description containing a size-chart table,
+    the drawer warns you that the round-trip through plain text will flatten it;
+    edit those in Shopify admin.
+- **New product** creates one product in that department from a description
+  plus logos, without needing a policy document. You supply the description,
+  logo files, price, sizes, and optionally a name, type, color, and placement;
+  the app plans the garment, generates the photo, composites each logo, writes
+  the description, creates the product with Front Logo × Size variants, and adds
+  it to the collection. The same no-invention rule applies — anything you don't
+  state is left blank rather than guessed.
+
+### Catalog API
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/collections` | All collections (departments) |
+| `GET` | `/api/collections/:id` | One collection plus its products |
+| `GET` | `/api/products/:id` | Full product detail |
+| `PATCH` | `/api/products/:id` | Update supplied fields only; `price` repriced across all variants |
+| `POST` | `/api/collections/:id/products` | Create a product (multipart; SSE progress) |
+
+## Onboarding workflow
+
+The onboarding view accepts a department name, logo images, policy documents, and
+optional follow-up answers from the department. Onboarding runs in **two phases
+with a review gate in between — nothing is published to Shopify without explicit
 approval.**
 
 ### Phase 1 — analyze & generate (steps 1–7)
@@ -72,7 +117,7 @@ approval.**
 3. Analyze each logo with GPT-4o Vision.
 4. Extract products, garment details, and logo assignments from the policy + follow-up text. **Strict no-invention rule:** details not stated in the documents stay empty instead of being guessed.
 5. **Check policy completeness.** Anything a production run needs but the policy doesn't state (placement, garment color, brand/style, sizes, decoration method, logo assignments, personalization rules) is reported as a gap, and a ready-to-send **email draft** asking the department for those details is generated and saved to Drive.
-6. Generate product images with **exact logo compositing**: GPT Image renders a *blank* garment (no logo, no text), then the exact uploaded logo file is composited onto it with sharp at the policy-stated placement. The logo is never redrawn by the AI, so no hallucinated artwork or text.
+6. Generate product images with **exact logo compositing** — see [No gibberish on product images](#no-gibberish-on-product-images).
 7. Write fact-only product descriptions, the production manual Google Doc, and the gap email draft doc.
 
 ### Review gate
@@ -115,6 +160,29 @@ for 24 hours, while the server keeps the run manifest in memory). It:
 If the option has expired (or the server restarted, e.g. a Render deploy),
 delete the products/collection in Shopify admin and the folder in Drive
 manually.
+
+## No gibberish on product images
+
+Image models invent misspelled words and fake crests when asked to draw a logo.
+Two layers stop that reaching a listing — both apply to onboarding runs and to
+manually created products:
+
+1. **The logo is never drawn by AI.** GPT Image renders only a *blank* garment.
+   The exact uploaded logo file is then composited onto it with sharp at the
+   stated placement (`mockup.js`), pixel for pixel. The artwork on the final
+   image is always the department's real file.
+2. **The blank garment is inspected before it is used.** The model still
+   sometimes decorates a garment it was told to leave plain, so every render is
+   checked by GPT-4o Vision for text, lettering, numbers, logos, emblems,
+   patches, or printed graphics. A render that isn't clean is regenerated — up
+   to 3 attempts, with the offending artwork named in the retry prompt so the
+   model stops reproducing it. Seams, stitching, buttons, zippers, pockets, and
+   collars are explicitly ignored.
+
+If all 3 attempts still come back decorated, the last render is used rather than
+failing the run (the real logo still lands on top) and the reason is logged to
+the server console. Tune the attempt count with `BLANK_GARMENT_ATTEMPTS` in
+`ai.js`.
 
 ## Drive Folder
 

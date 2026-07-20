@@ -16,9 +16,23 @@
      • GET  /health → { shopifyConnected, shopifyStore, googleConnected }
      • POST /auth/{shopify|google}/disconnect
 
+     • GET  /api/collections → { collections[] } — every department in the store
+     • GET  /api/collections/:id → { collection, products[] }
+     • GET  /api/products/:id → { product }
+     • PATCH /api/products/:id → { product } (title/description/type/vendor/
+       status/tags/price; price applies to every variant)
+     • POST /api/collections/:id/products (multipart: description, logos[],
+       price, sizes, productLabel, productType, garmentColor, placement)
+       → SSE `status` / `error` events ending in `created`.
+
    This file only owns presentation: it maps SSE `step`/`state` onto a visual
    timeline + progress bar, renders file previews, renders the review gate,
    and handles the folder conflict with an accessible modal.
+
+   Navigation is hash-routed across three views — #/departments (the default
+   landing view), #/departments/:id, and #/onboarding. Onboarding is one option
+   in the nav rather than the whole app, because day to day the store already
+   exists and the common task is browsing and editing it.
    ========================================================================== */
 
 const TOTAL_STEPS = 10; // 7 analyze/generate + 3 publish (review gate between)
@@ -873,7 +887,9 @@ function handleEvent(event, payload) {
   }
 }
 
-async function readSseStream(res) {
+// Defaults to the onboarding timeline handler; the catalog's create-product
+// flow passes its own so it can drive the modal's progress bar instead.
+async function readSseStream(res, onEvent = handleEvent) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -881,7 +897,7 @@ async function readSseStream(res) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    buffer = parseSseChunk(buffer, handleEvent);
+    buffer = parseSseChunk(buffer, onEvent);
   }
 }
 
@@ -1001,3 +1017,831 @@ wireDropzone("logos", logoInput, renderLogoThumbs, isImage);
 wireDropzone("policies", policyInput, renderPolicyChips, isDoc);
 wireDropzone("followUps", followUpInput, renderFollowUpChips, isDoc);
 refreshConnectionState();
+
+/* =============================================================================
+   DEPARTMENTS — browse and edit what is already live in Shopify.
+   Each Shopify collection is one fire department.
+   ========================================================================== */
+
+const views = {
+  departments: el("viewDepartments"),
+  department: el("viewDepartment"),
+  onboarding: el("viewOnboarding")
+};
+const departmentsBody = el("departmentsBody");
+const departmentDetailBody = el("departmentDetailBody");
+const departmentSearch = el("departmentSearch");
+
+// Collections are fetched once per visit and filtered client-side — the list is
+// small (one entry per department) and filtering should feel instant.
+let collectionsCache = null;
+let currentCollection = null;
+
+// Shopify is inconsistent about decimal places — priceRangeV2 returns "245.0"
+// while a variant's own price field returns "27.00". Everything that displays
+// or compares a price goes through these so the two forms never diverge.
+function normalizePrice(amount) {
+  const value = Number(amount);
+  return Number.isFinite(value) ? value.toFixed(2) : "";
+}
+
+function samePrice(a, b) {
+  const left = Number(a);
+  const right = Number(b);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  return Math.abs(left - right) < 0.005;
+}
+
+function money(amount, currency) {
+  if (amount === null || amount === undefined || amount === "") return "—";
+  const value = normalizePrice(amount);
+  if (!value) return "—";
+  return `${value}${currency ? ` ${currency}` : ""}`;
+}
+
+function priceLabel(product) {
+  const min = money(product.minPrice, "");
+  if (product.maxPrice && product.maxPrice !== product.minPrice) {
+    return `$${min} – $${money(product.maxPrice, "")}`;
+  }
+  return `$${min}`;
+}
+
+/* Shared empty / loading / error block so every async surface in this section
+   renders its unhappy paths the same way. */
+function stateBlock({ tone = "muted", title, sub = "", actionHtml = "", spinner = false }) {
+  return `
+    <div class="state-block" data-tone="${tone}">
+      ${spinner ? '<span class="spinner state-spinner" aria-hidden="true"></span>' : ""}
+      <p class="sb-title">${escapeHtml(title)}</p>
+      ${sub ? `<p class="sb-sub">${escapeHtml(sub)}</p>` : ""}
+      ${actionHtml}
+    </div>`;
+}
+
+function statusChip(status) {
+  const tone = { ACTIVE: "ok", DRAFT: "warn", ARCHIVED: "muted" }[status] || "muted";
+  const label = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" }[status] || status;
+  return `<span class="status-chip" data-tone="${tone}">${escapeHtml(label)}</span>`;
+}
+
+/* -----------------------------------------------------------------------------
+   Routing
+   -------------------------------------------------------------------------- */
+function parseRoute() {
+  const path = (location.hash.replace(/^#/, "") || "/departments").split("?")[0];
+  const parts = path.split("/").filter(Boolean);
+  if (parts[0] === "onboarding") return { name: "onboarding" };
+  if (parts[0] === "departments" && parts[1]) return { name: "department", id: decodeURIComponent(parts[1]) };
+  return { name: "departments" };
+}
+
+function showView(name) {
+  Object.entries(views).forEach(([key, node]) => {
+    if (node) node.hidden = key !== name;
+  });
+  // Department detail is a child of Departments, so the nav keeps that tab lit.
+  const navKey = name === "department" ? "departments" : name;
+  document.querySelectorAll("[data-nav]").forEach((link) => {
+    const active = link.dataset.nav === navKey;
+    link.dataset.active = active ? "true" : "false";
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+}
+
+async function handleRoute() {
+  const route = parseRoute();
+  showView(route.name);
+  closeDrawer();
+  if (route.name === "departments") await loadDepartments();
+  else if (route.name === "department") await loadDepartment(route.id);
+  window.scrollTo({ top: 0, behavior: "auto" });
+}
+
+/* -----------------------------------------------------------------------------
+   Departments list
+   -------------------------------------------------------------------------- */
+function departmentCard(collection) {
+  const count = collection.productCount;
+  const thumb = collection.imageUrl
+    ? `<img src="${escapeHtml(collection.imageUrl)}" alt="" loading="lazy">`
+    : `<span class="dept-initials" aria-hidden="true">${escapeHtml(
+        collection.title.split(/\s+/).slice(0, 2).map((word) => word[0] || "").join("").toUpperCase() || "?"
+      )}</span>`;
+
+  return `
+    <a class="dept-card" href="#/departments/${encodeURIComponent(collection.id)}">
+      <span class="dept-thumb">${thumb}</span>
+      <span class="dept-body">
+        <span class="dept-name">${escapeHtml(collection.title)}</span>
+        <span class="dept-meta">${count} ${count === 1 ? "product" : "products"}</span>
+      </span>
+      <span class="dept-arrow" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </span>
+    </a>`;
+}
+
+function renderDepartments(collections) {
+  const term = departmentSearch.value.trim().toLowerCase();
+  const filtered = term
+    ? collections.filter((collection) => collection.title.toLowerCase().includes(term))
+    : collections;
+
+  if (!collections.length) {
+    departmentsBody.innerHTML = stateBlock({
+      title: "No departments yet",
+      sub: "Run an onboarding to create the first department collection in Shopify.",
+      actionHtml: '<a class="btn btn-primary btn-sm" href="#/onboarding">Onboard a department</a>'
+    });
+    return;
+  }
+  if (!filtered.length) {
+    departmentsBody.innerHTML = stateBlock({
+      title: `No department matches “${term}”`,
+      sub: "Clear the filter to see all departments."
+    });
+    return;
+  }
+  departmentsBody.innerHTML = `<div class="dept-grid">${filtered.map(departmentCard).join("")}</div>`;
+}
+
+async function loadDepartments({ force = false } = {}) {
+  if (collectionsCache && !force) return renderDepartments(collectionsCache);
+
+  departmentsBody.innerHTML = stateBlock({
+    tone: "info",
+    title: "Loading departments…",
+    sub: "Reading collections from Shopify.",
+    spinner: true
+  });
+  try {
+    const res = await fetch("/api/collections");
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not load departments.");
+    collectionsCache = payload.collections || [];
+    renderDepartments(collectionsCache);
+  } catch (err) {
+    departmentsBody.innerHTML = stateBlock({
+      tone: "danger",
+      title: "Could not load departments",
+      sub: err.message,
+      actionHtml: '<button class="btn btn-secondary btn-sm" type="button" data-retry="departments">Try again</button>'
+    });
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   One department — its products
+   -------------------------------------------------------------------------- */
+function productCardHtml(product) {
+  const media = product.imageUrl
+    ? `<img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.imageAlt || product.title)}" loading="lazy">`
+    : `<span class="pg-noimg" aria-hidden="true">
+         <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+       </span>`;
+
+  return `
+    <article class="pg-card">
+      <div class="pg-media">${media}</div>
+      <div class="pg-body">
+        <div class="pg-top">
+          <h3 class="pg-title">${escapeHtml(product.title)}</h3>
+          ${statusChip(product.status)}
+        </div>
+        <p class="pg-meta">
+          <span class="pg-price">${escapeHtml(priceLabel(product))}</span>
+          <span class="pg-dot" aria-hidden="true">·</span>
+          <span>${product.variantCount} ${product.variantCount === 1 ? "variant" : "variants"}</span>
+          ${product.productType ? `<span class="pg-dot" aria-hidden="true">·</span><span>${escapeHtml(product.productType)}</span>` : ""}
+        </p>
+        <div class="pg-actions">
+          <button class="btn btn-secondary btn-sm" type="button" data-edit-product="${escapeHtml(product.id)}">Edit</button>
+        </div>
+      </div>
+    </article>`;
+}
+
+function renderDepartment({ collection, products }) {
+  currentCollection = collection;
+  const count = products.length;
+  const grid = count
+    ? `<div class="pg-grid">${products.map(productCardHtml).join("")}</div>`
+    : stateBlock({
+        title: "No products in this department yet",
+        sub: "Create the first one by describing the garment and adding its logos.",
+        actionHtml: '<button class="btn btn-primary btn-sm" type="button" id="emptyNewProduct">New product</button>'
+      });
+
+  departmentDetailBody.innerHTML = `
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href="#/departments">Departments</a>
+      <span aria-hidden="true">/</span>
+      <span aria-current="page">${escapeHtml(collection.title)}</span>
+    </nav>
+
+    <header class="dept-head">
+      <div class="dh-id">
+        ${collection.imageUrl ? `<img class="dh-thumb" src="${escapeHtml(collection.imageUrl)}" alt="">` : ""}
+        <div>
+          <p class="eyebrow">Department</p>
+          <h2>${escapeHtml(collection.title)}</h2>
+          <p class="dh-sub">${count} ${count === 1 ? "product" : "products"} in this collection</p>
+        </div>
+      </div>
+      <div class="dh-actions">
+        <button class="btn btn-ghost btn-sm" type="button" id="refreshDepartment">Refresh</button>
+        <button class="btn btn-primary btn-sm" type="button" id="openNewProduct">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+          New product
+        </button>
+      </div>
+    </header>
+
+    ${grid}`;
+}
+
+async function loadDepartment(collectionId) {
+  departmentDetailBody.innerHTML = stateBlock({
+    tone: "info",
+    title: "Loading department…",
+    sub: "Reading its products from Shopify.",
+    spinner: true
+  });
+  try {
+    const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not load this department.");
+    renderDepartment(payload);
+  } catch (err) {
+    currentCollection = null;
+    departmentDetailBody.innerHTML = `
+      <nav class="crumbs" aria-label="Breadcrumb"><a href="#/departments">Departments</a></nav>
+      ${stateBlock({
+        tone: "danger",
+        title: "Could not load this department",
+        sub: err.message,
+        actionHtml: `<button class="btn btn-secondary btn-sm" type="button" data-retry="department" data-id="${escapeHtml(collectionId)}">Try again</button>`
+      })}`;
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Product editor drawer
+   -------------------------------------------------------------------------- */
+const productDrawer = el("productDrawer");
+const drawerBody = el("drawerBody");
+const drawerTitle = el("drawerTitle");
+let drawerLastFocus = null;
+let editingProduct = null;
+
+function openDrawer() {
+  drawerLastFocus = document.activeElement;
+  productDrawer.hidden = false;
+  document.body.style.overflow = "hidden";
+  document.addEventListener("keydown", onDrawerKeydown);
+}
+
+function closeDrawer() {
+  if (productDrawer.hidden) return;
+  productDrawer.hidden = true;
+  document.body.style.overflow = "";
+  document.removeEventListener("keydown", onDrawerKeydown);
+  editingProduct = null;
+  drawerBody.innerHTML = "";
+  if (drawerLastFocus?.focus) drawerLastFocus.focus();
+}
+
+function onDrawerKeydown(e) {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeDrawer();
+    return;
+  }
+  if (e.key !== "Tab") return;
+  const focusable = [...productDrawer.querySelectorAll("button, input, textarea, select, a[href]")].filter(
+    (node) => !node.disabled && node.offsetParent !== null
+  );
+  if (!focusable.length) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+// The description is stored as HTML by Shopify. Editing raw markup is the wrong
+// job for this console, so the drawer shows the text and only rewraps it in
+// paragraphs when the operator actually changes it.
+//
+// textContent alone would run block elements together ("…ring spun cottonLogo
+// placement: left chest"), so block boundaries become newlines and list items
+// keep their bullet — what the operator sees matches how it reads on the page.
+// Two tiers: a paragraph, heading, list, or table ends a *block* and gets a
+// blank line after it, so the next block parses back as its own element. Items
+// inside one (list items, table rows) get a single newline so the list stays a
+// single list on the round trip.
+const BLOCK_TAGS = "P,DIV,SECTION,H1,H2,H3,H4,H5,H6,UL,OL,TABLE,BLOCKQUOTE";
+const LINE_TAGS = "LI,TR";
+
+// Whitespace-only text nodes sitting *between* structural elements are source
+// formatting, not content — "<li>a</li>\n<li>b</li>" would otherwise gain a
+// blank line per item and split one list into several. Only structural parents
+// are stripped, so a real space in "<b>a</b> <i>b</i>" is left alone.
+const STRUCTURAL_PARENTS = new Set(["UL", "OL", "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "COLGROUP", "DIV", "SECTION"]);
+
+function stripStructuralWhitespace(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const blanks = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!node.textContent.trim() && STRUCTURAL_PARENTS.has(node.parentNode?.nodeName)) blanks.push(node);
+  }
+  blanks.forEach((node) => node.remove());
+}
+
+function htmlToText(html) {
+  const holder = document.createElement("div");
+  holder.innerHTML = html || "";
+  stripStructuralWhitespace(holder);
+
+  holder.querySelectorAll("br").forEach((node) => node.replaceWith("\n"));
+  holder.querySelectorAll("li").forEach((node) => {
+    node.prepend("• ");
+  });
+  holder.querySelectorAll("td, th").forEach((node) => {
+    if (node.nextElementSibling) node.append("\t");
+  });
+  holder.querySelectorAll(LINE_TAGS).forEach((node) => {
+    node.append("\n");
+  });
+  holder.querySelectorAll(BLOCK_TAGS).forEach((node) => {
+    node.append("\n\n");
+  });
+
+  return holder.textContent
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Rich structures (size chart tables, spec bullets) survive an untouched save
+// because the description is only sent when it changes — but if the operator
+// does edit it, the round-trip through plain text flattens them. Say so.
+function hasRichMarkup(html) {
+  return /<(table|ul|ol)\b/i.test(html || "");
+}
+
+// Inverse of htmlToText for the shapes it produces: blank lines separate
+// paragraphs, and runs of "• " lines come back as a real <ul> so edited spec
+// bullets stay bullets on the storefront.
+function textToHtml(text) {
+  return text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => {
+      const lines = block.split("\n").map((line) => line.trim()).filter(Boolean);
+      if (lines.length && lines.every((line) => line.startsWith("•"))) {
+        const items = lines
+          .map((line) => `<li>${escapeHtml(line.replace(/^•\s*/, ""))}</li>`)
+          .join("");
+        return `<ul>${items}</ul>`;
+      }
+      return `<p>${escapeHtml(block).replace(/\n/g, "<br>")}</p>`;
+    })
+    .join("\n");
+}
+
+function renderDrawer(product) {
+  editingProduct = product;
+  drawerTitle.textContent = product.title;
+
+  const optionRows = product.options
+    .map(
+      (option) => `
+      <div class="opt-row">
+        <span class="opt-name">${escapeHtml(option.name)}</span>
+        <span class="opt-count">${option.values.length} ${option.values.length === 1 ? "value" : "values"}</span>
+        <span class="opt-values">${escapeHtml(option.values.slice(0, 8).join(", "))}${
+          option.values.length > 8 ? ` +${option.values.length - 8} more` : ""
+        }</span>
+      </div>`
+    )
+    .join("");
+
+  const gallery = product.images.length
+    ? `<div class="dw-gallery">${product.images
+        .slice(0, 12)
+        .map(
+          (image) =>
+            `<figure><img src="${escapeHtml(image.url)}" alt="${escapeHtml(image.alt)}" loading="lazy">${
+              image.alt ? `<figcaption>${escapeHtml(image.alt)}</figcaption>` : ""
+            }</figure>`
+        )
+        .join("")}</div>`
+    : stateBlock({ title: "No images on this product" });
+
+  drawerBody.innerHTML = `
+    <form id="editProductForm" novalidate>
+      <div class="dw-summary">
+        ${statusChip(product.status)}
+        <span>${product.variantCount} ${product.variantCount === 1 ? "variant" : "variants"}</span>
+        ${product.onlineStoreUrl ? `<a href="${escapeHtml(product.onlineStoreUrl)}" target="_blank" rel="noreferrer">View in store</a>` : ""}
+      </div>
+
+      <div class="field">
+        <label for="epTitle">Title</label>
+        <input id="epTitle" name="title" type="text" value="${escapeHtml(product.title)}" aria-describedby="epTitleError">
+        <p class="hint field-error" id="epTitleError" hidden></p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="epPrice">Price <span class="opt">(all variants)</span></label>
+          <div class="input-prefix">
+            <span aria-hidden="true">$</span>
+            <input id="epPrice" name="price" type="number" min="0" step="0.01" value="${escapeHtml(normalizePrice(product.minPrice))}" aria-describedby="epPriceError">
+          </div>
+          <p class="hint" id="epPriceHint">Applies to all ${product.variantCount} variants.</p>
+          <p class="hint field-error" id="epPriceError" hidden></p>
+        </div>
+        <div class="field">
+          <label for="epStatus">Status</label>
+          <select id="epStatus" name="status">
+            <option value="ACTIVE"${product.status === "ACTIVE" ? " selected" : ""}>Active</option>
+            <option value="DRAFT"${product.status === "DRAFT" ? " selected" : ""}>Draft</option>
+            <option value="ARCHIVED"${product.status === "ARCHIVED" ? " selected" : ""}>Archived</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="epType">Product type</label>
+          <input id="epType" name="productType" type="text" value="${escapeHtml(product.productType)}">
+        </div>
+        <div class="field">
+          <label for="epVendor">Vendor</label>
+          <input id="epVendor" name="vendor" type="text" value="${escapeHtml(product.vendor)}">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="epTags">Tags</label>
+        <input id="epTags" name="tags" type="text" value="${escapeHtml(product.tags.join(", "))}">
+        <p class="hint">Comma separated.</p>
+      </div>
+
+      <div class="field">
+        <label for="epDescription">Description</label>
+        <textarea id="epDescription" name="descriptionHtml" rows="7">${escapeHtml(htmlToText(product.descriptionHtml))}</textarea>
+        <p class="hint">Blank lines start a new paragraph, “•” lines become a bullet list. Left untouched, the description is not sent at all — its existing formatting is preserved exactly.</p>
+        ${
+          hasRichMarkup(product.descriptionHtml)
+            ? `<p class="hint" data-tone="warn">This description contains a table or list. Editing it here rewrites it as paragraphs and bullets — a size chart table would not survive. Edit tables in Shopify admin instead.</p>`
+            : ""
+        }
+      </div>
+
+      <div class="banner" id="epError" hidden>
+        <span class="b-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </span>
+        <span id="epErrorText"></span>
+      </div>
+      <div class="banner" id="epSaved" data-tone="ok" hidden>
+        <span class="b-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+        <span id="epSavedText">Saved to Shopify.</span>
+      </div>
+
+      <div class="dw-actions">
+        <button class="btn btn-ghost" type="button" id="epCancel">Close</button>
+        <button class="btn btn-primary" type="submit" id="epSave"><span class="btn-label">Save changes</span></button>
+      </div>
+
+      <section class="dw-section">
+        <h3>Variant options</h3>
+        ${optionRows || stateBlock({ title: "This product has no options" })}
+      </section>
+
+      <section class="dw-section">
+        <h3>Images</h3>
+        ${gallery}
+      </section>
+    </form>`;
+
+  el("editProductForm").addEventListener("submit", saveProduct);
+  el("epCancel").addEventListener("click", closeDrawer);
+  el("epTitle").focus();
+}
+
+async function openProductEditor(productId) {
+  openDrawer();
+  drawerTitle.textContent = "Loading…";
+  drawerBody.innerHTML = stateBlock({ tone: "info", title: "Loading product…", spinner: true });
+  try {
+    const res = await fetch(`/api/products/${encodeURIComponent(productId)}`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not load this product.");
+    renderDrawer(payload.product);
+  } catch (err) {
+    drawerTitle.textContent = "Product";
+    drawerBody.innerHTML = stateBlock({ tone: "danger", title: "Could not load this product", sub: err.message });
+  }
+}
+
+async function saveProduct(e) {
+  e.preventDefault();
+  if (!editingProduct) return;
+
+  const title = el("epTitle").value.trim();
+  const price = el("epPrice").value.trim();
+  const errorBanner = el("epError");
+  const savedBanner = el("epSaved");
+  errorBanner.hidden = true;
+  savedBanner.hidden = true;
+
+  let valid = true;
+  if (!title) {
+    showFieldError(el("epTitle"), el("epTitleError"), "Title is required.");
+    valid = false;
+  } else {
+    hideFieldError(el("epTitle"), el("epTitleError"));
+  }
+  if (price && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
+    showFieldError(el("epPrice"), el("epPriceError"), "Enter a price of 0 or more.");
+    valid = false;
+  } else {
+    hideFieldError(el("epPrice"), el("epPriceError"));
+  }
+  if (!valid) return;
+
+  const descriptionText = el("epDescription").value;
+  const patch = {
+    title,
+    productType: el("epType").value.trim(),
+    vendor: el("epVendor").value.trim(),
+    status: el("epStatus").value,
+    tags: el("epTags").value
+  };
+  // Only send the description when it actually changed, so untouched HTML
+  // formatting (size chart tables, spec lists) survives an edit to other fields.
+  if (descriptionText.trim() !== htmlToText(editingProduct.descriptionHtml)) {
+    patch.descriptionHtml = textToHtml(descriptionText);
+  }
+  // Compared numerically, not as strings: repricing is a write across every
+  // variant (200+ on a real product), so an unchanged price must never trigger
+  // one just because Shopify echoed it back as "27.0" instead of "27.00".
+  if (price && !samePrice(price, editingProduct.minPrice)) patch.price = normalizePrice(price);
+
+  const saveBtn = el("epSave");
+  saveBtn.disabled = true;
+  saveBtn.querySelector(".btn-label").textContent = "Saving…";
+  saveBtn.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
+
+  try {
+    const res = await fetch(`/api/products/${encodeURIComponent(editingProduct.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch)
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Save failed.");
+
+    editingProduct = payload.product;
+    drawerTitle.textContent = payload.product.title;
+    el("epSavedText").textContent = patch.price
+      ? `Saved. ${payload.product.repricedVariants ?? 0} variants repriced.`
+      : "Saved to Shopify.";
+    savedBanner.hidden = false;
+    if (currentCollection) loadDepartment(currentCollection.id);
+  } catch (err) {
+    el("epErrorText").textContent = err.message || "Save failed.";
+    errorBanner.hidden = false;
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.querySelector(".spinner")?.remove();
+    saveBtn.querySelector(".btn-label").textContent = "Save changes";
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   New product — describe it, add logos, publish straight into the department
+   -------------------------------------------------------------------------- */
+const newProductModal = el("newProductModal");
+const newProductForm = el("newProductForm");
+const npLogoInput = el("npLogos");
+const npLogoThumbs = el("npLogoThumbs");
+let npLastFocus = null;
+const npObjectUrls = new Set();
+
+function renderNpThumbs() {
+  npObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+  npObjectUrls.clear();
+  const files = [...npLogoInput.files];
+  npLogoThumbs.innerHTML = files
+    .map((file, i) => {
+      const url = URL.createObjectURL(file);
+      npObjectUrls.add(url);
+      return `
+        <div class="thumb">
+          <img src="${url}" alt="${escapeHtml(file.name)}">
+          <button class="file-remove" type="button" data-remove-nplogo="${i}" aria-label="Remove ${escapeHtml(file.name)}">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>`;
+    })
+    .join("");
+  syncDropzone("npLogos", files.length);
+  if (files.length) {
+    hideFieldError(npLogoInput, el("npLogosError"));
+    markDropzoneInvalid("npLogos", false);
+  }
+}
+
+function openNewProductModal() {
+  if (!currentCollection) return;
+  npLastFocus = document.activeElement;
+  el("newProductDept").textContent = `Creating in “${currentCollection.title}”. Describe the garment, add the logos, set a price.`;
+  newProductModal.hidden = false;
+  document.body.style.overflow = "hidden";
+  document.addEventListener("keydown", onNpKeydown);
+  el("npDescription").focus();
+}
+
+function closeNewProductModal() {
+  if (newProductModal.hidden) return;
+  newProductModal.hidden = true;
+  document.body.style.overflow = "";
+  document.removeEventListener("keydown", onNpKeydown);
+  if (npLastFocus?.focus) npLastFocus.focus();
+}
+
+function onNpKeydown(e) {
+  // A create run is mid-flight once the submit button is disabled; Escape then
+  // would abandon a Shopify write the operator can't see the result of.
+  if (e.key === "Escape" && !el("npSubmit").disabled) {
+    e.preventDefault();
+    closeNewProductModal();
+  }
+}
+
+function resetNewProductForm() {
+  newProductForm.reset();
+  setInputFiles(npLogoInput, []);
+  renderNpThumbs();
+  el("npSizes").value = "XS, S, M, L, XL, 2XL, 3XL";
+  el("npProgress").hidden = true;
+  el("npError").hidden = true;
+  hideFieldError(el("npDescription"), el("npDescriptionError"));
+  hideFieldError(el("npPrice"), el("npPriceError"));
+  markDropzoneInvalid("npLogos", false);
+}
+
+const NP_TOTAL_STEPS = 6;
+function setNpProgress(step, label) {
+  const pct = Math.round(((step - 1) / NP_TOTAL_STEPS) * 100);
+  el("npProgressFill").style.width = `${pct}%`;
+  el("npProgressPct").textContent = `${pct}%`;
+  el("npProgressText").textContent = label;
+  el("npProgressBar").setAttribute("aria-valuenow", String(pct));
+}
+
+function validateNewProduct() {
+  let ok = true;
+  if (!el("npDescription").value.trim()) {
+    showFieldError(el("npDescription"), el("npDescriptionError"), "Describe the product first.");
+    ok = false;
+  } else {
+    hideFieldError(el("npDescription"), el("npDescriptionError"));
+  }
+  const price = el("npPrice").value.trim();
+  if (price && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
+    showFieldError(el("npPrice"), el("npPriceError"), "Enter a price of 0 or more.");
+    ok = false;
+  } else {
+    hideFieldError(el("npPrice"), el("npPriceError"));
+  }
+  if (!npLogoInput.files.length) {
+    showFieldError(npLogoInput, el("npLogosError"), "Add at least one logo image.");
+    markDropzoneInvalid("npLogos", true);
+    ok = false;
+  } else {
+    hideFieldError(npLogoInput, el("npLogosError"));
+    markDropzoneInvalid("npLogos", false);
+  }
+  return ok;
+}
+
+async function submitNewProduct(e) {
+  e.preventDefault();
+  if (!currentCollection || !validateNewProduct()) return;
+
+  const submitBtn = el("npSubmit");
+  const cancelBtn = el("npCancel");
+  submitBtn.disabled = true;
+  cancelBtn.disabled = true;
+  submitBtn.querySelector(".btn-label").textContent = "Creating…";
+  submitBtn.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
+  el("npError").hidden = true;
+  el("npProgress").hidden = false;
+  setNpProgress(1, "Starting…");
+
+  let createdProduct = null;
+  try {
+    const res = await fetch(`/api/collections/${encodeURIComponent(currentCollection.id)}/products`, {
+      method: "POST",
+      body: new FormData(newProductForm)
+    });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ error: "Could not create the product." }));
+      throw new Error(payload.error || "Could not create the product.");
+    }
+
+    let failure = null;
+    await readSseStream(res, (event, payload) => {
+      if (event === "status" && payload.state === "running") {
+        setNpProgress(payload.step, payload.message.replace(/^Step \d+ \w+: /, ""));
+      } else if (event === "status" && payload.state === "complete") {
+        setNpProgress(payload.step + 1, "Working…");
+      } else if (event === "created") {
+        createdProduct = payload.product;
+      } else if (event === "error") {
+        failure = payload.error || "Could not create the product.";
+      }
+    });
+    if (failure) throw new Error(failure);
+    if (!createdProduct) throw new Error("The run ended before the product was created.");
+
+    setNpProgress(NP_TOTAL_STEPS + 1, "Done");
+    closeNewProductModal();
+    resetNewProductForm();
+    collectionsCache = null; // product counts changed
+    await loadDepartment(currentCollection.id);
+    openProductEditor(createdProduct.id);
+  } catch (err) {
+    el("npErrorText").textContent = err.message || "Could not create the product.";
+    el("npError").hidden = false;
+  } finally {
+    submitBtn.disabled = false;
+    cancelBtn.disabled = false;
+    submitBtn.querySelector(".spinner")?.remove();
+    submitBtn.querySelector(".btn-label").textContent = "Create product";
+  }
+}
+
+/* -----------------------------------------------------------------------------
+   Wiring
+   -------------------------------------------------------------------------- */
+departmentSearch.addEventListener("input", () => {
+  if (collectionsCache) renderDepartments(collectionsCache);
+});
+el("refreshDepartments").addEventListener("click", () => loadDepartments({ force: true }));
+
+document.addEventListener("click", (e) => {
+  const editId = e.target.closest("[data-edit-product]")?.dataset.editProduct;
+  if (editId) return openProductEditor(editId);
+
+  if (e.target.closest("#openNewProduct") || e.target.closest("#emptyNewProduct")) {
+    return openNewProductModal();
+  }
+  if (e.target.closest("#refreshDepartment") && currentCollection) {
+    return loadDepartment(currentCollection.id);
+  }
+
+  const retry = e.target.closest("[data-retry]");
+  if (retry) {
+    if (retry.dataset.retry === "departments") return loadDepartments({ force: true });
+    if (retry.dataset.retry === "department") return loadDepartment(retry.dataset.id);
+  }
+
+  const npIdx = e.target.closest("[data-remove-nplogo]")?.dataset.removeNplogo;
+  if (npIdx !== undefined) {
+    setInputFiles(npLogoInput, [...npLogoInput.files].filter((_, i) => i !== Number(npIdx)));
+    renderNpThumbs();
+  }
+});
+
+el("drawerClose").addEventListener("click", closeDrawer);
+productDrawer.addEventListener("click", (e) => {
+  if (e.target === productDrawer) closeDrawer();
+});
+
+el("npCancel").addEventListener("click", closeNewProductModal);
+el("newProductClose").addEventListener("click", closeNewProductModal);
+newProductModal.addEventListener("click", (e) => {
+  if (e.target === newProductModal && !el("npSubmit").disabled) closeNewProductModal();
+});
+newProductForm.addEventListener("submit", submitNewProduct);
+wireDropzone("npLogos", npLogoInput, renderNpThumbs, isImage);
+
+window.addEventListener("hashchange", handleRoute);
+handleRoute();
