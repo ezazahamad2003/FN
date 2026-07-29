@@ -379,8 +379,13 @@ function renderAnalysis(data) {
       ]
         .filter(Boolean)
         .join("");
+      // Say plainly whether the department assigned these logos or whether we
+      // fell back to offering all of them — a silent fallback is how wrong
+      // logos reached finished product images before.
       const logoLine = p.logos && p.logos.length
-        ? `<p class="rv-logos">Logos: ${escapeHtml(p.logos.join(", "))}</p>`
+        ? `<p class="rv-logos">Logos: ${escapeHtml(p.logos.join(", "))}${
+            p.logoAssignmentStated ? " (assigned by the department)" : " (no assignment stated — all logos offered)"
+          }</p>`
         : "";
       return `
         <article class="rv-product">
@@ -472,10 +477,22 @@ function renderReview(data) {
         metaChip("Sizes", p.sizes.join(", ") + (p.sizesStated ? "" : " (default)"), p.sizesStated),
         p.brandStyle ? metaChip("Style", p.brandStyle, true) : "",
         p.fabricDetails ? metaChip("Fabric", p.fabricDetails, true) : "",
-        p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : ""
+        p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : "",
+        // Whether the base photo is the real style or a lookalike decides how
+        // much the operator should trust the garment in these images.
+        metaChip(
+          "Blank",
+          p.blankSource === "supplier" ? "supplier photo of this style" : "generated lookalike",
+          p.blankSource === "supplier"
+        )
       ]
         .filter(Boolean)
         .join("");
+      const blankLine = p.blankNote
+        ? `<p class="rv-logos">${escapeHtml(p.blankNote)}${
+            p.blankSourceUrl ? ` <a href="${escapeHtml(p.blankSourceUrl)}" target="_blank" rel="noopener">source</a>` : ""
+          }</p>`
+        : "";
       const images = p.images
         .map(
           (img) => `
@@ -492,6 +509,7 @@ function renderReview(data) {
             <span class="rv-count">${p.images.length} logo ${p.images.length === 1 ? "variant" : "variants"}</span>
           </div>
           <div class="meta-chips">${chips}</div>
+          ${blankLine}
           <div class="rv-grid">${images}</div>
         </article>`;
     })

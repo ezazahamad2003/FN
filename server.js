@@ -34,6 +34,7 @@ const {
   updateProduct
 } = require("./catalog");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
+const { findSupplierBlank } = require("./blanks");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -195,11 +196,40 @@ function requestOrigin(req) {
   return proto + "://" + req.get("host");
 }
 
+// Collapse a logo reference to a comparison key. Departments write their codes
+// as "DIX-F01" while the file arrives as "dix_f01.png", so punctuation, case,
+// and the extension must not decide whether an assignment matches.
+function logoKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
 function resolveProductLogos(product, logoRuns) {
-  // The store merchandises every garment, including hats, with the same Front
-  // Logo choice set. Policy extraction can still describe placement/method,
-  // but it cannot narrow Shopify variants down to one uploaded logo.
-  return logoRuns;
+  const requested = Array.isArray(product.logoSlugs)
+    ? product.logoSlugs.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+
+  // Nothing stated: offer the whole set, which is how a department that never
+  // told us which logo goes where should be merchandised.
+  if (!requested.length || requested.some((value) => value.toLowerCase() === "all")) return logoRuns;
+
+  const byKey = new Map();
+  for (const logo of logoRuns) {
+    byKey.set(logoKey(logo.slug || logo.originalName), logo);
+    byKey.set(logoKey(logo.originalName), logo);
+  }
+
+  const selected = [];
+  for (const value of requested) {
+    const match = byKey.get(logoKey(value));
+    if (match && !selected.includes(match)) selected.push(match);
+  }
+
+  // An assignment that matches no uploaded file is a bad extraction, not an
+  // instruction to publish a garment with no artwork on it.
+  return selected.length ? selected : logoRuns;
 }
 
 // Front Logo option values must be unique per product, so duplicate display
@@ -344,7 +374,8 @@ app.post(
           decorationMethod: product.decorationMethod,
           sizes: product.sizes.length ? product.sizes : DEFAULT_SIZES,
           sizesStated: product.sizes.length > 0,
-          logos: resolveProductLogos(product, logoRuns).map((logo) => logo.filenameBase)
+          logos: resolveProductLogos(product, logoRuns).map((logo) => logo.filenameBase),
+          logoAssignmentStated: Boolean(product.logoAssignmentStated)
         }))
       });
     } catch (error) {
@@ -458,10 +489,26 @@ app.post(
         for (const item of productRuns) {
           // One blank garment base per product; the exact uploaded logo file is
           // composited on top, so the artwork is never redrawn by the model.
-          item.baseBuffer = await generateBlankGarment({
-            productPrompt: item.productPrompt,
-            garmentColor: item.garmentColor
+          //
+          // Prefer the supplier's own photo of the style the department
+          // actually ordered — a generated garment can only ever be a lookalike
+          // of a style number. Generation is the fallback, and it uses the
+          // specs the lookup fetched so the lookalike is at least close.
+          const supplier = await findSupplierBlank(item, {
+            onLog: (message) => console.log(`[blanks] ${item.productLabel}: ${message}`)
           });
+          item.blankSource = supplier.imageBuffer ? "supplier" : "generated";
+          item.blankNote = supplier.note;
+          item.blankSourceUrl = supplier.sourceUrl;
+
+          item.baseBuffer =
+            supplier.imageBuffer ||
+            (await generateBlankGarment({
+              productPrompt: item.productPrompt,
+              garmentColor: item.garmentColor,
+              brandStyle: item.brandStyle,
+              spec: supplier.spec
+            }));
 
           for (const logo of item.logos) {
             let mockupBuffer;
@@ -551,6 +598,10 @@ app.post(
           sizes: item.sizes.length ? item.sizes : DEFAULT_SIZES,
           sizesStated: item.sizes.length > 0,
           productionNotes: item.productionNotes,
+          logoAssignmentStated: Boolean(item.logoAssignmentStated),
+          blankSource: item.blankSource || "generated",
+          blankNote: item.blankNote || "",
+          blankSourceUrl: item.blankSourceUrl || null,
           images: item.logoVariants.map((lv) => ({
             logoLabel: lv.logo.filenameBase,
             thumbnail: lv.mockupDataUrl,
@@ -915,9 +966,20 @@ app.post(
         ? resolvePlacement({ placement: placementInput, productType: product.productType, productLabel: product.productLabel })
         : resolvePlacement(product);
 
-      const baseBuffer = await runStep(res, 2, "Generate the blank garment photo", async () =>
-        generateBlankGarment({ productPrompt: product.productPrompt, garmentColor: product.garmentColor })
-      );
+      const baseBuffer = await runStep(res, 2, "Find or generate the blank garment photo", async () => {
+        const supplier = await findSupplierBlank(product, {
+          onLog: (message) => console.log(`[blanks] ${product.productLabel}: ${message}`)
+        });
+        return (
+          supplier.imageBuffer ||
+          generateBlankGarment({
+            productPrompt: product.productPrompt,
+            garmentColor: product.garmentColor,
+            brandStyle: product.brandStyle,
+            spec: supplier.spec
+          })
+        );
+      });
 
       const logoVariants = await runStep(res, 3, "Composite the uploaded logos", async () => {
         const variants = [];

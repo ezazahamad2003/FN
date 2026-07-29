@@ -42,9 +42,24 @@ async function analyzeLogo(file) {
 // rejected render is retried rather than shipped.
 const BLANK_GARMENT_ATTEMPTS = 3;
 
-function blankGarmentPrompt(productPrompt, garmentColor) {
+// The style number matters because it is what distinguishes the garments a
+// department actually ordered — NL3600 is a crew tee, NL3601 the long-sleeve
+// cut, CS410 a polo, CS410LS its long-sleeve sibling. Naming the style pins the
+// silhouette the model draws.
+//
+// Caveat worth knowing: an image model does not reproduce a specific SKU. This
+// gets the CUT right; it does not guarantee catalogue-accurate detailing. Only
+// a real blank photo from the supplier does that.
+function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec) {
   const colorPhrase = garmentColor ? ` in ${garmentColor}` : "";
-  return `A professional studio product photograph of ${productPrompt}${colorPhrase}. The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
+  const stylePhrase = brandStyle
+    ? ` The garment is a ${brandStyle} — match that style's silhouette exactly: sleeve length, collar or neckline type, placket, cuffs, and overall cut.`
+    : "";
+  // blanks.js fetches how the real style is built when a supplier photo itself
+  // could not be used. Describing the actual garment is the difference between
+  // "close to NL3600" and "some t-shirt".
+  const specPhrase = spec ? ` Reproduce this style faithfully: ${spec}` : "";
+  return `A professional studio product photograph of ${productPrompt}${colorPhrase}.${stylePhrase}${specPhrase} The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
 }
 
 async function renderGarment(prompt) {
@@ -118,8 +133,8 @@ Set "clean" to false if ANY lettering, numbering, logo, emblem, patch, label, or
 //      artwork on it and tries again,
 //   2. mockup.compositeLogoOnGarment pastes the exact uploaded logo file, so
 //      the artwork that does appear is never model-drawn.
-async function generateBlankGarment({ productPrompt, garmentColor }) {
-  let prompt = blankGarmentPrompt(productPrompt, garmentColor);
+async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, spec }) {
+  let prompt = blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec);
   let lastBuffer = null;
   let lastFinding = "";
 
@@ -130,7 +145,7 @@ async function generateBlankGarment({ productPrompt, garmentColor }) {
 
     lastFinding = inspection.found;
     // Name the offending artwork in the retry so the model stops reproducing it.
-    prompt = `${blankGarmentPrompt(productPrompt, garmentColor)} A previous attempt incorrectly included ${
+    prompt = `${blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec)} A previous attempt incorrectly included ${
       inspection.found || "text and graphics"
     } on the garment. Do not include that or anything like it. The garment must be entirely undecorated.`;
   }
@@ -406,6 +421,7 @@ function defaultPolicyProducts() {
       sizeChart: null,
       productionNotes: "Default onboarding product. The policy documents did not define products — verify with the department before production.",
       logoSlugs: ["all"],
+      logoAssignmentStated: false,
       assignmentNotes: ""
     }
   ];
@@ -414,6 +430,9 @@ function defaultPolicyProducts() {
 function normalizePolicyProducts(items) {
   return items
     .filter((item) => item.productLabel && item.productPrompt)
+    // A "product" whose name carries no word (a bare list number like "5") is a
+    // mis-parse of the policy's numbering, not a garment.
+    .filter((item) => (String(item.productLabel).match(/[a-z]/gi) || []).length >= 3)
     .map((item) => {
 
       const sizeChart =
@@ -425,6 +444,14 @@ function normalizePolicyProducts(items) {
                 .map((row) => ({ label: String(row.label).trim(), values: row.values.map((v) => String(v).trim()) }))
             }
           : null;
+
+      // Keep the model's references verbatim; server.resolveProductLogos does
+      // the tolerant match against the actual uploaded files, so a code written
+      // as "DIX-F01" still finds "dix-f01.png".
+      const requestedLogos = Array.isArray(item.logoSlugs)
+        ? item.logoSlugs.map((value) => String(value).trim()).filter(Boolean)
+        : [];
+      const offerAllLogos = !requestedLogos.length || requestedLogos.some((value) => value.toLowerCase() === "all");
 
       return {
         productType: item.productType || "product",
@@ -438,8 +465,11 @@ function normalizePolicyProducts(items) {
         sizes: Array.isArray(item.sizes) ? item.sizes.map((s) => String(s).trim()).filter(Boolean) : [],
         sizeChart,
         productionNotes: item.productionNotes || "Verify exact garment requirements against the uploaded policy documents.",
-        logoSlugs: ["all"],
-        assignmentNotes: "All uploaded logos are offered as Front Logo variants for this product."
+        logoSlugs: offerAllLogos ? ["all"] : requestedLogos,
+        logoAssignmentStated: !offerAllLogos,
+        assignmentNotes: offerAllLogos
+          ? "No logo assignment stated for this garment — every uploaded logo is offered as a Front Logo variant."
+          : String(item.assignmentNotes || "").trim() || `Assigned by the department: ${requestedLogos.join(", ")}`
       };
     });
 }
@@ -469,7 +499,11 @@ async function determinePolicyProducts(departmentName, policyText, logos = []) {
 
 CRITICAL RULE — no invention: only use details explicitly stated in the documents. If a detail (color, brand, fabric, sizes, placement, decoration method, size chart) is NOT stated, return an empty string (or empty array / null) for that field. Never guess or fill in typical values.
 
-LOGO ASSIGNMENT — the store sells every garment, including hats, with the same "Front Logo" choice set. EVERY uploaded logo is offered on EVERY product. Always return logoSlugs as ["all"]. Do not restrict hats, caps, or any other garment to a single logo.
+LOGO ASSIGNMENT — the documents often state which uploaded logo belongs on which garment, usually by a short code that matches the logo's filename (e.g. "DIX-F01 on style NL3600", "F02 -> job shirt", a two-column list of style numbers and logo codes). Read those assignments carefully and honour them:
+- If the documents state which logo(s) go on THIS garment, return logoSlugs as the exact slug values from the uploaded logo catalog below — only the logos assigned to this garment.
+- Match a garment to an assignment by style number first (e.g. "3600" matches brandStyle "Next Level NL3600"), then by garment name.
+- If the documents say nothing about which logo goes on this garment, return ["all"] so every uploaded logo is offered as a choice.
+- Never invent an assignment that is not stated, and never drop one that is.
 
 Look specifically for shirts, long sleeve shirts, hats, pants, hoodies, jackets, job shirts, polos, or other gear.
 
@@ -485,13 +519,14 @@ Return JSON only: {"products": [...]} where each product object has:
 - sizes: array of size strings if the policy states the size range, else []
 - sizeChart: only if the documents contain an explicit size chart: {"headers": ["S","M",...], "rows": [{"label": "Chest", "values": ["19","20 1/2",...]}]}. Otherwise null. Copy numbers exactly.
 - productionNotes: concise instructions based only on stated policy details
-- logoSlugs: always ["all"] (see LOGO ASSIGNMENT above)
-- assignmentNotes: "All uploaded logos are offered as Front Logo variants."
+- logoSlugs: slug values of the logos assigned to THIS garment, or ["all"] if the documents do not say (see LOGO ASSIGNMENT above)
+- logoAssignmentStated: true only if the documents explicitly say which logo goes on this garment, else false
+- assignmentNotes: the wording that states the assignment (e.g. "Follow-up list: style 3600 -> DIX-F01"), else ""
 
 If the documents do not clearly define products, return {"products": []}.
 
-Uploaded logo catalog:
-${logoCatalog || 'No logo catalog available. Still use ["all"] for logoSlugs.'}
+Uploaded logo catalog (use these exact slug values in logoSlugs):
+${logoCatalog || 'No logo catalog available. Use ["all"] for logoSlugs.'}
 
 Policy text:
 ${policyText}`
@@ -517,7 +552,9 @@ async function analyzePolicyGaps(departmentName, policyText, products, logos = [
   const productSummary = products
     .map(
       (p) =>
-        `- ${p.productLabel} (type: ${p.productType}; color: ${p.garmentColor || "NOT STATED"}; brand/style: ${p.brandStyle || "NOT STATED"}; fabric: ${p.fabricDetails || "NOT STATED"}; placement: ${p.placement || "NOT STATED"}; decoration: ${p.decorationMethod || "NOT STATED"}; sizes: ${p.sizes.length ? p.sizes.join(", ") : "NOT STATED"})`
+        `- ${p.productLabel} (type: ${p.productType}; color: ${p.garmentColor || "NOT STATED"}; brand/style: ${p.brandStyle || "NOT STATED"}; fabric: ${p.fabricDetails || "NOT STATED"}; placement: ${p.placement || "NOT STATED"}; decoration: ${p.decorationMethod || "NOT STATED"}; sizes: ${p.sizes.length ? p.sizes.join(", ") : "NOT STATED"}; logo assignment: ${
+          p.logoAssignmentStated ? p.logoSlugs.join(", ") : "NOT STATED"
+        })`
     )
     .join("\n");
   const logoList = logos.map((logo) => `- ${logo.filenameBase} (${logo.originalName})`).join("\n");

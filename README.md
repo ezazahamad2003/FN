@@ -117,7 +117,7 @@ approval.**
 3. Analyze each logo with GPT-4o Vision.
 4. Extract products, garment details, and logo assignments from the policy + follow-up text. **Strict no-invention rule:** details not stated in the documents stay empty instead of being guessed.
 5. **Check policy completeness.** Anything a production run needs but the policy doesn't state (placement, garment color, brand/style, sizes, decoration method, logo assignments, personalization rules) is reported as a gap, and a ready-to-send **email draft** asking the department for those details is generated and saved to Drive.
-6. Generate product images with **exact logo compositing** — see [No gibberish on product images](#no-gibberish-on-product-images).
+6. Source each blank garment (supplier photo where possible — see [Where the blank garment comes from](#where-the-blank-garment-comes-from)) and composite the exact logo onto it — see [No gibberish on product images](#no-gibberish-on-product-images).
 7. Write fact-only product descriptions, the production manual Google Doc, and the gap email draft doc.
 
 ### Review gate
@@ -135,8 +135,11 @@ color-coded as **stated by policy (green)** vs **fallback default (amber)**.
 
 8. Create or reuse a Shopify manual collection and set its image from the first uploaded logo.
 9. Create products via the **GraphQL Admin API**: one product per garment with
-   **Front Logo × Size** options. **Every uploaded logo is offered on
-   every product**, including hats and caps.
+   **Front Logo × Size** options. **Logo assignments stated by the department
+   are honoured** — if the policy or follow-up answers say which logo code goes
+   on which style number, that garment gets only those logos. When nothing is
+   stated, every uploaded logo is offered on that product, and the review panel
+   labels it "no assignment stated" so the fallback is never silent.
    GraphQL supports up to 2048 variants per product, so 30+ logos × 7 sizes
    (default XS–3XL) fit on a single product like the store's real listings.
    Each logo's mockup image is uploaded through staged uploads and attached to
@@ -184,6 +187,67 @@ failing the run (the real logo still lands on top) and the reason is logged to
 the server console. Tune the attempt count with `BLANK_GARMENT_ATTEMPTS` in
 `ai.js`.
 
+## Logo placement and size
+
+Placement boxes in `mockup.js` are fractions of the **garment's bounding box**,
+which is measured per render by trimming the white backdrop — not fractions of
+the image. The image model does not obey "fills about 80 percent of the frame"
+consistently, so image-relative placement made the same spec land differently on
+every run. Each placement caps the logo on **both** axes (`w` of garment width,
+`h` of garment height), so an upright crest is bounded by its height budget
+instead of scaling up until its height matches the intended width.
+
+Garment type picks the default: beanies get the cuff, caps the front panel,
+legwear the thigh (clear of the crotch seam), everything else the left chest.
+Explicit policy wording still wins over the default.
+
+## Where the blank garment comes from
+
+An image model does not know what `NL3600` looks like — it draws a plausible
+t-shirt. So the blank is **looked up from the supplier first** (`blanks.js`) and
+only generated if that fails:
+
+1. **The supplier's own photo.** A web search finds the style on the
+   manufacturer's or an authorised distributor's site (SanMar, S&S, alphabroder,
+   Next Level, Richardson…); the product page is fetched and its flat-front
+   product shot downloaded. This is the actual garment the department ordered.
+2. **Generated from fetched specs.** If no usable photo passes the checks below,
+   the garment is generated — but guided by the specs the lookup fetched
+   (silhouette, collar, sleeve, cuffs, placket, fabric), so it is a close
+   lookalike rather than a generic garment.
+3. **Generated from the policy wording alone**, the original behaviour, if the
+   lookup finds nothing at all.
+
+The review panel labels every product **"supplier photo of this style"** or
+**"generated lookalike"**, so the operator always knows which they are approving.
+Set `SUPPLIER_BLANKS=off` to skip the lookup entirely.
+
+### Nothing found online is trusted on sight
+
+A search result is a claim about a URL, not evidence. Every candidate is
+downloaded and then gated:
+
+- **Provenance.** The image's own filename must name the style. Vision cannot
+  police this — NL3600 and NL3214 are both plain navy tees, and a lookup for
+  NL3600 really did return a 3214 photo in testing. Trailing letters count as
+  part of the style, so a `CS410` photo can never satisfy a `CS410LS` lookup.
+- **Vision.** GPT-4o checks it is the right garment, the right colour, entirely
+  undecorated, a flat front view (a photo containing a model is rejected —
+  placement maths assumes a flat lay), on a clean background, showing one
+  garment.
+- **Resolution.** Anything under 500px on its short edge is rejected.
+
+A failure at any gate falls back to generation; the lookup can never fail a run.
+
+Search engines tend to land on whichever colourway ranks highest, so when the
+right style is found in the wrong colour, the correct colourway's file is
+addressed directly by substituting the colour token in the URL (`..._antiquegold_flat_front.jpg`
+→ `..._midnightnavy_flat_front.jpg`). Those guesses face the same checks.
+
+> Supplier product imagery is licensed to authorised dealers for reselling that
+> product. That is the normal arrangement in this trade, but it is worth
+> confirming for each brand carried.
+
 ## Drive Folder
 
 Set `GDRIVE_PARENT_FOLDER_ID` to the parent Drive folder where department folders should be created. For the current production folder, use:
@@ -204,6 +268,17 @@ get `DEFAULT_PRODUCT_VENDOR` as their vendor:
 DEFAULT_PRODUCT_PRICE=24.00
 DEFAULT_PRODUCT_VENDOR=One Week Item
 ```
+
+## Supplier blank lookup
+
+```env
+SUPPLIER_BLANKS=on          # "off" skips the lookup and always generates
+OPENAI_SEARCH_MODEL=gpt-4o  # model used for the web search step
+```
+
+The lookup adds roughly 15–25 seconds and a few cents per distinct style on the
+first run; results are cached per style+colour for the life of the process, so
+re-running after a review-gate rejection costs nothing extra.
 
 ## Running on Render (ephemeral filesystem)
 
