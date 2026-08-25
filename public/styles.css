@@ -866,6 +866,33 @@ input[aria-invalid="true"],
 .gap-list b { color: var(--text); }
 .gap-report .gap-note { color: var(--text-muted); font-size: var(--fs-xs); }
 
+.intake-summary {
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  padding: var(--space-4);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: start;
+  font-size: var(--fs-sm);
+}
+.intake-summary[data-tone="ok"] { border-color: var(--success-border); background: var(--success-soft); }
+.intake-summary[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); }
+.intake-summary .eyebrow { margin-bottom: var(--space-1); }
+.intake-title { font-weight: 800; color: var(--text); }
+.intake-note { color: var(--text-muted); overflow-wrap: anywhere; }
+.intake-missing {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+@media (max-width: 640px) {
+  .intake-summary { grid-template-columns: 1fr; }
+}
+
 .email-draft {
   border: 1px solid var(--info-border);
   border-radius: var(--radius-md);
@@ -1523,4 +1550,160 @@ input[aria-invalid="true"],
   .review-head { flex-direction: column; align-items: flex-start; }
   .review-actions { flex-direction: column; align-items: stretch; }
   .review-actions .rv-spacer { display: none; }
+}
+
+/* =============================================================================
+   Dashboard Agent
+   ========================================================================== */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.agent-console {
+  min-height: 640px;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 420px;
+  max-height: 58vh;
+  overflow: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+}
+
+.agent-message {
+  max-width: min(760px, 92%);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.agent-message[data-role="user"] {
+  align-self: flex-end;
+  border-color: var(--info-border);
+  background: var(--info-soft);
+}
+
+.agent-message[data-role="assistant"] {
+  align-self: flex-start;
+}
+
+.agent-message p {
+  margin: 0;
+  white-space: normal;
+}
+
+.agent-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  align-items: end;
+}
+
+.agent-form textarea {
+  min-height: 52px;
+  max-height: 160px;
+  resize: vertical;
+}
+
+.dashboard-side {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.status-list,
+.agent-roster {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.status-line,
+.agent-roster a,
+.agent-roster span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 38px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.status-line span,
+.agent-roster a,
+.agent-roster span {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+
+.status-line b {
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.agent-roster [data-state="live"]::after,
+.agent-roster [data-state="planned"]::after {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+}
+
+.agent-roster [data-state="live"]::after {
+  content: "Live";
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+.agent-roster [data-state="planned"]::after {
+  content: "Planned";
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+@media (max-width: 980px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-console {
+    min-height: auto;
+  }
+
+  .agent-messages {
+    min-height: 360px;
+    max-height: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .agent-form {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-form .btn {
+    width: 100%;
+  }
 }

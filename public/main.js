@@ -51,6 +51,8 @@ const logoError = el("logoError");
 const logoThumbs = el("logoThumbs");
 const policyInput = el("policies");
 const policyChips = el("policyChips");
+const intakeInput = el("intakeForms");
+const intakeChips = el("intakeChips");
 const followUpInput = el("followUps");
 const followUpChips = el("followUpChips");
 const review = el("review");
@@ -319,6 +321,23 @@ function emailDraftMarkup(draft, { copyId, bodyId, driveUrl }) {
     </div>`;
 }
 
+function intakeSummaryMarkup(intake) {
+  if (!intake?.present) return "";
+  const tone = intake.ready ? "ok" : "warn";
+  const missing = intake.missing?.length
+    ? `<ul class="intake-missing">${intake.missing.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : "";
+  return `<div class="intake-summary" data-tone="${tone}">
+    <div>
+      <p class="eyebrow">Store build form</p>
+      <p class="intake-title">${intake.ready ? "Ready for deterministic build" : "Form detected with open fields"}</p>
+      <p class="intake-note">${escapeHtml(intake.summary || "")}</p>
+    </div>
+    ${intake.departmentCode ? `<span class="confidence" data-tone="ok">${escapeHtml(intake.departmentCode)}</span>` : ""}
+    ${missing}
+  </div>`;
+}
+
 async function copyEmail(draft, button, bodyId) {
   if (!draft) return;
   const text = `Subject: ${draft.subject}\n\n${draft.body}`;
@@ -366,6 +385,7 @@ function renderAnalysis(data) {
     copyId: "copyEmailBtnAnalysis",
     bodyId: "emailBodyAnalysis"
   });
+  const intakeHtml = intakeSummaryMarkup(data.intake);
 
   const productsHtml = data.products
     .map((p) => {
@@ -375,7 +395,10 @@ function renderAnalysis(data) {
         metaChip("Sizes", p.sizes.join(", ") + (p.sizesStated ? "" : " (default)"), p.sizesStated),
         p.brandStyle ? metaChip("Style", p.brandStyle, true) : "",
         p.fabricDetails ? metaChip("Fabric", p.fabricDetails, true) : "",
-        p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : ""
+        p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : "",
+        p.decorationSizeTier ? metaChip("Tier", p.decorationSizeTier, true) : "",
+        p.decorationFeeSku ? metaChip("Fee SKU", p.decorationFeeSku, true) : "",
+        p.intakeSource ? metaChip("Form", "fixed field", true) : ""
       ]
         .filter(Boolean)
         .join("");
@@ -402,10 +425,11 @@ function renderAnalysis(data) {
     <div class="review-head">
       <div>
         <p class="eyebrow">Policy analysis · nothing created yet</p>
-        <h2>${count} ${count === 1 ? "product" : "products"} detected from the policy</h2>
+        <h2>${count} ${count === 1 ? "product" : "products"} detected from source material</h2>
       </div>
       <span class="confidence" data-tone="${conf.tone}">${conf.label}</span>
     </div>
+    ${intakeHtml}
     ${gapsHtml}
     ${emailHtml}
     <div class="rv-products">${productsHtml}</div>
@@ -417,10 +441,10 @@ function renderAnalysis(data) {
 }
 
 async function runAnalyze() {
-  const hasPolicy = policyInput.files.length > 0 || followUpInput.files.length > 0 || el("followUpText").value.trim();
+  const hasPolicy = policyInput.files.length > 0 || intakeInput.files.length > 0 || followUpInput.files.length > 0 || el("followUpText").value.trim();
   if (!hasPolicy) {
-    setRunHeader("idle", "Add a policy first", "Upload a policy document (or paste follow-up text) to analyze.");
-    addNotice("Add a policy document (or follow-up text) before analyzing.");
+    setRunHeader("idle", "Add source material first", "Upload a policy document, store build form, or paste follow-up text to analyze.");
+    addNotice("Add a policy document, store build form, or follow-up text before analyzing.");
     return;
   }
 
@@ -429,7 +453,7 @@ async function runAnalyze() {
   runButton.disabled = true;
   btn.querySelector(".btn-label").textContent = "Analyzing…";
   btn.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
-  setRunHeader("running", "Analyzing policy", "Reading the document and drafting the gaps email. Nothing is being created.");
+  setRunHeader("running", "Analyzing source material", "Reading the document or form and drafting the gaps email. Nothing is being created.");
 
   try {
     const res = await fetch("/analyze", { method: "POST", body: new FormData(form) });
@@ -449,7 +473,7 @@ async function runAnalyze() {
     btn.disabled = false;
     runButton.disabled = false;
     btn.querySelector(".spinner")?.remove();
-    btn.querySelector(".btn-label").textContent = "Analyze policy & draft email";
+    btn.querySelector(".btn-label").textContent = "Analyze source & draft email";
   }
 }
 
@@ -468,6 +492,7 @@ function renderReview(data) {
     bodyId: "emailBody",
     driveUrl: data.emailDraftDocUrl
   });
+  const intakeHtml = intakeSummaryMarkup(data.intake);
 
   const productsHtml = data.products
     .map((p) => {
@@ -478,6 +503,9 @@ function renderReview(data) {
         p.brandStyle ? metaChip("Style", p.brandStyle, true) : "",
         p.fabricDetails ? metaChip("Fabric", p.fabricDetails, true) : "",
         p.decorationMethod ? metaChip("Decoration", p.decorationMethod, true) : "",
+        p.decorationSizeTier ? metaChip("Tier", p.decorationSizeTier, true) : "",
+        p.decorationFeeSku ? metaChip("Fee SKU", p.decorationFeeSku, true) : "",
+        p.intakeSource ? metaChip("Form", "fixed field", true) : "",
         // Whether the base photo is the real style or a lookalike decides how
         // much the operator should trust the garment in these images.
         metaChip(
@@ -525,6 +553,7 @@ function renderReview(data) {
       </div>
       <span class="confidence" data-tone="${conf.tone}">${conf.label}</span>
     </div>
+    ${intakeHtml}
     ${gapsHtml}
     ${emailHtml}
     <div class="rv-products">${productsHtml}</div>
@@ -676,6 +705,12 @@ function renderPolicyChips() {
   syncDropzone("policies", files.length);
 }
 
+function renderIntakeChips() {
+  const files = [...intakeInput.files];
+  intakeChips.innerHTML = files.map((file, i) => docChipHtml(file, "data-remove-intake", i)).join("");
+  syncDropzone("intakeForms", files.length);
+}
+
 function renderFollowUpChips() {
   const files = [...followUpInput.files];
   followUpChips.innerHTML = files.map((file, i) => docChipHtml(file, "data-remove-followup", i)).join("");
@@ -737,8 +772,8 @@ function markDropzoneInvalid(name, invalid) {
 
 function validate() {
   let ok = true;
-  if (!departmentInput.value.trim()) {
-    showFieldError(departmentInput, departmentError, "Department name is required.");
+  if (!departmentInput.value.trim() && intakeInput.files.length === 0) {
+    showFieldError(departmentInput, departmentError, "Department name is required unless the store build form includes it.");
     ok = false;
   } else {
     hideFieldError(departmentInput, departmentError);
@@ -1033,6 +1068,7 @@ analyzeButton.addEventListener("click", runAnalyze);
 
 wireDropzone("logos", logoInput, renderLogoThumbs, isImage);
 wireDropzone("policies", policyInput, renderPolicyChips, isDoc);
+wireDropzone("intakeForms", intakeInput, renderIntakeChips, isDoc);
 wireDropzone("followUps", followUpInput, renderFollowUpChips, isDoc);
 refreshConnectionState();
 
@@ -1042,6 +1078,7 @@ refreshConnectionState();
    ========================================================================== */
 
 const views = {
+  dashboard: el("viewDashboard"),
   departments: el("viewDepartments"),
   department: el("viewDepartment"),
   onboarding: el("viewOnboarding")
@@ -1102,13 +1139,112 @@ function statusChip(status) {
   const label = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" }[status] || status;
   return `<span class="status-chip" data-tone="${tone}">${escapeHtml(label)}</span>`;
 }
+/* -----------------------------------------------------------------------------
+   Dashboard agent
+   -------------------------------------------------------------------------- */
+const agentMessages = el("agentMessages");
+const agentForm = el("agentForm");
+const agentInput = el("agentInput");
+const agentSend = el("agentSend");
+const platformStatusList = el("platformStatusList");
+const agentModelPill = el("agentModelPill");
+let agentHistory = [];
+
+function yesNo(value) {
+  return value ? "Connected" : "Not connected";
+}
+
+function renderPlatformStatus(status) {
+  if (!platformStatusList || !status) return;
+  const genAI = status.genAI || {};
+  const genAIText = genAI.configured
+    ? genAI.provider === "azure-openai"
+      ? `Azure OpenAI · ${genAI.chatDeployment || "chat deployment"}`
+      : "OpenAI API fallback"
+    : "Not configured";
+
+  platformStatusList.innerHTML = [
+    ["Shopify", yesNo(status.shopifyConnected)],
+    ["Google Drive", status.googleDriveConnected ? `${yesNo(true)}${status.googleAccountCount > 1 ? ` · ${status.googleAccountCount} accounts` : ""}` : yesNo(false)],
+    ["GenAI", genAIText],
+    ["Postgres", status.postgresConfigured ? "Configured" : "Planned"],
+    ["Key Vault", status.keyVaultConfigured ? "Configured" : "Planned"],
+    ["Storage", status.storageConfigured ? "Configured" : "Planned"]
+  ]
+    .map(([label, value]) => `<div class="status-line"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`)
+    .join("");
+
+  if (agentModelPill) {
+    agentModelPill.dataset.state = genAI.configured ? "ready" : "attention";
+    agentModelPill.querySelector(".txt").textContent = genAI.configured ? genAIText : "GenAI not configured";
+  }
+}
+
+async function loadPlatformStatus() {
+  if (!platformStatusList) return;
+  try {
+    const res = await fetch("/api/platform/status");
+    const status = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(status.error || "Could not load platform status.");
+    renderPlatformStatus(status);
+  } catch (error) {
+    platformStatusList.innerHTML = `<div class="status-line"><span>Status</span><b>${escapeHtml(error.message)}</b></div>`;
+    if (agentModelPill) {
+      agentModelPill.dataset.state = "attention";
+      agentModelPill.querySelector(".txt").textContent = "Status unavailable";
+    }
+  }
+}
+
+function addAgentMessage(role, content) {
+  if (!agentMessages) return;
+  const message = document.createElement("article");
+  message.className = "agent-message";
+  message.dataset.role = role;
+  message.innerHTML = `<p>${escapeHtml(content).replace(/\n/g, "<br>")}</p>`;
+  agentMessages.appendChild(message);
+  agentMessages.scrollTop = agentMessages.scrollHeight;
+}
+
+async function submitAgentQuestion(event) {
+  event.preventDefault();
+  const content = agentInput.value.trim();
+  if (!content || agentSend.disabled) return;
+
+  addAgentMessage("user", content);
+  agentHistory.push({ role: "user", content });
+  agentInput.value = "";
+  agentSend.disabled = true;
+  agentSend.textContent = "Thinking…";
+
+  try {
+    const res = await fetch("/api/agents/dashboard/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: agentHistory })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "The dashboard agent could not answer.");
+    const reply = payload.reply || "I do not have enough context to answer that yet.";
+    addAgentMessage("assistant", reply);
+    agentHistory.push({ role: "assistant", content: reply });
+    if (payload.context?.status) renderPlatformStatus(payload.context.status);
+  } catch (error) {
+    addAgentMessage("assistant", `I could not answer that: ${error.message}`);
+  } finally {
+    agentSend.disabled = false;
+    agentSend.textContent = "Ask";
+    agentInput.focus();
+  }
+}
 
 /* -----------------------------------------------------------------------------
    Routing
    -------------------------------------------------------------------------- */
 function parseRoute() {
-  const path = (location.hash.replace(/^#/, "") || "/departments").split("?")[0];
+  const path = (location.hash.replace(/^#/, "") || "/dashboard").split("?")[0];
   const parts = path.split("/").filter(Boolean);
+  if (parts[0] === "dashboard") return { name: "dashboard" };
   if (parts[0] === "onboarding") return { name: "onboarding" };
   if (parts[0] === "departments" && parts[1]) return { name: "department", id: decodeURIComponent(parts[1]) };
   return { name: "departments" };
@@ -1132,7 +1268,8 @@ async function handleRoute() {
   const route = parseRoute();
   showView(route.name);
   closeDrawer();
-  if (route.name === "departments") await loadDepartments();
+  if (route.name === "dashboard") await loadPlatformStatus();
+  else if (route.name === "departments") await loadDepartments();
   else if (route.name === "department") await loadDepartment(route.id);
   window.scrollTo({ top: 0, behavior: "auto" });
 }
@@ -1860,6 +1997,7 @@ newProductModal.addEventListener("click", (e) => {
 });
 newProductForm.addEventListener("submit", submitNewProduct);
 wireDropzone("npLogos", npLogoInput, renderNpThumbs, isImage);
+if (agentForm) agentForm.addEventListener("submit", submitAgentQuestion);
 
 window.addEventListener("hashchange", handleRoute);
 handleRoute();

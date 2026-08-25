@@ -22,6 +22,7 @@ const {
   analyzePolicyGaps,
   collectPolicyText,
   determinePolicyProducts,
+  extractReadableText,
   extractPolicyInstructions,
   generateBlankGarment,
   generateProductDescription,
@@ -35,6 +36,14 @@ const {
 } = require("./catalog");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
 const { findSupplierBlank } = require("./blanks");
+const {
+  combineIntakes,
+  intakeContextText,
+  intakeTags,
+  mergeIntakeProducts,
+  parseStructuredIntakeText
+} = require("./intake");
+const { answerDashboardAgent, platformStatus } = require("./agents");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -67,8 +76,8 @@ app.set("trust proxy", true);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
 
+app.use(express.static(path.join(__dirname, "public")));
 /*
  * Review gate: onboarding runs in two phases so nothing is published without
  * an explicit approval.
@@ -191,6 +200,34 @@ function filesByField(files, field) {
   return (files || []).filter((file) => file.fieldname === field);
 }
 
+async function collectStructuredIntake(files) {
+  const parsed = [];
+  for (const file of files || []) {
+    parsed.push(parseStructuredIntakeText(await extractReadableText(file)));
+  }
+  return combineIntakes(parsed);
+}
+
+function combinedPolicyContext(policyText, intake) {
+  return [policyText, intakeContextText(intake)].filter((part) => part && part.trim()).join("\n\n");
+}
+
+function uniqueTags(tags) {
+  return [...new Set((tags || []).map((tag) => String(tag || "").trim()).filter(Boolean))];
+}
+
+function intakeResponse(intake) {
+  if (!intake?.present) return null;
+  return {
+    present: true,
+    ready: intake.ready,
+    departmentName: intake.departmentName,
+    departmentCode: intake.departmentCode,
+    missing: intake.missing || [],
+    summary: intake.summary
+  };
+}
+
 function requestOrigin(req) {
   const proto = req.get("x-forwarded-proto") || req.protocol;
   return proto + "://" + req.get("host");
@@ -249,8 +286,21 @@ app.get("/health", (req, res) => {
     shopifyConnected: shopifyConnected(),
     shopifyStore: process.env.SHOPIFY_STORE || "",
     googleConnected: googleConnected(),
-    googleAccountCount: googleAccounts().length
+    googleAccountCount: googleAccounts().length,
+    genAI: platformStatus().genAI
   });
+});
+
+app.get("/api/platform/status", (req, res) => {
+  res.json(platformStatus());
+});
+
+app.post("/api/agents/dashboard/chat", async (req, res) => {
+  try {
+    res.json(await answerDashboardAgent(req.body || {}));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get("/setup", (req, res) => {
@@ -325,7 +375,8 @@ app.post(
   upload.fields([
     { name: "logos", maxCount: 20 },
     { name: "policies", maxCount: 20 },
-    { name: "followUps", maxCount: 20 }
+    { name: "followUps", maxCount: 20 },
+    { name: "intakeForms", maxCount: 5 }
   ]),
   async (req, res) => {
     try {
@@ -335,15 +386,18 @@ app.post(
       const allFiles = [
         ...(uploadedFiles.logos || []),
         ...(uploadedFiles.policies || []),
-        ...(uploadedFiles.followUps || [])
+        ...(uploadedFiles.followUps || []),
+        ...(uploadedFiles.intakeForms || [])
       ];
       const logos = filesByField(allFiles, "logos");
       const policies = filesByField(allFiles, "policies");
       const followUps = filesByField(allFiles, "followUps");
+      const intakeForms = filesByField(allFiles, "intakeForms");
 
-      const policyText = await collectPolicyText(policies, followUps, followUpText);
+      const intake = await collectStructuredIntake(intakeForms);
+      const policyText = combinedPolicyContext(await collectPolicyText(policies, followUps, followUpText), intake);
       if (!policyText.trim()) {
-        return res.status(400).json({ error: "Add a policy document (or paste follow-up text) to analyze." });
+        return res.status(400).json({ error: "Add a policy document, store build form, or paste follow-up text to analyze." });
       }
 
       // Logo catalog by filename only — no Vision call in the pre-flight keeps
@@ -356,14 +410,15 @@ app.post(
       }));
       dedupeLogoLabels(logoRuns);
 
-      const deptForPrompt = departmentName || "the department";
-      const products = await determinePolicyProducts(deptForPrompt, policyText, logoRuns);
+      const deptForPrompt = departmentName || intake.departmentName || "the department";
+      const products = mergeIntakeProducts(await determinePolicyProducts(deptForPrompt, policyText, logoRuns), intake);
       const gaps = await analyzePolicyGaps(deptForPrompt, policyText, products, logoRuns);
 
       res.json({
-        departmentName,
+        departmentName: departmentName || intake.departmentName,
         gaps: { confidence: gaps.confidence, missing: gaps.missing },
         emailDraft: gaps.emailDraft,
+        intake: intakeResponse(intake),
         products: products.map((product) => ({
           productLabel: product.productLabel,
           garmentColor: product.garmentColor,
@@ -372,6 +427,9 @@ app.post(
           placement: product.placement || resolvePlacement(product).replace(/-/g, " "),
           placementStated: Boolean(product.placement),
           decorationMethod: product.decorationMethod,
+          decorationSizeTier: product.decorationSizeTier || "",
+          decorationFeeSku: product.decorationFeeSku || "",
+          intakeSource: Boolean(product.intakeSource),
           sizes: product.sizes.length ? product.sizes : DEFAULT_SIZES,
           sizesStated: product.sizes.length > 0,
           logos: resolveProductLogos(product, logoRuns).map((logo) => logo.filenameBase),
@@ -389,21 +447,31 @@ app.post(
   upload.fields([
     { name: "logos", maxCount: 20 },
     { name: "policies", maxCount: 20 },
-    { name: "followUps", maxCount: 20 }
+    { name: "followUps", maxCount: 20 },
+    { name: "intakeForms", maxCount: 5 }
   ]),
   async (req, res) => {
-    const departmentName = String(req.body.departmentName || "").trim();
+    let departmentName = String(req.body.departmentName || "").trim();
     const followUpText = String(req.body.followUpText || "");
     const conflictStrategy = req.body.conflictStrategy || "fail";
     const uploadedFiles = req.files || {};
     const allFiles = [
       ...(uploadedFiles.logos || []),
       ...(uploadedFiles.policies || []),
-      ...(uploadedFiles.followUps || [])
+      ...(uploadedFiles.followUps || []),
+      ...(uploadedFiles.intakeForms || [])
     ];
     const logos = filesByField(allFiles, "logos");
     const policies = filesByField(allFiles, "policies");
     const followUps = filesByField(allFiles, "followUps");
+    const intakeForms = filesByField(allFiles, "intakeForms");
+    let intake = { present: false, products: [], missing: [], ready: null };
+    try {
+      intake = await collectStructuredIntake(intakeForms);
+      if (!departmentName && intake.departmentName) departmentName = intake.departmentName;
+    } catch (error) {
+      return res.status(400).json({ step: 0, error: `Could not read the store build form: ${error.message}` });
+    }
 
     if (!departmentName) {
       return res.status(400).json({ step: 0, error: "Department Name is required." });
@@ -452,7 +520,7 @@ app.post(
         for (const item of logoRuns) {
           item.driveFile = await uploadBuffer(item.file, folders.logos.id);
         }
-        for (const file of [...policies, ...followUps]) {
+        for (const file of [...policies, ...followUps, ...intakeForms]) {
           await uploadBuffer(file, folders.root.id);
         }
       });
@@ -463,10 +531,10 @@ app.post(
         }
       });
 
-      const policyText = await collectPolicyText(policies, followUps, followUpText);
+      const policyText = combinedPolicyContext(await collectPolicyText(policies, followUps, followUpText), intake);
 
-      const policyProducts = await runStep(res, 4, "Extract products and logo assignments from policy documents", async () => {
-        return determinePolicyProducts(departmentName, policyText, logoRuns);
+      const policyProducts = await runStep(res, 4, "Extract products and logo assignments from policy documents and store build form", async () => {
+        return mergeIntakeProducts(await determinePolicyProducts(departmentName, policyText, logoRuns), intake);
       });
 
       const gaps = await runStep(res, 5, "Check policy completeness", async () => {
@@ -507,7 +575,8 @@ app.post(
               productPrompt: item.productPrompt,
               garmentColor: item.garmentColor,
               brandStyle: item.brandStyle,
-              spec: supplier.spec
+              spec: supplier.spec,
+              imageGuidance: item.imageGuidance
             }));
 
           for (const logo of item.logos) {
@@ -545,7 +614,11 @@ app.post(
             mockupDataUrl: lv.mockupDataUrl,
             productLabel: item.productLabel,
             logoDescription: lv.logo.logoDescription,
-            productionNotes: [item.productionNotes, item.assignmentNotes ? `Logo assignment: ${item.assignmentNotes}` : ""]
+            productionNotes: [
+              item.productionNotes,
+              item.assignmentNotes ? `Logo assignment: ${item.assignmentNotes}` : "",
+              item.decorationFeeSku ? `Decoration fee SKU hint: ${item.decorationFeeSku}` : ""
+            ]
               .filter(Boolean)
               .join(" ")
           }))
@@ -569,6 +642,7 @@ app.post(
         folders,
         manual,
         productRuns,
+        intake,
         collectionImage: logoRuns[0]
           ? {
               buffer: logoRuns[0].file.buffer,
@@ -585,6 +659,7 @@ app.post(
         manualUrl: manual?.webViewLink || null,
         emailDraftDocUrl: emailDraftDoc?.webViewLink || null,
         gaps: { confidence: gaps.confidence, missing: gaps.missing },
+        intake: intakeResponse(intake),
         emailDraft: gaps.emailDraft,
         products: productRuns.map((item) => ({
           title: item.title,
@@ -595,6 +670,9 @@ app.post(
           placement: item.placement || item.placementKey.replace(/-/g, " "),
           placementStated: Boolean(item.placement),
           decorationMethod: item.decorationMethod,
+          decorationSizeTier: item.decorationSizeTier || "",
+          decorationFeeSku: item.decorationFeeSku || "",
+          intakeSource: Boolean(item.intakeSource),
           sizes: item.sizes.length ? item.sizes : DEFAULT_SIZES,
           sizesStated: item.sizes.length > 0,
           productionNotes: item.productionNotes,
@@ -677,7 +755,7 @@ app.post("/publish", async (req, res) => {
             price,
             productType: item.productType,
             vendor,
-            tags: [run.departmentName],
+            tags: uniqueTags([run.departmentName, ...intakeTags(run.intake), item.decorationFeeSku, item.decorationSizeTier ? `decoration-${item.decorationSizeTier}` : ""]),
             logoValues: plan.logoVariants.map((lv) => lv.logo.filenameBase),
             sizes
           });

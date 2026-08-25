@@ -21,13 +21,17 @@
           </span>
         </a>
         <nav class="topnav" aria-label="Primary">
+          <a class="navlink" href="#/dashboard" data-nav="dashboard">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+            Dashboard
+          </a>
           <a class="navlink" href="#/departments" data-nav="departments">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
             Departments
           </a>
           <a class="navlink" href="#/onboarding" data-nav="onboarding">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
-            Onboard new
+            Onboarding Agent
           </a>
         </nav>
         <div class="topbar-actions">
@@ -39,6 +43,61 @@
       </header>
 
       <main id="main">
+        <!-- ═════════════════ View: Dashboard Agent ═════════════════ -->
+        <section class="view" id="viewDashboard" hidden>
+          <section class="hero dashboard-hero">
+            <p class="eyebrow">Internal agent platform</p>
+            <h2>Ask the operations agent about Shopify, Drive, onboarding runs, and the Azure migration.</h2>
+          </section>
+
+          <section class="dashboard-grid">
+            <div class="agent-console card card-pad">
+              <div class="card-head">
+                <div>
+                  <p class="eyebrow">Dashboard Agent</p>
+                  <h2>Operations chat</h2>
+                </div>
+                <span class="status-pill" id="agentModelPill" data-state="checking">
+                  <span class="dot"></span><span class="txt">Checking GenAI…</span>
+                </span>
+              </div>
+
+              <div class="agent-messages" id="agentMessages" aria-live="polite">
+                <article class="agent-message" data-role="assistant">
+                  <p>I can answer questions using live platform context. Try asking about department counts, service connections, onboarding status, or what needs to happen before Azure deployment.</p>
+                </article>
+              </div>
+
+              <form class="agent-form" id="agentForm">
+                <label class="sr-only" for="agentInput">Ask the dashboard agent</label>
+                <textarea id="agentInput" rows="2" placeholder="Ask about Shopify departments, Drive status, Azure migration, or onboarding…"></textarea>
+                <button class="btn btn-primary" type="submit" id="agentSend">Ask</button>
+              </form>
+            </div>
+
+            <aside class="dashboard-side" aria-label="Platform status">
+              <section class="rail-card">
+                <p class="rail-title">Platform</p>
+                <div class="status-list" id="platformStatusList">
+                  <div class="status-line"><span>Shopify</span><b>Checking…</b></div>
+                  <div class="status-line"><span>Google Drive</span><b>Checking…</b></div>
+                  <div class="status-line"><span>GenAI</span><b>Checking…</b></div>
+                  <div class="status-line"><span>Postgres</span><b>Planned</b></div>
+                </div>
+              </section>
+
+              <section class="rail-card">
+                <p class="rail-title">Agents</p>
+                <div class="agent-roster">
+                  <a href="#/dashboard" data-state="live">Dashboard Agent</a>
+                  <a href="#/onboarding" data-state="live">Onboarding Agent</a>
+                  <span data-state="planned">Catalog Agent</span>
+                  <span data-state="planned">Reporting Agent</span>
+                </div>
+              </section>
+            </aside>
+          </section>
+        </section>
         <!-- ═════════════════ View: Departments (Shopify collections) ═════════════════ -->
         <section class="view" id="viewDepartments" hidden>
           <section class="hero">
@@ -67,7 +126,7 @@
         <section class="view" id="viewOnboarding" hidden>
         <!-- ───────────────────────── Hero ───────────────────────── -->
         <section class="hero">
-          <p class="eyebrow">New department package</p>
+          <p class="eyebrow">Onboarding Agent</p>
           <h2>Turn one intake into Drive assets, product mockups, and live Shopify listings.</h2>
         </section>
 
@@ -120,6 +179,21 @@
             </div>
 
             <div class="field">
+              <label for="intakeForms">Store build form <span style="color:var(--text-subtle);font-weight:600">(optional)</span></label>
+              <div class="dropzone" data-dropzone="intakeForms">
+                <input id="intakeForms" name="intakeForms" type="file"
+                       accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                       multiple>
+                <span class="dz-glyph" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                </span>
+                <span class="dz-title"><b>Click to upload</b> or drag &amp; drop</span>
+                <span class="dz-sub">Fixed-field customer form for deterministic build actions</span>
+              </div>
+              <div class="chips" id="intakeChips"></div>
+            </div>
+
+            <div class="field">
               <label for="followUpText">Department follow-up answers <span style="color:var(--text-subtle);font-weight:600">(optional)</span></label>
               <textarea id="followUpText" name="followUpText" rows="4"
                         placeholder="Paste the department's replies to the policy-gaps email — placements, colors, garment styles, sizes…"></textarea>
@@ -140,10 +214,10 @@
             <input id="conflictStrategy" name="conflictStrategy" type="hidden" value="fail">
 
             <button class="btn btn-secondary btn-block" type="button" id="analyzeButton">
-              <span class="btn-label">Analyze policy &amp; draft email</span>
+              <span class="btn-label">Analyze source &amp; draft email</span>
             </button>
             <p class="hint" style="text-align:center;margin-top:calc(-1 * var(--space-2))">
-              Reads the policy and drafts the gaps email — creates nothing. Do this first if the policy might be incomplete.
+              Reads the policy/form and drafts the gaps email — creates nothing. Do this first if the policy might be incomplete.
             </p>
 
             <button class="btn btn-primary btn-block" type="submit" id="runButton">

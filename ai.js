@@ -50,7 +50,7 @@ const BLANK_GARMENT_ATTEMPTS = 3;
 // Caveat worth knowing: an image model does not reproduce a specific SKU. This
 // gets the CUT right; it does not guarantee catalogue-accurate detailing. Only
 // a real blank photo from the supplier does that.
-function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec) {
+function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance = "") {
   const colorPhrase = garmentColor ? ` in ${garmentColor}` : "";
   const stylePhrase = brandStyle
     ? ` The garment is a ${brandStyle} — match that style's silhouette exactly: sleeve length, collar or neckline type, placket, cuffs, and overall cut.`
@@ -59,7 +59,8 @@ function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec) {
   // could not be used. Describing the actual garment is the difference between
   // "close to NL3600" and "some t-shirt".
   const specPhrase = spec ? ` Reproduce this style faithfully: ${spec}` : "";
-  return `A professional studio product photograph of ${productPrompt}${colorPhrase}.${stylePhrase}${specPhrase} The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
+  const guidancePhrase = imageGuidance ? ` Intake form mockup guidance: ${imageGuidance}` : "";
+  return `A professional studio product photograph of ${productPrompt}${colorPhrase}.${stylePhrase}${specPhrase}${guidancePhrase} The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
 }
 
 async function renderGarment(prompt) {
@@ -133,8 +134,8 @@ Set "clean" to false if ANY lettering, numbering, logo, emblem, patch, label, or
 //      artwork on it and tries again,
 //   2. mockup.compositeLogoOnGarment pastes the exact uploaded logo file, so
 //      the artwork that does appear is never model-drawn.
-async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, spec }) {
-  let prompt = blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec);
+async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, spec, imageGuidance }) {
+  let prompt = blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance);
   let lastBuffer = null;
   let lastFinding = "";
 
@@ -145,7 +146,7 @@ async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, s
 
     lastFinding = inspection.found;
     // Name the offending artwork in the retry so the model stops reproducing it.
-    prompt = `${blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec)} A previous attempt incorrectly included ${
+    prompt = `${blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance)} A previous attempt incorrectly included ${
       inspection.found || "text and graphics"
     } on the garment. Do not include that or anything like it. The garment must be entirely undecorated.`;
   }
@@ -633,6 +634,7 @@ module.exports = {
   analyzePolicyGaps,
   collectPolicyText,
   determinePolicyProducts,
+  extractReadableText,
   extractPolicyInstructions,
   generateBlankGarment,
   generateProductDescription,
