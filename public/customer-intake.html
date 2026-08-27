@@ -11,10 +11,11 @@
          CSS default, so this only ever has to opt in to dark. */
       (function () {
         try {
+          /* Light is the product default, deliberately NOT following the OS
+             preference: a first-time visitor always gets the light store form.
+             Dark only ever comes from the visitor picking it here before. */
           var saved = localStorage.getItem("fnTheme");
-          var dark = saved ? saved === "dark"
-                           : window.matchMedia("(prefers-color-scheme: dark)").matches;
-          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+          document.documentElement.setAttribute("data-theme", saved === "dark" ? "dark" : "light");
         } catch (e) {
           document.documentElement.setAttribute("data-theme", "light");
         }

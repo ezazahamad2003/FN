@@ -13,14 +13,6 @@
   const KEY = "fnTheme";
   const root = document.documentElement;
 
-  function stored() {
-    try {
-      return localStorage.getItem(KEY);
-    } catch {
-      return null;
-    }
-  }
-
   function current() {
     return root.getAttribute("data-theme") === "dark" ? "dark" : "light";
   }
@@ -65,13 +57,6 @@
       });
     });
     apply(current(), false);
-  }
-
-  // Only follow the OS while the user has made no explicit choice of their own.
-  if (window.matchMedia) {
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
-      if (!stored()) apply(event.matches ? "dark" : "light", false);
-    });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
