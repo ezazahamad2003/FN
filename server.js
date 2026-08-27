@@ -52,7 +52,7 @@ const {
   structuredTextFromCustomerIntake,
   updateCustomerIntake
 } = require("./customerIntakes");
-const { azureTextToSpeech, azureTranscribeAudio } = require("./azureOpenai");
+const { azureTextToSpeech, azureTranscribeAudio, generateImage } = require("./azureOpenai");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -335,6 +335,44 @@ app.get("/health", (req, res) => {
 
 app.get("/api/platform/status", (req, res) => {
   res.json({ ...platformStatus(), adminGate: adminGateEnabled() });
+});
+
+/* -----------------------------------------------------------------------------
+   Image generation self-test.
+
+   Renders one small throwaway image and reports whether the configured provider
+   actually answered. Everything else that generates images also creates Shopify
+   products, so without this there is no way to tell a broken image key from a
+   working one except by publishing a product to the live store.
+
+   POST rather than GET so a crawler cannot spend image credits, and the bytes
+   are discarded - only the size and provider come back.
+   -------------------------------------------------------------------------- */
+app.post("/api/diagnostics/image", async (req, res) => {
+  const started = Date.now();
+  const status = platformStatus().genAI;
+  try {
+    const buffer = await generateImage({
+      prompt: "A plain light gray square on a white background. No text, no logos, no graphics.",
+      size: "1024x1024",
+      quality: "low"
+    });
+    res.json({
+      ok: true,
+      provider: status.imageProvider,
+      deployment: status.imageDeployment || null,
+      bytes: buffer.length,
+      elapsedMs: Date.now() - started
+    });
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      provider: status.imageProvider,
+      deployment: status.imageDeployment || null,
+      error: error.message,
+      elapsedMs: Date.now() - started
+    });
+  }
 });
 
 app.post("/api/agents/dashboard/chat", async (req, res) => {
