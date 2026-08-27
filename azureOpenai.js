@@ -13,10 +13,18 @@ function azureOpenAIConfigured() {
   );
 }
 
+function audioEndpoint() {
+  return cleanEndpoint(process.env.AZURE_OPENAI_AUDIO_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT);
+}
+
+function audioApiKey() {
+  return process.env.AZURE_OPENAI_AUDIO_API_KEY || process.env.AZURE_OPENAI_API_KEY;
+}
+
 function azureAudioConfigured() {
   return Boolean(
-    process.env.AZURE_OPENAI_ENDPOINT &&
-      process.env.AZURE_OPENAI_API_KEY &&
+    audioEndpoint() &&
+      audioApiKey() &&
       (process.env.AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT || process.env.AZURE_OPENAI_VOICE_DEPLOYMENT)
   );
 }
@@ -52,6 +60,7 @@ function genAIStatus() {
       transcriptionDeployment,
       speechDeployment,
       voiceInputConfigured: azureAudioConfigured(),
+      audioEndpoint: audioEndpoint() ? "configured" : "",
       voiceOutputConfigured: azureSpeechConfigured()
     };
   }
@@ -124,7 +133,7 @@ async function azureTranscribeAudio({ buffer, mimeType = "audio/webm", filename 
     throw new Error("Node 18 fetch, FormData, and Blob are required for Azure OpenAI audio transcription.");
   }
 
-  const endpoint = cleanEndpoint(process.env.AZURE_OPENAI_ENDPOINT);
+  const endpoint = audioEndpoint();
   const deployment = process.env.AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT || process.env.AZURE_OPENAI_VOICE_DEPLOYMENT;
   const apiVersion = process.env.AZURE_OPENAI_AUDIO_API_VERSION || process.env.AZURE_OPENAI_API_VERSION || "2024-10-21";
   const url = `${endpoint}/openai/deployments/${encodeURIComponent(deployment)}/audio/transcriptions?api-version=${encodeURIComponent(apiVersion)}`;
@@ -137,7 +146,7 @@ async function azureTranscribeAudio({ buffer, mimeType = "audio/webm", filename 
 
   const res = await globalThis.fetch(url, {
     method: "POST",
-    headers: { "api-key": process.env.AZURE_OPENAI_API_KEY },
+    headers: { "api-key": audioApiKey() },
     body: form
   });
   const contentType = res.headers.get("content-type") || "";

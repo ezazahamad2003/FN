@@ -1081,7 +1081,8 @@ const views = {
   dashboard: el("viewDashboard"),
   departments: el("viewDepartments"),
   department: el("viewDepartment"),
-  onboarding: el("viewOnboarding")
+  onboarding: el("viewOnboarding"),
+  newStores: el("viewNewStores")
 };
 const departmentsBody = el("departmentsBody");
 const departmentDetailBody = el("departmentDetailBody");
@@ -1140,6 +1141,275 @@ function statusChip(status) {
   const tone = { ACTIVE: "ok", DRAFT: "warn", ARCHIVED: "muted" }[status] || "muted";
   const label = { ACTIVE: "Active", DRAFT: "Draft", ARCHIVED: "Archived" }[status] || status;
   return `<span class="status-chip" data-tone="${tone}">${escapeHtml(label)}</span>`;
+}
+/* -----------------------------------------------------------------------------
+   New Stores queue - customer intake review before running the store builder.
+   -------------------------------------------------------------------------- */
+function adminTokenValue() {
+  let token = sessionStorage.getItem("fnAdminToken") || "";
+  if (!token) {
+    token = window.prompt("Admin token for the internal New Stores queue:") || "";
+    if (token) sessionStorage.setItem("fnAdminToken", token);
+  }
+  return token;
+}
+
+async function adminFetch(url, options = {}) {
+  const token = adminTokenValue();
+  if (!token) throw new Error("Admin token is required for the internal queue.");
+  const headers = new Headers(options.headers || {});
+  headers.set("Authorization", "Bearer " + token);
+  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    sessionStorage.removeItem("fnAdminToken");
+    throw new Error("Admin token was rejected. Open New Stores again and enter the current token.");
+  }
+  return res;
+}
+
+function intakeStatusLabel(status) {
+  return String(status || "new").replace(/-/g, " ");
+}
+
+function renderNewStoresShell(records) {
+  if (!newStoresBody) return;
+  if (!records.length) {
+    newStoresBody.innerHTML = stateBlock({
+      title: "No customer store requests yet",
+      sub: "Share the customer intake link. Submissions will land here after they create the draft Shopify collection."
+    });
+    return;
+  }
+  newStoresBody.innerHTML = `
+    <div class="store-queue-grid">
+      <aside class="store-request-list" aria-label="Customer store requests">
+        ${records.map((record, index) => `
+          <button class="store-request-card" type="button" data-intake-id="${escapeHtml(record.id)}" data-active="${index === 0 ? "true" : "false"}">
+            <span>
+              <b>${escapeHtml(record.departmentName || record.store?.departmentName || "Untitled department")}</b>
+              <small>${escapeHtml(record.departmentCode || record.store?.departmentCode || "No code yet")} - ${escapeHtml(record.summary?.includedCategories || 0)} categories</small>
+            </span>
+            <em>${escapeHtml(intakeStatusLabel(record.status))}</em>
+          </button>
+        `).join("")}
+      </aside>
+      <section class="store-review-panel" id="storeReviewPanel">
+        ${stateBlock({ title: "Loading store request", sub: "Opening the newest customer submission.", spinner: true })}
+      </section>
+    </div>`;
+  openCustomerIntake(records[0].id);
+}
+
+function categoryEditor(category) {
+  const enabled = category.include ? "checked" : "";
+  return `
+    <details class="intake-category-editor" data-category-id="${escapeHtml(category.id)}" ${category.include ? "open" : ""}>
+      <summary>
+        <span>${escapeHtml(category.label)}</span>
+        <em>${category.include ? "Included" : "Skipped"}</em>
+      </summary>
+      <div class="category-edit-grid">
+        <label><span>Include</span><input type="checkbox" name="include" ${enabled}></label>
+        <label><span>Styles and colors</span><textarea name="stylesAndColors" rows="3">${escapeHtml(category.stylesAndColors)}</textarea></label>
+        <label><span>Decoration method</span><select name="decorationMethod">
+          ${["Embroidery", "Screen Print", "Patch", "Heat Press"].map((item) => `<option ${category.decorationMethod === item ? "selected" : ""}>${item}</option>`).join("")}
+        </select></label>
+        <label><span>Logo labels</span><input name="logoLabels" value="${escapeHtml(category.logoLabels)}"></label>
+        <label><span>Size tier</span><select name="sizeTier">
+          ${[
+            ["small", "Small - about 4 in"],
+            ["standard", "Standard - about 6 in"],
+            ["large", "Large / full back - 8-10 in"]
+          ].map(([value, label]) => `<option value="${value}" ${category.sizeTier === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select></label>
+        <label><span>Placement</span><input name="placement" value="${escapeHtml(category.placement)}"></label>
+        <label><span>Name/rank</span><select name="nameRank">
+          ${["No", "Name only", "Rank only", "Name and rank"].map((item) => `<option ${category.nameRank === item ? "selected" : ""}>${item}</option>`).join("")}
+        </select></label>
+        <label><span>Size range</span><input name="sizeRange" value="${escapeHtml(category.sizeRange)}"></label>
+      </div>
+    </details>`;
+}
+
+function collectEditedIntake(record) {
+  const panel = el("storeReviewPanel");
+  const next = structuredClone(record);
+  next.store = {
+    ...next.store,
+    departmentName: panel.querySelector("[data-store-field='departmentName']")?.value.trim() || next.store.departmentName,
+    departmentCode: panel.querySelector("[data-store-field='departmentCode']")?.value.trim() || next.store.departmentCode,
+    primaryContactName: panel.querySelector("[data-store-field='primaryContactName']")?.value.trim() || "",
+    primaryContactEmail: panel.querySelector("[data-store-field='primaryContactEmail']")?.value.trim() || "",
+    notes: panel.querySelector("[data-store-field='notes']")?.value.trim() || ""
+  };
+  next.categories = next.categories.map((category) => {
+    const node = panel.querySelector(`[data-category-id="${CSS.escape(category.id)}"]`);
+    if (!node) return category;
+    return {
+      ...category,
+      include: Boolean(node.querySelector("[name='include']")?.checked),
+      stylesAndColors: node.querySelector("[name='stylesAndColors']")?.value.trim() || "",
+      decorationMethod: node.querySelector("[name='decorationMethod']")?.value || "",
+      logoLabels: node.querySelector("[name='logoLabels']")?.value.trim() || "",
+      sizeTier: node.querySelector("[name='sizeTier']")?.value || "",
+      placement: node.querySelector("[name='placement']")?.value.trim() || "",
+      nameRank: node.querySelector("[name='nameRank']")?.value || "",
+      sizeRange: node.querySelector("[name='sizeRange']")?.value.trim() || ""
+    };
+  });
+  return next;
+}
+
+function fileFromStoredLogo(logo, index) {
+  const match = String(logo.dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  const binary = atob(match[2]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], logo.name || `customer-logo-${index + 1}`, { type: logo.mimeType || match[1] });
+}
+
+function setFileInputFiles(input, files) {
+  const transfer = new DataTransfer();
+  files.filter(Boolean).forEach((file) => transfer.items.add(file));
+  input.files = transfer.files;
+}
+
+async function saveCustomerIntake(record, status = "in-review") {
+  const edited = collectEditedIntake(record);
+  const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...edited, status })
+  });
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error || "Could not save the customer store request.");
+  return payload.intake;
+}
+
+async function loadCustomerIntakeIntoOnboarding(record) {
+  const saved = await saveCustomerIntake(record, "approved-for-build");
+  departmentInput.value = saved.store.departmentName || "";
+  if (logoInput) {
+    setFileInputFiles(logoInput, (saved.logos || []).map(fileFromStoredLogo));
+    renderLogoThumbs();
+  }
+  if (intakeInput) {
+    const text = saved.structuredText || "";
+    setFileInputFiles(intakeInput, [new File([text], `${saved.store.departmentCode || saved.requestId}-customer-intake.txt`, { type: "text/plain" })]);
+    renderIntakeChips();
+  }
+  if (followUpInput) {
+    setFileInputFiles(followUpInput, []);
+    renderFollowUpChips();
+  }
+  const followText = el("followUpText");
+  if (followText) followText.value = "";
+  hideFieldError(departmentInput, departmentError);
+  hideFieldError(logoInput, logoError);
+  addNotice("Customer package loaded. Run onboarding to generate images, then approve products for Shopify.");
+  location.hash = "#/onboarding";
+}
+
+function renderCustomerIntakeEditor(record) {
+  const panel = el("storeReviewPanel");
+  if (!panel) return;
+  const collectionUrl = record.shopifyCollection?.url || "";
+  panel.innerHTML = `
+    <div class="store-review-head">
+      <div>
+        <p class="eyebrow">Review queue</p>
+        <h2>${escapeHtml(record.store.departmentName || "Customer store request")}</h2>
+        <p>${escapeHtml(record.requestId)} - ${escapeHtml(intakeStatusLabel(record.status))}</p>
+      </div>
+      <div class="store-review-actions">
+        ${collectionUrl ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(collectionUrl)}" target="_blank" rel="noreferrer">Open Shopify collection</a>` : ""}
+        <button class="btn btn-secondary btn-sm" type="button" data-save-intake>Save edits</button>
+        <button class="btn btn-primary btn-sm" type="button" data-load-intake>Approve to build store</button>
+      </div>
+    </div>
+    <div class="store-edit-grid">
+      <label><span>Department name</span><input data-store-field="departmentName" value="${escapeHtml(record.store.departmentName)}"></label>
+      <label><span>Department code</span><input data-store-field="departmentCode" value="${escapeHtml(record.store.departmentCode)}"></label>
+      <label><span>Contact name</span><input data-store-field="primaryContactName" value="${escapeHtml(record.store.primaryContactName)}"></label>
+      <label><span>Contact email</span><input data-store-field="primaryContactEmail" value="${escapeHtml(record.store.primaryContactEmail)}"></label>
+      <label class="span-2"><span>Internal/customer notes</span><textarea data-store-field="notes" rows="3">${escapeHtml(record.store.notes)}</textarea></label>
+    </div>
+    <div class="logo-strip">
+      ${(record.logos || []).map((logo) => logo.dataUrl?.startsWith("data:image/")
+        ? `<img src="${escapeHtml(logo.dataUrl)}" alt="${escapeHtml(logo.name)}">`
+        : `<span>${escapeHtml(logo.name)}</span>`).join("") || "<span>No logo file stored</span>"}
+    </div>
+    <div class="category-editor-stack">
+      ${record.categories.map(categoryEditor).join("")}
+    </div>`;
+
+  panel.querySelector("[data-save-intake]")?.addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+    try {
+      const saved = await saveCustomerIntake(record, "in-review");
+      renderCustomerIntakeEditor(saved);
+    } catch (error) {
+      window.alert(error.message);
+      btn.disabled = false;
+      btn.textContent = "Save edits";
+    }
+  });
+
+  panel.querySelector("[data-load-intake]")?.addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Loading...";
+    try {
+      await loadCustomerIntakeIntoOnboarding(record);
+    } catch (error) {
+      window.alert(error.message);
+      btn.disabled = false;
+      btn.textContent = "Approve to build store";
+    }
+  });
+}
+
+async function openCustomerIntake(id) {
+  const panel = el("storeReviewPanel");
+  if (panel) panel.innerHTML = stateBlock({ title: "Loading store request", spinner: true });
+  try {
+    const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(id)}`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not open that store request.");
+    renderCustomerIntakeEditor(payload.intake);
+    document.querySelectorAll(".store-request-card").forEach((card) => {
+      card.dataset.active = card.dataset.intakeId === id ? "true" : "false";
+    });
+  } catch (error) {
+    if (panel) panel.innerHTML = stateBlock({ tone: "warn", title: "Could not open store request", sub: error.message });
+  }
+}
+
+async function loadNewStores() {
+  if (!newStoresBody) return;
+  newStoresBody.innerHTML = stateBlock({ title: "Loading customer store requests", spinner: true });
+  try {
+    const res = await adminFetch("/api/customer-intakes");
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not load customer store requests.");
+    renderNewStoresShell(payload.intakes || []);
+  } catch (error) {
+    newStoresBody.innerHTML = stateBlock({
+      tone: "warn",
+      title: "New Stores queue needs the admin token",
+      sub: error.message,
+      actionHtml: '<button class="btn btn-secondary btn-sm" type="button" id="retryNewStores">Enter token</button>'
+    });
+    el("retryNewStores")?.addEventListener("click", () => {
+      sessionStorage.removeItem("fnAdminToken");
+      loadNewStores();
+    });
+  }
 }
 /* -----------------------------------------------------------------------------
    Dashboard voice agent
@@ -2240,8 +2510,12 @@ departmentSearch.addEventListener("input", () => {
   if (collectionsCache) renderDepartments(collectionsCache);
 });
 el("refreshDepartments").addEventListener("click", () => loadDepartments({ force: true }));
+if (refreshNewStores) refreshNewStores.addEventListener("click", () => loadNewStores());
 
 document.addEventListener("click", (e) => {
+  const intakeCard = e.target.closest(".store-request-card");
+  if (intakeCard?.dataset.intakeId) return openCustomerIntake(intakeCard.dataset.intakeId);
+
   const editId = e.target.closest("[data-edit-product]")?.dataset.editProduct;
   if (editId) return openProductEditor(editId);
 

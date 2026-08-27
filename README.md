@@ -29,6 +29,8 @@ AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 AZURE_OPENAI_API_KEY=your-azure-openai-key
 AZURE_OPENAI_API_VERSION=2024-10-21
 AZURE_OPENAI_CHAT_DEPLOYMENT=fn-chat
+AZURE_OPENAI_AUDIO_ENDPOINT=https://your-voice-resource.openai.azure.com
+AZURE_OPENAI_AUDIO_API_KEY=your-voice-resource-key
 AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT=whisper
 AZURE_OPENAI_AUDIO_API_VERSION=2024-10-21
 AZURE_OPENAI_SPEECH_MODEL=tts-1
@@ -36,7 +38,7 @@ AZURE_OPENAI_SPEECH_API_VERSION=preview
 AZURE_OPENAI_SPEECH_VOICE=alloy
 ```
 
-The dashboard voice agent records short browser mic turns, sends them to Azure OpenAI transcription, runs the dashboard agent harness with live Shopify/Drive/platform context, and returns synthesized speech when `AZURE_OPENAI_SPEECH_MODEL` is configured. If speech output is not configured, the browser speech fallback is used for playback.
+The dashboard voice agent records short browser mic turns, sends them to Azure OpenAI transcription, runs the dashboard agent harness with live Shopify/Drive/platform context, and returns synthesized speech when `AZURE_OPENAI_SPEECH_MODEL` is configured. `AZURE_OPENAI_AUDIO_ENDPOINT` and `AZURE_OPENAI_AUDIO_API_KEY` can point transcription at a separate Azure OpenAI resource while chat keeps using `AZURE_OPENAI_ENDPOINT`. If speech output is not configured, the browser speech fallback is used for playback.
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 

@@ -394,13 +394,24 @@ app.post(
       let collection = null;
       try {
         if (!shopifyConnected()) throw new Error("Shopify is not connected.");
-        const created = await ensureManualCollectionWithImage(record.store.departmentName, logoBufferFromRecord(record));
+        let warning = "";
+        let created;
+        try {
+          created = await ensureManualCollectionWithImage(record.store.departmentName, logoBufferFromRecord(record));
+        } catch (imageError) {
+          created = await ensureManualCollectionWithImage(record.store.departmentName, null);
+          warning = "Collection image needs review: " + imageError.message;
+        }
         collection = {
           id: created.id,
           title: created.title,
           url: adminCollectionUrl(created.id)
         };
-        record = await updateCustomerIntake(record.id, { status: "collection-created", shopifyCollection: collection });
+        record = await updateCustomerIntake(record.id, {
+          status: "collection-created",
+          shopifyCollection: collection,
+          internalNotes: warning || record.internalNotes || ""
+        });
       } catch (collectionError) {
         record = await updateCustomerIntake(record.id, {
           status: "collection-error",
