@@ -238,15 +238,21 @@ async function imageCandidatesFromPage(pageUrl) {
  * is returned even when no usable photo is found — it is what lets the
  * generation fallback produce something close instead of a generic garment.
  */
-async function searchSupplier({ brandStyle, garmentColor, productType }) {
+async function searchSupplier({ brandStyle, garmentColor, productType, vendor }) {
   const openai = client();
   const colorPhrase = garmentColor ? ` in ${garmentColor}` : "";
+  // A vendor the department named is the strongest lead we have — their own
+  // catalog page for the style is the exact garment they expect to receive, so
+  // it is searched first and by name.
+  const vendorPhrase = vendor
+    ? ` The customer says this garment comes from "${vendor}" — search ${vendor}'s own website/catalog FIRST and prefer product pages on their domain.`
+    : "";
   const response = await openai.responses.create({
     model: SEARCH_MODEL,
     tools: [{ type: "web_search" }],
     input: `Find the blank wholesale apparel style "${brandStyle}"${colorPhrase}${
       productType ? ` (a ${productType})` : ""
-    } on the manufacturer's site or an authorised wholesale distributor (SanMar, S&S Activewear, alphabroder, Next Level Apparel, Richardson, Augusta, Carhartt, or the brand's own site).
+    } on the manufacturer's site or an authorised wholesale distributor (SanMar, S&S Activewear, alphabroder, Next Level Apparel, Richardson, Augusta, Carhartt, or the brand's own site).${vendorPhrase}
 
 I need the plain product photo of the garment with NO decoration on it.
 
@@ -359,24 +365,29 @@ async function tryCandidate(url, expectations, log) {
  * must never fail the onboarding run, it just falls back to generation.
  */
 async function findSupplierBlank(product, { onLog } = {}) {
-  const brandStyle = String(product.brandStyle || "").trim();
+  const vendor = String(product.vendor || "").trim();
+  // A named vendor with no style number is still searchable — "Richardson
+  // trucker hat in navy" finds the catalog page; the vision gate then does the
+  // exact-garment check the style tokens would otherwise have done.
+  const brandStyle = String(product.brandStyle || "").trim() || vendor;
   const log = (message) => {
     if (onLog) onLog(message);
   };
 
   const empty = { imageBuffer: null, imageUrl: null, sourceUrl: null, spec: "", note: "" };
   if (!brandStyle) {
-    return { ...empty, note: "No brand/style number stated, so no supplier photo could be looked up." };
+    return { ...empty, note: "No vendor or brand/style number stated, so no supplier photo could be looked up." };
   }
   if (!supplierBlanksEnabled()) {
     return { ...empty, note: "Supplier photo lookup is disabled (SUPPLIER_BLANKS=off)." };
   }
 
-  const cacheKey = `${brandStyle}|${product.garmentColor || ""}`.toLowerCase();
+  const cacheKey = `${vendor}|${brandStyle}|${product.garmentColor || ""}|${product.productType || ""}`.toLowerCase();
   if (cache.has(cacheKey)) return cache.get(cacheKey);
 
   const expectations = {
     brandStyle,
+    vendor,
     garmentColor: product.garmentColor || "",
     productType: product.productType || "",
     productLabel: product.productLabel || ""

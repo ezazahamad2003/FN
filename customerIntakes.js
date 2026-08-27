@@ -55,6 +55,8 @@ function normalizeCategory(input = {}) {
     title: source.title || definition.title || "",
     include: Boolean(source.include),
     style: clean(source.style),
+    vendor: clean(source.vendor),
+    styleNumber: clean(source.styleNumber),
     colors: clean(source.colors),
     beltStyle: clean(source.beltStyle),
     decorationMethod: clean(source.decorationMethod),
@@ -96,6 +98,9 @@ function normalizeRecord(input = {}) {
     categories: CUSTOMER_INTAKE_CATEGORIES.map((definition) => normalizeCategory({ ...definition, ...(categoriesByKey.get(definition.key) || {}) })),
     logos: Array.isArray(input.logos) ? input.logos : [],
     shopifyCollection: input.shopifyCollection || null,
+    // Build progress written by the store builder. Passed through untouched so
+    // a PATCH from the review UI can never wipe a build that is mid-flight.
+    build: input.build || null,
     internalNotes: clean(input.internalNotes),
     customerNotes: clean(input.customerNotes || input.notes)
   };
@@ -128,7 +133,9 @@ function structuredTextFromCustomerIntake(recordInput) {
       continue;
     }
 
-    lines.push("Style & Color(s) " + (category.style || "FN Simple approved catalog") + " Color(s): " + category.colors);
+    const styleParts = [category.styleNumber, category.style].filter(Boolean).join(" ");
+    lines.push("Style & Color(s) " + (styleParts || "FN Simple approved catalog") + " Color(s): " + category.colors);
+    if (category.vendor) lines.push("Vendor / Brand " + category.vendor + (category.styleNumber ? " — style " + category.styleNumber : ""));
 
     if (definition.decorated) {
       lines.push("Decoration Method " + choiceLine(category.decorationMethod, DECORATION_METHODS));
@@ -249,6 +256,7 @@ async function updateCustomerIntake(fileId, patch = {}) {
     categories: patch.categories || existing.categories,
     logos: patch.logos || existing.logos,
     shopifyCollection: patch.shopifyCollection === undefined ? existing.shopifyCollection : patch.shopifyCollection,
+    build: patch.build === undefined ? existing.build : patch.build,
     internalNotes: patch.internalNotes ?? existing.internalNotes,
     customerNotes: patch.customerNotes ?? existing.customerNotes,
     createdAt: existing.createdAt,

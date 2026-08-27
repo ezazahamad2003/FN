@@ -278,7 +278,7 @@ async function fetchAllVariants(productGid) {
 // "Front Logo" (one value per logo) and "Size". Single-logo products get only
 // a Size option. Large departments (30+ logos × 7 sizes) go through the async
 // productSet path, which supports up to 2048 variants.
-async function createProductWithVariants({ title, bodyHtml, price, productType, vendor, tags, logoValues = [], sizes = [] }) {
+async function createProductWithVariants({ title, bodyHtml, price, productType, vendor, tags, logoValues = [], sizes = [], status = "ACTIVE" }) {
   const sizeValues = sizes.length ? sizes : DEFAULT_SIZES;
   const useLogoOption = logoValues.length > 1;
 
@@ -314,7 +314,9 @@ async function createProductWithVariants({ title, bodyHtml, price, productType, 
   const input = {
     title,
     descriptionHtml: bodyHtml,
-    status: "ACTIVE",
+    // Intake auto-builds pass DRAFT so nothing a customer submitted goes live
+    // on the storefront until an operator has reviewed it.
+    status: status === "DRAFT" ? "DRAFT" : "ACTIVE",
     productType: productType || "",
     vendor: vendor || "",
     tags: tags || [],

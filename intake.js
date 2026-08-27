@@ -50,6 +50,7 @@ function fieldBlock(section, fieldName) {
   const labels = [
     "Include this category in store?",
     "Style & Color(s)",
+    "Vendor / Brand",
     "Belt Style",
     "Decoration Method",
     "Decoration Logo(s)",
@@ -117,7 +118,7 @@ function extractCategorySections(text) {
 
 function extractStyleAndColor(section) {
   const styleBlock = fieldBlock(section, "Style & Color(s)") || fieldBlock(section, "Belt Style");
-  const color = clean(styleBlock.match(/Color\(s\):\s*([^☐]+?)(?=$|Decoration|Size Range|Placement)/i)?.[1] || "")
+  const color = clean(styleBlock.match(/Color\(s\):\s*([^☐]+?)(?=$|Vendor|Decoration|Size Range|Placement)/i)?.[1] || "")
     .replace(/_+/g, "")
     .trim();
   const style = clean(styleBlock.replace(/\[[^\]]+\]/g, "").replace(/Color\(s\):[\s\S]*/i, "").replace(/_+/g, " "));
@@ -172,9 +173,16 @@ function logoSlugsFrom(text) {
   return tokens.length ? tokens : ["all"];
 }
 
+function extractVendor(section) {
+  // "Vendor / Brand Next Level Apparel — style NL3600" from the customer form.
+  const block = fieldBlock(section, "Vendor / Brand");
+  return clean(String(block || "").replace(/—\s*style\b[\s\S]*/i, "").replace(/_+/g, " "));
+}
+
 function productFromCategory(category, section) {
   const include = checkedYesNo(fieldBlock(section, "Include this category in store?"));
   const { style, color } = extractStyleAndColor(section);
+  const vendor = extractVendor(section);
   const method = splitChoiceField(fieldBlock(section, "Decoration Method"), ["Embroidery", "Screen Print", "Heat Transfer", "Patch", "None"]);
   const placement = splitChoiceField(fieldBlock(section, "Placement"), [
     "Front left chest",
@@ -212,6 +220,7 @@ function productFromCategory(category, section) {
     productPrompt: category.prompt,
     garmentColor: color,
     brandStyle: style,
+    vendor,
     fabricDetails: "",
     placement,
     decorationMethod: /^None$/i.test(method) ? "none" : method,
@@ -305,6 +314,7 @@ function intakeContextText(intake) {
     productType: product.productType,
     garmentColor: product.garmentColor,
     brandStyle: product.brandStyle,
+    vendor: product.vendor || "",
     placement: product.placement,
     decorationMethod: product.decorationMethod,
     decorationSizeTier: product.decorationSizeTier,

@@ -36,6 +36,17 @@ const TIERS = ["Small", "Standard", "Large / Full Back", "Custom"];
 const SIZES = ["S-3XL", "S-5XL", "Youth sizes", "Women's cut", "Other"];
 const DRAFT_KEY = "fnIntakeDraft";
 
+// Wholesale houses departments actually buy from. The field is a free-text
+// input with these as suggestions - any vendor name works, and naming one
+// sends our sourcing agent to that vendor's catalog for the exact product
+// photo used in your store mockups.
+const VENDORS = [
+  "Next Level Apparel", "Bella+Canvas", "Gildan", "Comfort Colors",
+  "Port & Company", "Sport-Tek", "District", "Carhartt", "Richardson",
+  "Flexfit", "SanMar", "S&S Activewear", "alphabroder", "Augusta Sportswear",
+  "5.11 Tactical", "Flying Cross", "Elbeco", "Game Sportswear", "Snap 'n' Wear"
+];
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -69,8 +80,13 @@ function categoryHtml(category) {
 
   const style = category.belt
     ? '<label class="field">Belt style <em class="req">Required</em><input name="beltStyle" placeholder="Basket weave leather, flat leather, or a style number"></label>'
-    : '<label class="field">Style / catalog preference<input name="style" placeholder="FN approved catalog style, or a style number you already use"></label>' +
-      '<label class="field">Color(s) <em class="req">Required</em><input name="colors" placeholder="Navy, black, gray…"></label>';
+    : '<div class="vendor-row">' +
+      '<label class="field">Vendor / brand<input name="vendor" list="fnVendors" placeholder="Next Level, Carhartt, Richardson…">' +
+      '<small class="hint">Name a vendor and we pull the exact product photo from their catalog for your mockups.</small></label>' +
+      '<label class="field">Style number<input name="styleNumber" placeholder="NL3600, CTK121, 112…"></label>' +
+      "</div>" +
+      '<label class="field">Color(s) <em class="req">Required</em><input name="colors" placeholder="Navy, black, gray…"></label>' +
+      '<label class="field">Other style notes<input name="style" placeholder="Anything else about the cut or style"></label>';
 
   const size = category.belt
     ? ""
@@ -85,7 +101,9 @@ function categoryHtml(category) {
 }
 
 function renderCategories() {
-  $("#customerCategories").innerHTML = CATEGORIES.map(categoryHtml).join("");
+  $("#customerCategories").innerHTML =
+    '<datalist id="fnVendors">' + VENDORS.map((vendor) => '<option value="' + esc(vendor) + '">').join("") + "</datalist>" +
+    CATEGORIES.map(categoryHtml).join("");
 }
 
 function updateCategoryState(card) {
@@ -327,7 +345,8 @@ function renderReview() {
   const detail = (category) => {
     const definition = CATEGORIES.find((item) => item.key === category.key) || {};
     if (definition.belt) return [category.beltStyle].filter(Boolean).join(" · ");
-    const parts = [category.colors, category.style, category.decorationMethod, category.placement,
+    const vendorBit = [category.vendor, category.styleNumber].filter(Boolean).join(" ");
+    const parts = [vendorBit, category.colors, category.style, category.decorationMethod, category.placement,
       category.sizeTier === "Custom" ? category.customSizeTier : category.sizeTier,
       category.sizeRange === "Other" ? category.otherSizes : category.sizeRange];
     return parts.filter(Boolean).join(" · ");
@@ -373,17 +392,19 @@ function setSubmitState(kind, message) {
 }
 
 function renderSuccess(payload) {
-  const collection = payload.collection
-    ? "<p>Your store collection <b>" + esc(payload.collection.title || payload.departmentName) + "</b> has been created in Shopify.</p>"
-    : "<p>Our team will create your store collection shortly.</p>";
+  const building = payload.buildStarted
+    ? "<p>Your store is <b>building right now</b> — our agent is sourcing each garment from your chosen vendors, placing your artwork, and assembling the products.</p>"
+    : payload.collection
+      ? "<p>Your store collection <b>" + esc(payload.collection.title || payload.departmentName) + "</b> has been created and is queued for build.</p>"
+      : "<p>Our team will start your store build shortly.</p>";
   $("#main").innerHTML =
     '<section class="card card-pad intake-done">' +
     '<span class="done-mark" aria-hidden="true">' +
     '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>' +
     "<h1>Request received</h1>" +
     "<p>Thanks, " + esc(payload.contactName || "") + ". Reference <b>" + esc(String(payload.requestId || "").slice(0, 8).toUpperCase()) + "</b>.</p>" +
-    collection +
-    "<p class='muted'>Next: our team reviews your garments, builds product mockups from your artwork, and checks pricing and sizing. We'll email <b>" +
+    building +
+    "<p class='muted'>Nothing goes live without review: our team checks every product, image, price, and size before publishing. We'll email <b>" +
     esc(payload.contactEmail || "you") + "</b> when the store is ready to approve.</p>" +
     '<a class="btn btn-ghost" href="/intake">Submit another department</a></section>';
   window.scrollTo({ top: 0, behavior: "smooth" });

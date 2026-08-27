@@ -53,6 +53,7 @@ const {
   updateCustomerIntake
 } = require("./customerIntakes");
 const { azureTextToSpeech, azureTranscribeAudio, generateImage } = require("./azureOpenai");
+const { startIntakeBuild } = require("./intakeBuild");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -468,12 +469,27 @@ app.post(
           internalNotes: "Collection was not created automatically: " + collectionError.message
         });
       }
+      // Submit IS the handoff: the store starts building the moment the form
+      // lands. Fire-and-forget - progress is written into the Drive record and
+      // surfaced in the New Stores queue. Products are created as DRAFT, so
+      // auto-building publishes nothing a customer can see.
+      let buildStarted = false;
+      if (record.summary?.ready) {
+        try {
+          const kicked = await startIntakeBuild(record.id);
+          buildStarted = kicked.started;
+        } catch (buildError) {
+          console.error("Auto-build did not start:", buildError.message);
+        }
+      }
+
       res.status(201).json({
         id: record.id,
         requestId: record.requestId,
         departmentName: record.store.departmentName,
         status: record.status,
         collection: record.shopifyCollection || collection,
+        buildStarted,
         summary: record.summary
       });
     } catch (error) {
@@ -481,6 +497,22 @@ app.post(
     }
   }
 );
+
+/* -----------------------------------------------------------------------------
+   Start (or restart) the store build for an intake from the New Stores queue.
+   Safe to click twice: an already-running build refuses to double-start, and a
+   finished build re-runs additively - existing products are skipped, nothing is
+   ever deleted or overwritten.
+   -------------------------------------------------------------------------- */
+app.post("/api/customer-intakes/:id/build", requireAdminToken, async (req, res) => {
+  try {
+    const result = await startIntakeBuild(req.params.id, { force: Boolean(req.body?.force) });
+    if (!result.started) return res.status(409).json({ error: result.reason });
+    res.status(202).json({ started: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 app.get("/api/customer-intakes", requireAdminToken, async (req, res) => {
   try {
@@ -1137,6 +1169,34 @@ app.post("/cleanup", async (req, res) => {
   }
 
   const { collectionId, productGids, driveFolderId } = run.cleanup;
+
+  // HARD STOP: a collection that any customer intake points at is a store a
+  // real department filled a form for and sent our way. The operator console's
+  // cleanup must never be able to take it down - even when the operator also
+  // ran a manual onboarding under the same department name (ensureManual-
+  // Collection reuses collections by title, so the ids collide by design).
+  try {
+    const intakes = await listCustomerIntakes();
+    const protectedIds = new Set(
+      intakes
+        .map((intake) => String(intake.shopifyCollection?.id || ""))
+        .filter(Boolean)
+    );
+    if (protectedIds.has(String(collectionId))) {
+      return res.status(403).json({
+        error:
+          "This collection belongs to a customer-submitted store request and cannot be deleted from here. " +
+          "If it truly must go, do it manually in Shopify admin where the deletion is deliberate."
+      });
+    }
+  } catch (guardError) {
+    // The guard failing OPEN would let a customer store be deleted the one time
+    // Drive hiccups. Fail CLOSED instead: no proof it's safe, no cleanup.
+    return res.status(503).json({
+      error: `Could not verify this run against customer store requests (${guardError.message}). Cleanup refused to be safe.`
+    });
+  }
+
   const result = {
     ok: true,
     deletedProducts: 0,

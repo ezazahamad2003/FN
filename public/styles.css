@@ -2549,3 +2549,169 @@ input[aria-invalid="true"],
   .wizard-nav { flex-direction: column-reverse; align-items: stretch; }
   .intake-topbar { padding: var(--space-3) 0; }
 }
+
+/* =============================================================================
+   Intake form - design pass
+   -----------------------------------------------------------------------------
+   Voice of the page: a professional uniform-program order sheet. Two moves
+   carry it, everything else stays disciplined:
+     • Barlow Condensed for display - the compressed athletic block letterform
+       that goes on the back of fire-service tees. Used for the hero, the step
+       rail, and category titles. Body copy stays Inter.
+     • One signature motif: the turnout-gear safety stripe (red/amber band),
+       under the hero and marking the active step. Nowhere else.
+   ========================================================================== */
+.customer-intake-page .customer-hero .eyebrow {
+  color: var(--brand);
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.customer-intake-page .customer-hero h1 {
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(2.6rem, 6.5vw, 4.6rem);
+  font-weight: 700;
+  line-height: 0.98;
+  text-transform: uppercase;
+  letter-spacing: 0.005em;
+}
+
+/* Turnout-gear trim: one red band, one amber, on a dark ground. */
+.safety-stripe {
+  display: block;
+  width: 132px;
+  height: 14px;
+  margin-top: var(--space-4);
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg,
+      var(--brand) 0 42%,
+      #1c2531 42% 58%,
+      var(--warn) 58% 100%);
+}
+
+.customer-intake-page .wizard-rail button {
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.customer-intake-page .wizard-rail .wr-label { font-size: var(--fs-lg); font-weight: 600; }
+.customer-intake-page .wizard-rail .wr-num { font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+
+/* Active step wears the stripe. */
+.customer-intake-page .wizard-rail li[data-state="current"] button {
+  border-top: 3px solid transparent;
+  border-image: linear-gradient(90deg, var(--brand) 0 55%, var(--warn) 55% 100%) 1;
+}
+
+.customer-intake-page .customer-category header .toggle-line span {
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+}
+
+/* Checkbox reads as a switch: what's ON is in the store. */
+.customer-category .toggle-line input[type="checkbox"] {
+  appearance: none;
+  width: 40px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.customer-category .toggle-line input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--t-fast);
+}
+.customer-category .toggle-line input[type="checkbox"]:checked {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+.customer-category .toggle-line input[type="checkbox"]:checked::after { transform: translateX(18px); }
+.customer-category .toggle-line input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
+
+.vendor-row {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: var(--space-3);
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 620px) {
+  .vendor-row { grid-template-columns: 1fr; }
+  .safety-stripe { width: 104px; height: 12px; }
+}
+
+/* ---- Build progress (New Stores queue) --------------------------------- */
+.build-panel {
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.build-panel[data-state="running"] { border-color: var(--info-border); }
+.build-panel[data-state="complete"] { border-color: var(--success-border); }
+.build-panel[data-state="partial"],
+.build-panel[data-state="failed"] { border-color: var(--warn-border); }
+
+.build-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.build-error { color: var(--danger); font-size: var(--fs-xs); }
+
+.build-steps {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.build-steps li {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) 1fr;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.build-steps li b { color: var(--text); font-weight: 600; }
+.build-steps li span { color: var(--text-muted); overflow-wrap: anywhere; }
+.build-steps li[data-state="running"] { border-left-color: var(--info); background: var(--info-soft); }
+.build-steps li[data-state="complete"] { border-left-color: var(--success); }
+.build-steps li[data-state="failed"] { border-left-color: var(--danger); background: var(--danger-soft); }
+
+.build-products {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.build-product {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: border-color var(--t-fast);
+}
+.build-product:hover { border-color: var(--info-border); }
+.build-product b { color: var(--text); font-size: var(--fs-sm); font-weight: 600; }
+.build-product span { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+@media (max-width: 620px) {
+  .build-steps li { grid-template-columns: 1fr; gap: 2px; }
+}

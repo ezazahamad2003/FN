@@ -1323,10 +1323,65 @@ async function loadCustomerIntakeIntoOnboarding(record) {
   location.hash = "#/onboarding";
 }
 
+/* -----------------------------------------------------------------------------
+   Build progress. The intake record carries the build state (written step by
+   step by the server), so this is a pure render of what Drive says - it
+   survives page reloads and server restarts.
+   -------------------------------------------------------------------------- */
+function buildStateTone(state) {
+  return { running: "info", complete: "ok", partial: "warn", failed: "warn" }[state] || "muted";
+}
+
+function buildPanelHtml(record) {
+  const build = record.build;
+  if (!build) {
+    return `<div class="build-panel" data-state="idle">
+      <p class="muted">Not built yet. Submitting the form normally starts the build automatically; use the button if it needs a kick or a re-run.</p>
+    </div>`;
+  }
+  const steps = (build.steps || []).map((step) => `
+    <li data-state="${escapeHtml(step.state)}">
+      <b>${escapeHtml(step.label)}</b>
+      <span>${escapeHtml(step.detail || (step.state === "running" ? "Working…" : ""))}</span>
+    </li>`).join("");
+  const products = (build.products || []).map((product) => `
+    <a class="build-product" href="${escapeHtml(product.url)}" target="_blank" rel="noreferrer">
+      <b>${escapeHtml(product.title)}</b>
+      <span>${escapeHtml(product.status)} · ${escapeHtml(String(product.variantCount))} variants · ${escapeHtml(product.blankSource)}${product.vendor ? " · " + escapeHtml(product.vendor) : ""}</span>
+    </a>`).join("");
+  return `<div class="build-panel" data-state="${escapeHtml(build.state)}">
+    <div class="build-head">
+      <span class="status-chip" data-tone="${buildStateTone(build.state)}">${escapeHtml(build.state)}</span>
+      ${build.error ? `<span class="build-error">${escapeHtml(build.error)}</span>` : ""}
+    </div>
+    <ul class="build-steps">${steps}</ul>
+    ${products ? `<div class="build-products">${products}</div>` : ""}
+  </div>`;
+}
+
+let buildPollTimer = null;
+function pollBuild(id) {
+  clearTimeout(buildPollTimer);
+  buildPollTimer = setTimeout(async () => {
+    try {
+      const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(id)}`);
+      const payload = await res.json().catch(() => ({}));
+      if (res.ok && payload.intake) {
+        const active = document.querySelector(`.store-request-card[data-active="true"]`);
+        // Only repaint if the operator is still looking at this record.
+        if (active?.dataset.intakeId === id) renderCustomerIntakeEditor(payload.intake);
+      }
+    } catch {
+      /* transient - next poll retries */
+    }
+  }, 5000);
+}
+
 function renderCustomerIntakeEditor(record) {
   const panel = el("storeReviewPanel");
   if (!panel) return;
   const collectionUrl = record.shopifyCollection?.url || "";
+  const building = record.build?.state === "running";
   panel.innerHTML = `
     <div class="store-review-head">
       <div>
@@ -1337,9 +1392,12 @@ function renderCustomerIntakeEditor(record) {
       <div class="store-review-actions">
         ${collectionUrl ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(collectionUrl)}" target="_blank" rel="noreferrer">Open Shopify collection</a>` : ""}
         <button class="btn btn-secondary btn-sm" type="button" data-save-intake>Save edits</button>
-        <button class="btn btn-primary btn-sm" type="button" data-load-intake>Approve to build store</button>
+        <button class="btn btn-primary btn-sm" type="button" data-build-intake ${building ? "disabled" : ""}>
+          ${building ? "Building…" : record.build ? "Re-run build" : "Build store now"}
+        </button>
       </div>
     </div>
+    ${buildPanelHtml(record)}
     <div class="store-edit-grid">
       <label><span>Department name</span><input data-store-field="departmentName" value="${escapeHtml(record.store.departmentName)}"></label>
       <label><span>Department code</span><input data-store-field="departmentCode" value="${escapeHtml(record.store.departmentCode)}"></label>
@@ -1370,18 +1428,28 @@ function renderCustomerIntakeEditor(record) {
     }
   });
 
-  panel.querySelector("[data-load-intake]")?.addEventListener("click", async (event) => {
+  panel.querySelector("[data-build-intake]")?.addEventListener("click", async (event) => {
     const btn = event.currentTarget;
     btn.disabled = true;
-    btn.textContent = "Loading...";
+    btn.textContent = "Starting…";
     try {
-      await loadCustomerIntakeIntoOnboarding(record);
+      const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}/build`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || "Could not start the build.");
+      btn.textContent = "Building…";
+      pollBuild(record.id);
     } catch (error) {
       window.alert(error.message);
       btn.disabled = false;
-      btn.textContent = "Approve to build store";
+      btn.textContent = record.build ? "Re-run build" : "Build store now";
     }
   });
+
+  // Keep the panel live while the server is building.
+  if (record.build?.state === "running") pollBuild(record.id);
 }
 
 async function openCustomerIntake(id) {
