@@ -233,8 +233,11 @@ async function runBuild(intakeId, build, options) {
   // failed is NOT in the collection, but it exists in Shopify and is recorded
   // in the prior build. Seed from that record too, or every re-run after such
   // a failure would create a duplicate.
+  const priorProducts = new Map();
   for (const prior of record.build?.products || []) {
-    if (prior?.title) existingTitles.add(String(prior.title).toLowerCase());
+    if (!prior?.title) continue;
+    existingTitles.add(String(prior.title).toLowerCase());
+    priorProducts.set(String(prior.title).toLowerCase(), prior);
   }
 
   /* Step 3 - Drive folders. "skip" strategy: reuse the department folder if it
@@ -277,7 +280,14 @@ async function runBuild(intakeId, build, options) {
     if (existingTitles.has(title.toLowerCase())) {
       stepDone(step, "Already in the collection - skipped (never rebuilt, never deleted)");
       log(build, `skip existing product: ${title}`);
-      await saveBuild(intakeId, build);
+      // Keep the product's admin link visible in the panel across re-runs -
+      // a skip must not make an already-built product disappear from view.
+      const prior = priorProducts.get(title.toLowerCase());
+      if (prior) {
+        built.push({ ...prior, skipped: true });
+        build.products = built;
+      }
+      await saveBuild(intakeId, build).catch((error) => log(build, `progress flush failed (${error.message}); continuing`));
       continue;
     }
 
