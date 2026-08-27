@@ -155,6 +155,62 @@ async function uploadBuffer(file, folderId) {
   });
 }
 
+
+async function uploadJsonFile(filename, data, folderId, appProperties = {}) {
+  return withDrive(async (drive) => {
+    const res = await drive.files.create({
+      requestBody: {
+        name: filename,
+        parents: [folderId],
+        appProperties
+      },
+      media: {
+        mimeType: "application/json",
+        body: Readable.from(Buffer.from(JSON.stringify(data, null, 2), "utf8"))
+      },
+      fields: "id,name,mimeType,webViewLink,createdTime,modifiedTime,appProperties"
+    });
+    return res.data;
+  });
+}
+
+async function updateJsonFile(fileId, data, appProperties = {}) {
+  return withDrive(async (drive) => {
+    const res = await drive.files.update({
+      fileId,
+      requestBody: { appProperties },
+      media: {
+        mimeType: "application/json",
+        body: Readable.from(Buffer.from(JSON.stringify(data, null, 2), "utf8"))
+      },
+      fields: "id,name,mimeType,webViewLink,createdTime,modifiedTime,appProperties"
+    });
+    return res.data;
+  });
+}
+
+async function readFileText(fileId) {
+  return withDrive(async (drive) => {
+    const res = await drive.files.get({ fileId, alt: "media" }, { responseType: "text" });
+    return typeof res.data === "string" ? res.data : JSON.stringify(res.data || {});
+  });
+}
+
+async function listFilesInFolder(folderId, { mimeType, pageSize = 100 } = {}) {
+  const clauses = [`'${folderId}' in parents`, "trashed=false"];
+  if (mimeType) clauses.push(`mimeType='${mimeType}'`);
+  return withDrive(async (drive) => {
+    const res = await drive.files.list({
+      q: clauses.join(" and "),
+      fields: "files(id,name,mimeType,webViewLink,createdTime,modifiedTime,appProperties)",
+      orderBy: "createdTime desc",
+      spaces: "drive",
+      pageSize
+    });
+    return res.data.files || [];
+  });
+}
+
 async function uploadGeneratedImage(filename, buffer, folderId) {
   return uploadBuffer(
     {
@@ -186,7 +242,12 @@ async function uploadHtmlDocument(name, html, folderId) {
 
 module.exports = {
   createDepartmentFolders,
+  ensureSubfolder,
+  listFilesInFolder,
+  readFileText,
   trashFile,
+  updateJsonFile,
+  uploadJsonFile,
   uploadGeneratedImage,
   uploadHtmlDocument,
   uploadBuffer

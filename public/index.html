@@ -25,7 +25,10 @@
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
             Dashboard
           </a>
-          <a class="navlink" href="#/departments" data-nav="departments">
+          <a class="navlink" href="#/new-stores" data-nav="newStores">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V7l8-4 8 4v14"/><path d="M9 21v-6h6v6"/><path d="M9 10h6"/></svg>
+            New Stores
+          </a>          <a class="navlink" href="#/departments" data-nav="departments">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
             Departments
           </a>
@@ -64,6 +67,7 @@
 
               <div class="voice-harness" aria-live="polite">
                 <button class="voice-orb" type="button" id="agentVoiceButton" aria-pressed="false" aria-label="Start voice assistant">
+                  <span class="voice-glow" aria-hidden="true"></span>
                   <span class="voice-ring voice-ring-one" aria-hidden="true"></span>
                   <span class="voice-ring voice-ring-two" aria-hidden="true"></span>
                   <span class="voice-core" aria-hidden="true">
@@ -72,31 +76,19 @@
                 </button>
 
                 <div class="voice-copy">
-                  <p class="voice-state" id="voiceState">Tap to talk</p>
-                  <p class="voice-prompt" id="voicePrompt">Ask about Shopify collections, Drive status, onboarding readiness, or deployment health.</p>
+                  <p class="voice-state" id="voiceState">Mic off</p>
+                  <p class="voice-prompt" id="voicePrompt">Click once to keep the agent listening. Pause to send, talk over it to interrupt, click again to stop.</p>
                 </div>
 
-                <div class="voice-panels">
-                  <article class="voice-panel">
-                    <p class="voice-label">Heard</p>
-                    <p id="voiceUserTranscript">Waiting for your voice.</p>
-                  </article>
-                  <article class="voice-panel voice-panel-answer">
-                    <p class="voice-label">Answer</p>
-                    <p id="voiceAssistantReply">The agent will answer here and read it aloud.</p>
-                  </article>
+                <div class="voice-meter" aria-hidden="true"><span></span></div>
+
+                <div class="voice-turns" aria-label="Last voice turn">
+                  <p><span>Heard</span><b id="voiceUserTranscript">Nothing yet.</b></p>
+                  <p><span>Answer</span><b id="voiceAssistantReply">Ready when you are.</b></p>
                 </div>
 
-                <div class="voice-actions" aria-label="Voice controls">
-                  <button class="icon-btn" type="button" id="voiceRepeat" aria-label="Repeat last answer" title="Repeat last answer">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
-                  </button>
-                  <button class="icon-btn" type="button" id="voiceStop" aria-label="Stop speaking" title="Stop speaking">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
-                  </button>
-                </div>
+                <audio id="voicePlayback" preload="auto"></audio>
               </div>
-
               <div class="voice-quick" aria-label="Quick voice prompts">
                 <button type="button" data-agent-prompt="How many Shopify collections and products do we have?">Store count</button>
                 <button type="button" data-agent-prompt="Are Shopify, Google Drive, and GenAI connected?">Service health</button>
@@ -119,10 +111,10 @@
               <section class="rail-card voice-brief">
                 <p class="rail-title">Harness</p>
                 <div class="voice-harness-list">
-                  <span><b>Input</b> Browser speech recognition</span>
-                  <span><b>Output</b> Spoken answer plus transcript</span>
-                  <span><b>Context</b> Live Shopify, Drive, and platform status</span>
-                  <span><b>Fallback</b> Quick prompt chips</span>
+                  <span><b>Input</b> Azure OpenAI Whisper</span>
+                  <span><b>Output</b> Azure speech audio with browser fallback</span>
+                  <span><b>Context</b> Agent harness plus live services</span>
+                  <span><b>Control</b> One-click live mic with interruption</span>
                 </div>
               </section>
 
@@ -137,6 +129,19 @@
               </section>
             </aside>
           </section>
+        </section>
+        <!-- ═════════════════ View: New customer stores ═════════════════ -->
+        <section class="view" id="viewNewStores" hidden>
+          <section class="hero">
+            <p class="eyebrow">New Stores</p>
+            <h2>Customer intake submissions ready for internal review, edits, image generation, and product publishing.</h2>
+            <p>Share the customer link, then use this queue to review/edit the fixed fields and move the package into the onboarding review flow.</p>
+            <div class="hero-actions">
+              <a class="btn btn-secondary btn-sm" href="/intake" target="_blank" rel="noopener">Open customer link</a>
+              <button class="btn btn-ghost btn-sm" type="button" id="refreshNewStores">Refresh</button>
+            </div>
+          </section>
+          <div id="newStoresBody"></div>
         </section>
         <!-- ═════════════════ View: Departments (Shopify collections) ═════════════════ -->
         <section class="view" id="viewDepartments" hidden>

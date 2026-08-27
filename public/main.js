@@ -1086,6 +1086,8 @@ const views = {
 const departmentsBody = el("departmentsBody");
 const departmentDetailBody = el("departmentDetailBody");
 const departmentSearch = el("departmentSearch");
+const newStoresBody = el("newStoresBody");
+const refreshNewStores = el("refreshNewStores");
 
 // Collections are fetched once per visit and filtered client-side — the list is
 // small (one entry per department) and filtering should feel instant.
@@ -1150,13 +1152,31 @@ const voiceUserTranscript = el("voiceUserTranscript");
 const voiceAssistantReply = el("voiceAssistantReply");
 const voiceRepeat = el("voiceRepeat");
 const voiceStop = el("voiceStop");
+const voicePlayback = el("voicePlayback");
 const platformStatusList = el("platformStatusList");
 const agentModelPill = el("agentModelPill");
 let agentHistory = [];
-let recognition = null;
-let isListening = false;
+let micStream = null;
+let audioContext = null;
+let analyser = null;
+let analyserBuffer = null;
+let vadFrame = null;
+let mediaRecorder = null;
+let voiceChunks = [];
+let voiceSessionActive = false;
+let turnInFlight = false;
+let speechStarted = false;
+let quietSince = 0;
+let recordStartedAt = 0;
+let discardRecording = false;
 let lastAssistantReply = "";
-let handledVoiceFinal = false;
+let lastAssistantAudio = null;
+
+const VOICE_SILENCE_MS = 560;
+const VOICE_MIN_TURN_MS = 420;
+const VOICE_MAX_TURN_MS = 12000;
+const VOICE_IDLE_THRESHOLD = 0.024;
+const VOICE_BARGE_THRESHOLD = 0.054;
 
 function yesNo(value) {
   return value ? "Connected" : "Not connected";
@@ -1167,14 +1187,18 @@ function renderPlatformStatus(status) {
   const genAI = status.genAI || {};
   const genAIText = genAI.configured
     ? genAI.provider === "azure-openai"
-      ? "Azure OpenAI - " + (genAI.chatDeployment || "chat deployment")
+      ? "Azure OpenAI - " + (genAI.chatDeployment || "chat")
       : "OpenAI API fallback"
     : "Not configured";
+  const voiceText = genAI.voiceInputConfigured
+    ? "Whisper" + (genAI.voiceOutputConfigured ? " + speech" : " + browser speech")
+    : "Voice not configured";
 
   platformStatusList.innerHTML = [
     ["Shopify", yesNo(status.shopifyConnected)],
     ["Google Drive", status.googleDriveConnected ? yesNo(true) + (status.googleAccountCount > 1 ? " - " + status.googleAccountCount + " accounts" : "") : yesNo(false)],
     ["GenAI", genAIText],
+    ["Voice", voiceText],
     ["Postgres", status.postgresConfigured ? "Configured" : "Planned"],
     ["Key Vault", status.keyVaultConfigured ? "Configured" : "Planned"],
     ["Storage", status.storageConfigured ? "Configured" : "Planned"]
@@ -1183,8 +1207,9 @@ function renderPlatformStatus(status) {
     .join("");
 
   if (agentModelPill) {
-    agentModelPill.dataset.state = genAI.configured ? "ready" : "attention";
-    agentModelPill.querySelector(".txt").textContent = genAI.configured ? genAIText : "GenAI not configured";
+    const ready = genAI.configured && genAI.voiceInputConfigured;
+    agentModelPill.dataset.state = ready ? "ready" : "attention";
+    agentModelPill.querySelector(".txt").textContent = ready ? voiceText : genAI.configured ? "Add Whisper deployment" : "GenAI not configured";
   }
 }
 
@@ -1207,47 +1232,92 @@ async function loadPlatformStatus() {
 function setVoiceMode(mode, title, detail) {
   if (voiceAgent) voiceAgent.dataset.state = mode;
   if (agentVoiceButton) {
-    agentVoiceButton.setAttribute("aria-pressed", mode === "listening" ? "true" : "false");
-    agentVoiceButton.setAttribute("aria-label", mode === "listening" || mode === "speaking" ? "Stop voice assistant" : "Start voice assistant");
-    agentVoiceButton.disabled = mode === "thinking";
+    const active = voiceSessionActive || mode === "speaking";
+    agentVoiceButton.setAttribute("aria-pressed", active ? "true" : "false");
+    agentVoiceButton.setAttribute("aria-label", active ? "Stop voice assistant" : "Start voice assistant");
+    agentVoiceButton.disabled = false;
   }
   if (voiceState) voiceState.textContent = title;
   if (voicePrompt) voicePrompt.textContent = detail;
 }
 
-function speechSupported() {
-  return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+function mediaSupported() {
+  return Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder && window.AudioContext);
+}
+
+function bestAudioMimeType() {
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function stopPlayback(resume = false) {
+  if (voicePlayback) {
+    voicePlayback.pause();
+    voicePlayback.removeAttribute("src");
+    voicePlayback.load();
+  }
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  if (resume && voiceSessionActive && !turnInFlight) setVoiceMode("listening", "Listening", "Mic is on. Pause after a question to send it.");
+}
+
+function resumeVoiceSession() {
+  if (voiceSessionActive && !turnInFlight) {
+    setVoiceMode("listening", "Listening", "Mic is on. Pause after a question to send it.");
+  } else if (!turnInFlight) {
+    setVoiceMode("idle", "Mic off", "Click once to keep the agent listening. Pause to send, talk over it to interrupt.");
+  }
 }
 
 function speakAnswer(text) {
   lastAssistantReply = text || "";
+  lastAssistantAudio = null;
   if (!lastAssistantReply) {
-    setVoiceMode("idle", "Tap to talk", "Ask the next operations question when ready.");
+    resumeVoiceSession();
     return;
   }
   if (!window.speechSynthesis) {
-    setVoiceMode("idle", "Tap to talk", "Speech playback is unavailable. The answer is shown below.");
+    setVoiceMode(voiceSessionActive ? "listening" : "idle", voiceSessionActive ? "Listening" : "Mic off", "Speech playback is unavailable. The answer is shown below.");
     return;
   }
-  window.speechSynthesis.cancel();
+  stopPlayback(false);
   const utterance = new SpeechSynthesisUtterance(lastAssistantReply.replace(/\s+/g, " "));
-  utterance.rate = 0.96;
+  utterance.rate = 1.02;
   utterance.pitch = 1;
-  utterance.onstart = () => setVoiceMode("speaking", "Speaking", "I am reading the answer back now.");
-  utterance.onend = () => setVoiceMode("idle", "Tap to talk", "Ask the next operations question when ready.");
-  utterance.onerror = () => setVoiceMode("idle", "Tap to talk", "Speech playback stopped. The answer is still shown below.");
+  utterance.onstart = () => setVoiceMode("speaking", "Speaking", "Talk over me to interrupt.");
+  utterance.onend = resumeVoiceSession;
+  utterance.onerror = resumeVoiceSession;
   window.speechSynthesis.speak(utterance);
+}
+
+function playAssistantReply(text, audio) {
+  lastAssistantReply = text || "";
+  lastAssistantAudio = audio || null;
+  if (!lastAssistantReply) return resumeVoiceSession();
+  stopPlayback(false);
+  if (audio?.base64 && voicePlayback) {
+    voicePlayback.src = "data:" + (audio.mimeType || "audio/mpeg") + ";base64," + audio.base64;
+    voicePlayback.onended = resumeVoiceSession;
+    voicePlayback.onerror = () => speakAnswer(lastAssistantReply);
+    setVoiceMode("speaking", "Speaking", "Talk over me to interrupt.");
+    voicePlayback.play().catch(() => speakAnswer(lastAssistantReply));
+    return;
+  }
+  speakAnswer(lastAssistantReply);
+}
+
+function pushAgentHistory(role, content) {
+  agentHistory.push({ role, content });
+  agentHistory = agentHistory.slice(-10);
 }
 
 async function askDashboardAgent(content) {
   const question = String(content || "").trim();
   if (!question) return;
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  stopPlayback(false);
 
   if (voiceUserTranscript) voiceUserTranscript.textContent = question;
   if (voiceAssistantReply) voiceAssistantReply.textContent = "Thinking...";
   setVoiceMode("thinking", "Thinking", "Checking live platform context.");
-  agentHistory.push({ role: "user", content: question });
+  pushAgentHistory("user", question);
 
   try {
     const res = await fetch("/api/agents/dashboard/chat", {
@@ -1259,83 +1329,190 @@ async function askDashboardAgent(content) {
     if (!res.ok) throw new Error(payload.error || "The dashboard agent could not answer.");
     const reply = payload.reply || "I do not have enough context to answer that yet.";
     if (voiceAssistantReply) voiceAssistantReply.textContent = reply;
-    agentHistory.push({ role: "assistant", content: reply });
+    pushAgentHistory("assistant", reply);
     if (payload.context?.status) renderPlatformStatus(payload.context.status);
-    speakAnswer(reply);
+    playAssistantReply(reply, null);
   } catch (error) {
     const reply = "I could not answer that: " + error.message;
     if (voiceAssistantReply) voiceAssistantReply.textContent = reply;
-    setVoiceMode("idle", "Tap to talk", "Try again, or use a quick prompt.");
+    setVoiceMode(voiceSessionActive ? "listening" : "idle", voiceSessionActive ? "Listening" : "Mic off", "Try again, or use a quick prompt.");
     speakAnswer(reply);
   }
 }
 
-function ensureRecognition() {
-  if (recognition || !speechSupported()) return recognition;
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new Recognition();
-  recognition.lang = "en-US";
-  recognition.interimResults = true;
-  recognition.continuous = false;
+async function sendVoiceTurn(blob) {
+  if (!voiceSessionActive || !blob?.size) return resumeVoiceSession();
+  turnInFlight = true;
+  setVoiceMode("thinking", "Thinking", "Transcribing and checking live context.");
+  if (voiceAssistantReply) voiceAssistantReply.textContent = "Thinking...";
 
-  recognition.onstart = () => {
-    isListening = true;
-    handledVoiceFinal = false;
-    setVoiceMode("listening", "Listening", "Speak naturally. I will send it when you pause.");
-    if (voiceUserTranscript) voiceUserTranscript.textContent = "Listening...";
-  };
-  recognition.onresult = (event) => {
-    const results = Array.from(event.results);
-    const transcript = results.map((result) => result[0]?.transcript || "").join(" ").trim();
-    if (voiceUserTranscript && transcript) voiceUserTranscript.textContent = transcript;
-    const finalText = results.filter((result) => result.isFinal).map((result) => result[0]?.transcript || "").join(" ").trim();
-    if (finalText && !handledVoiceFinal) {
-      handledVoiceFinal = true;
-      askDashboardAgent(finalText);
-    }
-  };
-  recognition.onerror = (event) => {
-    isListening = false;
-    const reason = event.error === "not-allowed" ? "Microphone permission is blocked." : "I could not hear that clearly.";
-    setVoiceMode("idle", "Tap to talk", reason + " You can still use the quick prompts.");
-  };
-  recognition.onend = () => {
-    isListening = false;
-    if (voiceAgent?.dataset.state === "listening") setVoiceMode("idle", "Tap to talk", "Ask the next operations question when ready.");
-  };
-  return recognition;
+  const form = new FormData();
+  form.append("audio", blob, "voice." + (blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm"));
+  form.append("messages", JSON.stringify(agentHistory));
+  form.append("language", "en");
+  form.append("format", "mp3");
+
+  try {
+    const res = await fetch("/api/agents/dashboard/voice", { method: "POST", body: form });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "The dashboard voice agent could not answer.");
+    const transcript = payload.transcript || "";
+    const reply = payload.reply || "I do not have enough context to answer that yet.";
+    if (voiceUserTranscript) voiceUserTranscript.textContent = transcript || "I heard audio, but no words came through.";
+    if (voiceAssistantReply) voiceAssistantReply.textContent = reply;
+    if (transcript) pushAgentHistory("user", transcript);
+    pushAgentHistory("assistant", reply);
+    if (payload.context?.status) renderPlatformStatus(payload.context.status);
+    turnInFlight = false;
+    playAssistantReply(reply, payload.audio);
+  } catch (error) {
+    const reply = "Voice failed: " + error.message;
+    if (voiceAssistantReply) voiceAssistantReply.textContent = reply;
+    turnInFlight = false;
+    setVoiceMode("listening", "Listening", "Voice hit an error. Try speaking again.");
+    speakAnswer(reply);
+  }
 }
 
-function startVoiceAgent() {
-  if (isListening || voiceAgent?.dataset.state === "speaking") {
-    stopVoiceAgent();
+function beginRecording() {
+  if (!voiceSessionActive || turnInFlight || mediaRecorder?.state === "recording") return;
+  const mimeType = bestAudioMimeType();
+  voiceChunks = [];
+  discardRecording = false;
+  speechStarted = true;
+  quietSince = 0;
+  recordStartedAt = performance.now();
+  mediaRecorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined);
+  mediaRecorder.ondataavailable = (event) => {
+    if (event.data?.size) voiceChunks.push(event.data);
+  };
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(voiceChunks, { type: mediaRecorder?.mimeType || "audio/webm" });
+    mediaRecorder = null;
+    voiceChunks = [];
+    speechStarted = false;
+    quietSince = 0;
+    if (discardRecording || !voiceSessionActive || blob.size < 900) {
+      turnInFlight = false;
+      return resumeVoiceSession();
+    }
+    sendVoiceTurn(blob);
+  };
+  setVoiceMode("recording", "Listening", "I will send this when you pause.");
+  mediaRecorder.start(120);
+}
+
+function finishRecording(discard = false) {
+  if (!mediaRecorder || mediaRecorder.state !== "recording") return;
+  discardRecording = discard;
+  if (!discard) setVoiceMode("thinking", "Thinking", "Sending that question.");
+  mediaRecorder.stop();
+}
+
+function voiceLevel() {
+  if (!analyser || !analyserBuffer) return 0;
+  analyser.getByteTimeDomainData(analyserBuffer);
+  let sum = 0;
+  for (const value of analyserBuffer) {
+    const centered = (value - 128) / 128;
+    sum += centered * centered;
+  }
+  return Math.sqrt(sum / analyserBuffer.length);
+}
+
+function startVadLoop() {
+  const tick = () => {
+    if (!voiceSessionActive) return;
+    const level = voiceLevel();
+    const normalized = Math.min(1, level * 18);
+    if (voiceAgent) voiceAgent.style.setProperty("--voice-level", normalized.toFixed(3));
+    const state = voiceAgent?.dataset.state;
+    const threshold = state === "speaking" ? VOICE_BARGE_THRESHOLD : VOICE_IDLE_THRESHOLD;
+    const heardSpeech = level > threshold;
+    const now = performance.now();
+
+    if (heardSpeech && !turnInFlight) {
+      if (state === "speaking") stopPlayback(false);
+      beginRecording();
+    }
+
+    if (mediaRecorder?.state === "recording") {
+      if (heardSpeech) {
+        quietSince = 0;
+      } else {
+        if (!quietSince) quietSince = now;
+        const longEnough = now - recordStartedAt > VOICE_MIN_TURN_MS;
+        if (longEnough && now - quietSince > VOICE_SILENCE_MS) finishRecording(false);
+      }
+      if (now - recordStartedAt > VOICE_MAX_TURN_MS) finishRecording(false);
+    }
+
+    vadFrame = requestAnimationFrame(tick);
+  };
+  vadFrame = requestAnimationFrame(tick);
+}
+
+async function startVoiceSession() {
+  if (!mediaSupported()) {
+    setVoiceMode("idle", "Voice unavailable", "This browser cannot record microphone audio here. Use a quick prompt.");
     return;
   }
-  if (!speechSupported()) {
-    setVoiceMode("idle", "Voice unavailable", "This browser does not expose speech recognition. Use the quick prompts below.");
-    return;
-  }
-  const rec = ensureRecognition();
-  if (!rec || isListening) return;
   try {
-    rec.start();
-  } catch {
-    setVoiceMode("idle", "Tap to talk", "Voice is warming up. Try once more.");
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    audioContext = new AudioContext({ latencyHint: "interactive" });
+    const source = audioContext.createMediaStreamSource(micStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.28;
+    analyserBuffer = new Uint8Array(analyser.fftSize);
+    source.connect(analyser);
+    voiceSessionActive = true;
+    setVoiceMode("listening", "Listening", "Mic is on. Pause after a question to send it.");
+    if (voiceUserTranscript) voiceUserTranscript.textContent = "Listening...";
+    startVadLoop();
+  } catch (error) {
+    setVoiceMode("idle", "Mic blocked", error.name === "NotAllowedError" ? "Microphone permission is blocked." : "Could not start the microphone.");
   }
 }
 
 function stopVoiceAgent() {
-  if (recognition && isListening) recognition.stop();
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
-  setVoiceMode("idle", "Tap to talk", "Voice stopped. Ask another operations question when ready.");
+  voiceSessionActive = false;
+  turnInFlight = false;
+  if (vadFrame) cancelAnimationFrame(vadFrame);
+  vadFrame = null;
+  finishRecording(true);
+  stopPlayback(false);
+  if (micStream) micStream.getTracks().forEach((track) => track.stop());
+  micStream = null;
+  analyser = null;
+  analyserBuffer = null;
+  if (audioContext) audioContext.close().catch(() => {});
+  audioContext = null;
+  if (voiceAgent) voiceAgent.style.setProperty("--voice-level", "0");
+  setVoiceMode("idle", "Mic off", "Voice stopped. Click once when you want the live agent again.");
+}
+
+function startVoiceAgent() {
+  if (voiceSessionActive) {
+    stopVoiceAgent();
+    return;
+  }
+  if (voiceAgent?.dataset.state === "speaking") {
+    stopPlayback(false);
+    setVoiceMode("idle", "Mic off", "Voice stopped. Click once when you want the live agent again.");
+    return;
+  }
+  startVoiceSession();
 }
 
 function initializeVoiceAgent() {
   if (!voiceAgent) return;
-  if (speechSupported()) {
-    setVoiceMode("idle", "Tap to talk", "Ask about Shopify collections, Drive status, onboarding readiness, or deployment health.");
+  if (mediaSupported()) {
+    setVoiceMode("idle", "Mic off", "Click once to keep the agent listening. Pause to send, talk over it to interrupt.");
   } else {
-    setVoiceMode("idle", "Voice unavailable", "This browser does not expose speech recognition. Use the quick prompts below.");
+    setVoiceMode("idle", "Voice unavailable", "This browser cannot record microphone audio here. Use a quick prompt.");
   }
 }
 
@@ -1347,6 +1524,7 @@ function parseRoute() {
   const parts = path.split("/").filter(Boolean);
   if (parts[0] === "dashboard") return { name: "dashboard" };
   if (parts[0] === "onboarding") return { name: "onboarding" };
+  if (parts[0] === "new-stores") return { name: "newStores" };
   if (parts[0] === "departments" && parts[1]) return { name: "department", id: decodeURIComponent(parts[1]) };
   return { name: "departments" };
 }
@@ -1371,6 +1549,7 @@ async function handleRoute() {
   closeDrawer();
   if (route.name === "dashboard") await loadPlatformStatus();
   else if (route.name === "departments") await loadDepartments();
+  else if (route.name === "newStores") await loadNewStores();
   else if (route.name === "department") await loadDepartment(route.id);
   window.scrollTo({ top: 0, behavior: "auto" });
 }

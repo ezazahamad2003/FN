@@ -45,6 +45,13 @@ const {
 } = require("./intake");
 const { answerDashboardAgent, platformStatus } = require("./agents");
 const {
+  createCustomerIntake,
+  getCustomerIntake,
+  listCustomerIntakes,
+  updateCustomerIntake
+} = require("./customerIntakes");
+const { azureTextToSpeech, azureTranscribeAudio } = require("./azureOpenai");
+const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
   addProductToCollection,
@@ -271,6 +278,29 @@ function resolveProductLogos(product, logoRuns) {
 
 // Front Logo option values must be unique per product, so duplicate display
 // names (e.g. "station-1.png" and "Station_1.jpg") get a numeric suffix.
+function adminToken() {
+  return String(process.env.FN_ADMIN_TOKEN || "").trim();
+}
+
+function tokenFromRequest(req) {
+  const bearer = String(req.get("authorization") || "").match(/^Bearer\s+(.+)$/i)?.[1];
+  return bearer || String(req.get("x-admin-token") || req.query.admin || "").trim();
+}
+
+function requireAdminToken(req, res, next) {
+  const configured = adminToken();
+  if (!configured) return res.status(503).json({ error: "Admin token is not configured." });
+  if (tokenFromRequest(req) !== configured) return res.status(401).json({ error: "Admin token required." });
+  next();
+}
+
+function logoBufferFromRecord(record) {
+  const logo = record.logos?.[0];
+  const match = String(logo?.dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return { buffer: Buffer.from(match[2], "base64"), alt: record.store.departmentName + " logo" };
+}
+
 function dedupeLogoLabels(logoRuns) {
   const used = new Map();
   for (const logo of logoRuns) {
@@ -300,6 +330,118 @@ app.post("/api/agents/dashboard/chat", async (req, res) => {
     res.json(await answerDashboardAgent(req.body || {}));
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/agents/dashboard/voice", upload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file?.buffer?.length) throw new Error("Send an audio clip to transcribe.");
+    const transcript = await azureTranscribeAudio({
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype || "audio/webm",
+      filename: req.file.originalname || "voice.webm",
+      language: req.body.language || "en"
+    });
+    if (!transcript) throw new Error("I could not hear any words in that clip.");
+
+    let messages = [];
+    if (req.body.messages) {
+      try {
+        messages = JSON.parse(req.body.messages);
+      } catch {
+        messages = [];
+      }
+    }
+    messages = Array.isArray(messages) ? messages : [];
+    messages.push({ role: "user", content: transcript });
+
+    const answer = await answerDashboardAgent({ messages });
+    let audio = null;
+    try {
+      audio = await azureTextToSpeech({
+        text: answer.reply,
+        voice: req.body.voice,
+        speed: Number(req.body.speed || 1.04),
+        format: req.body.format || "mp3"
+      });
+    } catch (speechError) {
+      console.warn("Azure speech synthesis unavailable:", speechError.message);
+    }
+
+    res.json({
+      transcript,
+      reply: answer.reply,
+      context: answer.context,
+      audio
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+app.get("/intake", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "customer-intake.html"));
+});
+
+app.post(
+  "/api/customer-intakes",
+  upload.fields([{ name: "logos", maxCount: 20 }]),
+  async (req, res) => {
+    let record;
+    try {
+      record = await createCustomerIntake(req.body.payload || "{}", (req.files || {}).logos || []);
+      let collection = null;
+      try {
+        if (!shopifyConnected()) throw new Error("Shopify is not connected.");
+        const created = await ensureManualCollectionWithImage(record.store.departmentName, logoBufferFromRecord(record));
+        collection = {
+          id: created.id,
+          title: created.title,
+          url: adminCollectionUrl(created.id)
+        };
+        record = await updateCustomerIntake(record.id, { status: "collection-created", shopifyCollection: collection });
+      } catch (collectionError) {
+        record = await updateCustomerIntake(record.id, {
+          status: "collection-error",
+          internalNotes: "Collection was not created automatically: " + collectionError.message
+        });
+      }
+      res.status(201).json({
+        id: record.id,
+        requestId: record.requestId,
+        departmentName: record.store.departmentName,
+        status: record.status,
+        collection: record.shopifyCollection || collection,
+        summary: record.summary
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+);
+
+app.get("/api/customer-intakes", requireAdminToken, async (req, res) => {
+  try {
+    res.json({ intakes: await listCustomerIntakes() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
+  try {
+    res.json({ intake: await getCustomerIntake(req.params.id) });
+  } catch (error) {
+    res.status(404).json({ error: error.message });
+  }
+});
+
+app.patch("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
+  try {
+    res.json({ intake: await updateCustomerIntake(req.params.id, req.body || {}) });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 

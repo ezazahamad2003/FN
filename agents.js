@@ -3,6 +3,40 @@ const { googleAccounts, googleConnected } = require("./auth");
 const { listCollections } = require("./catalog");
 const { shopifyConnected } = require("./shopify");
 
+function agentHarness() {
+  const status = platformStatus();
+  return {
+    name: "Dashboard Voice Agent",
+    purpose: "Answer operator questions about the FN onboarding platform from live app context.",
+    canDoNow: [
+      "Report Shopify, Google Drive, GenAI, Postgres, Storage, and Key Vault status.",
+      "Summarize Shopify collection and product counts when Shopify is connected.",
+      "Explain onboarding readiness, gaps, and next operational checks.",
+      "Read answers aloud from the dashboard voice session when Azure speech is configured."
+    ],
+    cannotDoWithoutUserAction: [
+      "Modify Shopify products or collections from the dashboard voice panel.",
+      "Upload, delete, or edit Google Drive files from the dashboard voice panel.",
+      "Change Azure deployments, environment variables, or production infrastructure.",
+      "Know private data that is not exposed by the connected app APIs or current platform context."
+    ],
+    liveContext: {
+      shopify: status.shopifyConnected ? "connected" : "not connected",
+      googleDrive: status.googleDriveConnected ? "connected" : "not connected",
+      googleAccounts: status.googleAccountCount,
+      genAI: status.genAI,
+      postgresConfigured: status.postgresConfigured,
+      storageConfigured: status.storageConfigured,
+      keyVaultConfigured: status.keyVaultConfigured
+    },
+    routes: [
+      { label: "Dashboard", route: "#/dashboard", surface: "voice and platform status" },
+      { label: "Departments", route: "#/departments", surface: "Shopify collection browser and product editor" },
+      { label: "Onboarding Agent", route: "#/onboarding", surface: "review-gated new department onboarding" }
+    ]
+  };
+}
+
 function platformStatus() {
   return {
     shopifyConnected: shopifyConnected(),
@@ -17,20 +51,30 @@ function platformStatus() {
 
 async function shopifyContext() {
   if (!shopifyConnected()) return { available: false, collections: [], totalProducts: 0 };
-  const collections = await listCollections();
-  const totalProducts = collections.reduce((sum, collection) => sum + Number(collection.productCount || 0), 0);
-  return {
-    available: true,
-    collectionCount: collections.length,
-    totalProducts,
-    collections: collections.slice(0, 80).map((collection) => ({
-      id: collection.id,
-      title: collection.title,
-      handle: collection.handle,
-      productCount: collection.productCount,
-      updatedAt: collection.updatedAt
-    }))
-  };
+  try {
+    const collections = await listCollections();
+    const totalProducts = collections.reduce((sum, collection) => sum + Number(collection.productCount || 0), 0);
+    return {
+      available: true,
+      collectionCount: collections.length,
+      totalProducts,
+      collections: collections.slice(0, 80).map((collection) => ({
+        id: collection.id,
+        title: collection.title,
+        handle: collection.handle,
+        productCount: collection.productCount,
+        updatedAt: collection.updatedAt
+      }))
+    };
+  } catch (error) {
+    return {
+      available: true,
+      fetchError: error.message,
+      collectionCount: 0,
+      totalProducts: 0,
+      collections: []
+    };
+  }
 }
 
 function recentMessages(messages) {
@@ -51,31 +95,33 @@ async function answerDashboardAgent({ messages, message }) {
   if (!userMessages.length) throw new Error("Ask the dashboard agent a question first.");
 
   const context = {
+    harness: agentHarness(),
     status: platformStatus(),
     shopify: await shopifyContext()
   };
 
-  const system = `You are the FN internal dashboard agent.
+  const system = `You are the FN internal dashboard voice agent.
 
-You help operators understand this internal platform, Shopify department collections, Google Drive onboarding assets, Azure migration status, and next operational steps.
+You are attached to the dashboard agent harness. Use the harness and platform context below as current truth. Speak like a capable operations assistant that knows this app's connected services, dashboard surfaces, and limits.
 
-Use the platform context below as current truth. If the context does not contain enough information, say what is missing and suggest the exact next check. Do not claim to have modified Shopify, Drive, Azure, or files unless the context says so.
+When asked what you can do, answer from harness.canDoNow and harness.cannotDoWithoutUserAction. When asked about the platform, use live context first. If the context does not contain enough information, say exactly what is missing and suggest the next check in the app.
 
-Be concise, practical, and direct. Favor short, spoken-friendly answers because the dashboard may read the response aloud.`;
+Do not claim to have modified Shopify, Drive, Azure, files, deployments, or environment variables unless the context or explicit tool result says so. Keep replies short, spoken-friendly, and actionable. Avoid dumping long lists unless the operator asks for detail.`;
 
   const reply = await chatCompletion({
     messages: [
       { role: "system", content: system },
-      { role: "system", content: `Current platform context:\n${JSON.stringify(context, null, 2)}` },
+      { role: "system", content: `Current dashboard agent harness and platform context:\n${JSON.stringify(context, null, 2)}` },
       ...userMessages
     ],
     temperature: 0.2,
-    maxTokens: 900
+    maxTokens: 650
   });
 
   return {
     reply,
     context: {
+      harness: context.harness,
       status: context.status,
       shopify: {
         available: context.shopify.available,
@@ -87,6 +133,7 @@ Be concise, practical, and direct. Favor short, spoken-friendly answers because 
 }
 
 module.exports = {
+  agentHarness,
   answerDashboardAgent,
   platformStatus
 };

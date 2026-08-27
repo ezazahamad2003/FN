@@ -68,7 +68,7 @@ function fieldBlock(section, fieldName) {
 function checkedChoice(text, choices) {
   const source = String(text || "");
   for (const choice of choices) {
-    const pattern = new RegExp(`[☑☒✓✔xX]\\s*${safeRegex(choice)}\\b|${safeRegex(choice)}\\s*[☑☒✓✔xX]`, "i");
+    const pattern = new RegExp(`(?:[☑☒✓✔xX]|\\[[xX]\\])\\s*${safeRegex(choice)}\\b`, "i");
     if (pattern.test(source)) return choice;
   }
   return "";
@@ -77,13 +77,13 @@ function checkedChoice(text, choices) {
 function splitChoiceField(text, choices) {
   const checked = checkedChoice(text, choices);
   if (checked) return checked;
-  const withoutBoxes = clean(String(text || "").replace(/☐\s*[^☐]+/g, " "));
+  const withoutBoxes = clean(String(text || "").replace(/(?:☐|\[ \])\s*[^☐\[]+/g, " "));
   return choices.find((choice) => new RegExp(`\\b${safeRegex(choice)}\\b`, "i").test(withoutBoxes)) || withoutBoxes;
 }
 
 function checkedYesNo(text) {
-  const yes = /[☑☒✓✔xX]\s*Yes\b|Yes\s*[☑☒✓✔xX]/i.test(text || "");
-  const no = /[☑☒✓✔xX]\s*No\b|No\s*[☑☒✓✔xX]/i.test(text || "");
+  const yes = /(?:[☑☒✓✔xX]|\[[xX]\])\s*Yes\b|Yes\s*(?:[☑☒✓✔xX]|\[[xX]\])/i.test(text || "");
+  const no = /(?:[☑☒✓✔xX]|\[[xX]\])\s*No\b|No\s*(?:[☑☒✓✔xX]|\[[xX]\])/i.test(text || "");
   if (yes && !no) return true;
   if (no && !yes) return false;
   return null;

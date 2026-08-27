@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FN Store Intake</title>
+    <meta name="description" content="Submit a fixed-field FN Simple Uniforms store build request.">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="customer-intake-page">
+    <main class="customer-shell" id="main">
+      <section class="customer-hero">
+        <div>
+          <p class="eyebrow">FN Simple Uniforms</p>
+          <h1>Build your department store request</h1>
+          <p>Choose the garments, upload your logo files, and send FN a complete fixed-field package for store setup.</p>
+        </div>
+        <aside class="customer-steps" aria-label="Form steps">
+          <span><b>1</b> Department setup</span>
+          <span><b>2</b> Logo upload</span>
+          <span><b>3</b> Garment choices</span>
+          <span><b>4</b> Submit to FN</span>
+        </aside>
+      </section>
+
+      <form class="customer-form" id="customerIntakeForm" novalidate>
+        <section class="card card-pad intake-band">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Store setup</p>
+              <h2>Department information</h2>
+            </div>
+          </div>
+          <div class="customer-grid two">
+            <label class="field">Department / organization name
+              <input name="departmentName" required placeholder="Sacramento Fire Department">
+            </label>
+            <label class="field">Department code
+              <input name="departmentCode" required maxlength="6" placeholder="SFD">
+            </label>
+            <label class="field">Contact name
+              <input name="contactName" required placeholder="Jane Smith">
+            </label>
+            <label class="field">Contact email
+              <input name="contactEmail" required type="email" placeholder="jane@department.gov">
+            </label>
+            <label class="field">Contact phone
+              <input name="contactPhone" placeholder="555-555-5555">
+            </label>
+            <label class="field">Needed by
+              <input name="neededBy" type="date">
+            </label>
+          </div>
+          <label class="field">Anything FN should know before setup?
+            <textarea name="notes" rows="3" placeholder="Union rules, policy notes, approvals, special catalog limits..."></textarea>
+          </label>
+        </section>
+
+        <section class="card card-pad intake-band">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Logo files</p>
+              <h2>Upload production artwork</h2>
+            </div>
+          </div>
+          <div class="customer-logo-upload">
+            <input id="customerLogos" name="logos" type="file" accept="image/*,.pdf,.ai,.eps" multiple required>
+            <p><b>Accepted:</b> vector AI/EPS for embroidery, or high-resolution PNG/PDF for print and heat transfer.</p>
+            <div class="chips" id="customerLogoList"></div>
+          </div>
+        </section>
+
+        <section class="placement-guide card card-pad" aria-label="Decoration placement guide">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Placement guide</p>
+              <h2>Pick the location for each garment</h2>
+            </div>
+          </div>
+          <div class="placement-grid">
+            <span><b>Front left chest</b><small>Small logo, badge, or station mark</small></span>
+            <span><b>Center back</b><small>Large department graphic or full-back print</small></span>
+            <span><b>Left / right sleeve</b><small>Patch, flag, rank, or secondary logo</small></span>
+            <span><b>Left / right leg</b><small>Shorts and sweatpants placement</small></span>
+            <span><b>Front center / side</b><small>Hat front or side decoration</small></span>
+          </div>
+        </section>
+
+        <section class="card card-pad intake-band">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Garment selections</p>
+              <h2>Select what belongs in the store</h2>
+            </div>
+          </div>
+          <div id="customerCategories" class="customer-categories"></div>
+        </section>
+
+        <section class="customer-submit card card-pad" id="customerSubmitPanel">
+          <div>
+            <p class="eyebrow">Submit</p>
+            <h2>Send this package to FN</h2>
+            <p class="muted">FN will create the Shopify collection right away, then review products, images, prices, and variants internally before publishing products.</p>
+          </div>
+          <button class="btn btn-primary" type="submit" id="customerSubmitButton">Submit store request</button>
+        </section>
+      </form>
+    </main>
+    <script src="/customer-intake.js"></script>
+  </body>
+</html>

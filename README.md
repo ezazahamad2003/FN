@@ -20,16 +20,27 @@ Use `/setup` to connect:
 
 When both tokens exist, `/setup` redirects to the main onboarding UI.
 
-## OpenAI Key
+## Azure OpenAI and Voice
 
-Create a fresh OpenAI API key from the OpenAI dashboard, then paste it into `.env`:
+Azure OpenAI is the preferred GenAI provider for Azure deploys. Configure chat first, then add the voice deployments used by the dashboard voice agent:
 
 ```env
-OPENAI_API_KEY=sk-your-fresh-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_API_KEY=your-azure-openai-key
+AZURE_OPENAI_API_VERSION=2024-10-21
+AZURE_OPENAI_CHAT_DEPLOYMENT=fn-chat
+AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT=whisper
+AZURE_OPENAI_AUDIO_API_VERSION=2024-10-21
+AZURE_OPENAI_SPEECH_MODEL=tts-1
+AZURE_OPENAI_SPEECH_API_VERSION=preview
+AZURE_OPENAI_SPEECH_VOICE=alloy
 ```
 
-The app uses the official `openai` npm package. GPT-4o handles logo vision analysis, policy/manual notes, and product description generation. GPT Image generates the product mockups.
+The dashboard voice agent records short browser mic turns, sends them to Azure OpenAI transcription, runs the dashboard agent harness with live Shopify/Drive/platform context, and returns synthesized speech when `AZURE_OPENAI_SPEECH_MODEL` is configured. If speech output is not configured, the browser speech fallback is used for playback.
 
+`AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
+
+For local development without Azure, `OPENAI_API_KEY` remains available as a legacy fallback for text chat only.
 ## Re-Auth If Tokens Expire
 
 Stop the server, remove the expired token from `.env`, then restart:
