@@ -130,11 +130,15 @@ function structuredTextFromCustomerIntake(recordInput) {
 
     if (definition.belt) {
       lines.push("Belt Style " + (category.beltStyle || category.style));
+      if (category.notes) lines.push("Category Notes " + category.notes);
       continue;
     }
 
+    // No placeholder when the style is blank: the parser turns whatever sits
+    // here into the Shopify product title prefix, and "FN Simple approved
+    // catalog T-Shirts" is not a product name anyone typed.
     const styleParts = [category.styleNumber, category.style].filter(Boolean).join(" ");
-    lines.push("Style & Color(s) " + (styleParts || "FN Simple approved catalog") + " Color(s): " + category.colors);
+    lines.push("Style & Color(s) " + styleParts + " Color(s): " + category.colors);
     if (category.vendor) lines.push("Vendor / Brand " + category.vendor + (category.styleNumber ? " — style " + category.styleNumber : ""));
 
     if (definition.decorated) {
@@ -148,7 +152,7 @@ function structuredTextFromCustomerIntake(recordInput) {
     }
 
     lines.push("Size Range Needed " + choiceLine(category.sizeRange, SIZE_RANGES) + (category.sizeRange === "Other" ? " Other: " + category.otherSizes : ""));
-    if (category.notes) lines.push("Notes: " + category.notes);
+    if (category.notes) lines.push("Category Notes " + category.notes);
   }
 
   if (record.customerNotes) lines.push("", "Customer notes", record.customerNotes);

@@ -199,15 +199,25 @@ async function readFileText(fileId) {
 async function listFilesInFolder(folderId, { mimeType, pageSize = 100 } = {}) {
   const clauses = [`'${folderId}' in parents`, "trashed=false"];
   if (mimeType) clauses.push(`mimeType='${mimeType}'`);
+  // Pages through the WHOLE folder. This list is what the cleanup guard uses
+  // to decide which collections belong to customer intakes, so a truncated
+  // listing would silently un-protect every intake past the first page.
   return withDrive(async (drive) => {
-    const res = await drive.files.list({
-      q: clauses.join(" and "),
-      fields: "files(id,name,mimeType,webViewLink,createdTime,modifiedTime,appProperties)",
-      orderBy: "createdTime desc",
-      spaces: "drive",
-      pageSize
-    });
-    return res.data.files || [];
+    const files = [];
+    let pageToken;
+    do {
+      const res = await drive.files.list({
+        q: clauses.join(" and "),
+        fields: "nextPageToken, files(id,name,mimeType,webViewLink,createdTime,modifiedTime,appProperties)",
+        orderBy: "createdTime desc",
+        spaces: "drive",
+        pageSize,
+        pageToken
+      });
+      files.push(...(res.data.files || []));
+      pageToken = res.data.nextPageToken;
+    } while (pageToken);
+    return files;
   });
 }
 

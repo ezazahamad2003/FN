@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FN Simple Uniforms · Store Setup</title>
+    <link rel="icon" type="image/png" href="/logo/image.png">
     <meta name="description" content="Set up your department's uniform store with FN Simple Uniforms — pick garments, upload artwork, choose decoration placement.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,7 +31,7 @@
 
     <header class="intake-topbar">
       <a class="brand-lockup" href="/intake" aria-label="FN Simple Uniforms store setup">
-        <span class="brand-mark">FN</span>
+        <img class="brand-logo" src="/logo/image.png" alt="FN Simple">
         <span>
           <span class="sub">FN Simple Uniforms</span>
           <span class="title" style="display:block">Store setup</span>
@@ -254,7 +255,7 @@
     </main>
 
     <!-- Lightbox for the placement diagrams -->
-    <div class="ref-lightbox" id="refLightbox" hidden>
+    <div class="ref-lightbox" id="refLightbox" role="dialog" aria-modal="true" aria-label="Placement diagram, enlarged" hidden>
       <button type="button" class="rl-close" id="refLightboxClose" aria-label="Close">&times;</button>
       <img id="refLightboxImg" src="" alt="">
     </div>

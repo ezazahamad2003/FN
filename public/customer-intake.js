@@ -150,9 +150,22 @@ function addLogoFiles(files) {
   const existing = new Set([...logoBag.files].map((file) => file.name + ":" + file.size));
   for (const file of files) {
     if (logoBag.files.length >= 20) break;
-    if (!existing.has(file.name + ":" + file.size)) logoBag.items.add(file);
+    const key = file.name + ":" + file.size;
+    // Register as we add, so two identical files inside ONE drop/selection
+    // don't both slip past a set built before the loop started.
+    if (!existing.has(key)) {
+      existing.add(key);
+      logoBag.items.add(file);
+    }
   }
   syncLogoInput();
+  // The "upload at least one logo" error is an instruction; once followed it
+  // must not keep scolding.
+  if (logoBag.files.length) {
+    const error = $("#logoError");
+    error.hidden = true;
+    error.textContent = "";
+  }
 }
 
 function renderLogoList() {
@@ -474,6 +487,7 @@ document.addEventListener("click", (event) => {
 
   const zoom = event.target.closest("[data-zoom]");
   if (zoom) {
+    lightboxOpener = zoom;
     $("#refLightboxImg").src = zoom.dataset.zoom;
     $("#refLightboxImg").alt = $("img", zoom)?.alt || "";
     $("#refLightbox").hidden = false;
@@ -481,16 +495,33 @@ document.addEventListener("click", (event) => {
   }
 
   if (event.target.closest("#refLightboxClose") || event.target.id === "refLightbox") {
-    $("#refLightbox").hidden = true;
+    closeLightbox();
   }
 });
 
+let lightboxOpener = null;
+function closeLightbox() {
+  $("#refLightbox").hidden = true;
+  // Hand keyboard focus back to the diagram that opened the overlay instead of
+  // dropping it at the top of the document.
+  if (lightboxOpener) {
+    lightboxOpener.focus();
+    lightboxOpener = null;
+  }
+}
+
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !$("#refLightbox").hidden) $("#refLightbox").hidden = true;
+  if (event.key === "Escape" && !$("#refLightbox").hidden) closeLightbox();
 });
 
 $("#customerIntakeForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  // Enter inside a text field fires an implicit submit. Before the review
+  // step that gesture means "next", never "send the whole request to FN".
+  if (currentStep !== TOTAL_STEPS) {
+    if (validateStep(currentStep)) showStep(Math.min(TOTAL_STEPS, currentStep + 1));
+    return;
+  }
   for (let step = 1; step <= 3; step++) {
     if (!validateStep(step)) {
       showStep(step);

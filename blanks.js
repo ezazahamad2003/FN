@@ -27,7 +27,9 @@ const SEARCH_MODEL = process.env.OPENAI_SEARCH_MODEL || "gpt-4o";
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const PAGE_TIMEOUT_MS = 20000;
-const MAX_HTML_BYTES = 3_000_000;
+// Distributor product pages (jiffy, joesusa) routinely exceed 3MB of HTML;
+// 6MB keeps them readable without letting a runaway page eat the process.
+const MAX_HTML_BYTES = 6_000_000;
 const MAX_IMAGE_BYTES = 12_000_000;
 const MIN_IMAGE_EDGE = 500;
 const CANVAS = 1024;
@@ -399,13 +401,34 @@ async function findSupplierBlank(product, { onLog } = {}) {
     const rejected = [];
     const tokens = styleTokens(brandStyle);
 
+    // Style identity normally has to come from the image FILENAME (vision
+    // cannot tell NL3600 from NL3214). But when the department named the
+    // vendor and a product page sits on that vendor's OWN domain, the page is
+    // the provenance: everything on nextlevelapparel.com/products/<style> IS
+    // that style, even though their CDN filenames never contain "3600". Those
+    // images skip the filename check; the vision gate still verifies garment
+    // type, colour, decoration, and flat-front framing.
+    const vendorFlat = vendor.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const isVendorHost = (pageUrl) => {
+      if (!vendorFlat || vendorFlat.length < 5) return false;
+      try {
+        const host = new URL(pageUrl).hostname.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return host.includes(vendorFlat);
+      } catch {
+        return false;
+      }
+    };
+
     // Images harvested from a product page we fetched ourselves come first:
     // their provenance is verifiable. A bare image URL the search model handed
     // back is the weakest input, so it is only tried once pages are exhausted.
     const candidates = [];
+    const vendorPageUrls = new Set();
     for (const pageUrl of found.productPages) {
       try {
-        candidates.push(...(await imageCandidatesFromPage(pageUrl)));
+        const fromPage = await imageCandidatesFromPage(pageUrl);
+        candidates.push(...fromPage);
+        if (isVendorHost(pageUrl)) for (const url of fromPage) vendorPageUrls.add(url);
       } catch (error) {
         log(`could not read ${pageUrl}: ${error.message}`);
       }
@@ -420,6 +443,10 @@ async function findSupplierBlank(product, { onLog } = {}) {
 
     const identified = [...new Set(candidates)].filter((url) => {
       if (matchesStyle(url, tokens)) return true;
+      if (vendorPageUrls.has(url)) {
+        log(`accepting ${url.split("/").pop()} on vendor-page provenance (${vendor})`);
+        return true;
+      }
       log(`skipped ${url.split("/").pop()}: filename does not name style ${brandStyle}`);
       return false;
     });

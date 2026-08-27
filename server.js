@@ -349,7 +349,7 @@ app.get("/api/platform/status", (req, res) => {
    POST rather than GET so a crawler cannot spend image credits, and the bytes
    are discarded - only the size and provider come back.
    -------------------------------------------------------------------------- */
-app.post("/api/diagnostics/image", async (req, res) => {
+app.post("/api/diagnostics/image", requireAdminToken, async (req, res) => {
   const started = Date.now();
   const status = platformStatus().genAI;
   try {
@@ -532,7 +532,12 @@ app.get("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
 
 app.patch("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
   try {
-    res.json({ intake: await updateCustomerIntake(req.params.id, req.body || {}) });
+    // Build state and the collection pointer are owned by the builder (which
+    // writes the record directly), never by an HTTP client. A stale snapshot
+    // PATCHed back from the review UI must not overwrite either - nulling the
+    // collection pointer would un-protect the store from /cleanup.
+    const { build, shopifyCollection, ...patch } = req.body || {};
+    res.json({ intake: await updateCustomerIntake(req.params.id, patch) });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -1177,6 +1182,17 @@ app.post("/cleanup", async (req, res) => {
   // Collection reuses collections by title, so the ids collide by design).
   try {
     const intakes = await listCustomerIntakes();
+    // A record that failed to parse contributes no collection id, which would
+    // quietly un-protect that customer's store. Unreadable record = no proof
+    // of safety = no cleanup.
+    const unreadable = intakes.filter((intake) => intake.status === "error");
+    if (unreadable.length) {
+      return res.status(503).json({
+        error:
+          `${unreadable.length} customer store record(s) could not be read, so this run cannot be proven safe to clean up. ` +
+          "Fix or remove the unreadable record(s) in the Customer Store Intakes Drive folder first."
+      });
+    }
     const protectedIds = new Set(
       intakes
         .map((intake) => String(intake.shopifyCollection?.id || ""))

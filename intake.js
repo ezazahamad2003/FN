@@ -57,7 +57,13 @@ function fieldBlock(section, fieldName) {
     "Decoration Size Tier",
     "Placement",
     "Name / Rank",
-    "Size Range Needed"
+    "Size Range Needed",
+    // Terminates the block before it: without this, a category's free-text
+    // notes bled into the "Other:" custom-size capture and shipped to Shopify
+    // as size variants ("4XL, 5XL Notes rush order please"). Must end in a
+    // word character - the lookahead closes with \b, which never matches
+    // after a colon.
+    "Category Notes"
   ];
   const rest = labels.filter((label) => label !== fieldName).map(safeRegex).join("|");
   const pattern = rest
@@ -164,7 +170,10 @@ function feeSkuFor({ placement, productType, tier }) {
 function logoSlugsFrom(text) {
   const source = clean(String(text || "").replace(/_+/g, " "));
   if (!source) return ["all"];
-  if (/use department logo/i.test(source)) return ["all"];
+  // Only the CHECKED department-logo option means "all". The unchecked label
+  // text ("[ ] Use department logo") is present on every form, and matching it
+  // bare made every specific-logo selection collapse to the full set.
+  if (/(?:\[[xX]\]|[☑☒✓✔])\s*Use department logo/i.test(source)) return ["all"];
   const after = source.match(/(?:garment\(s\):|logo\(s\):|additional logo\(s\):)\s*(.+)$/i)?.[1] || source;
   const tokens = after
     .split(/[,;/]|\band\b/i)
@@ -199,6 +208,7 @@ function productFromCategory(category, section) {
   const sizes = normalizeSizeRange(fieldBlock(section, "Size Range Needed"));
   const nameRank = checkedYesNo(fieldBlock(section, "Name / Rank"));
   const logoSlugs = logoSlugsFrom(fieldBlock(section, "Decoration Logo(s)"));
+  const categoryNotes = clean(fieldBlock(section, "Category Notes"));
   const hasAnswers = [style, color, method, placement, tier, sizes.join(""), nameRank === null ? "" : String(nameRank)].some(Boolean);
 
   if (include === false) return null;
@@ -211,7 +221,8 @@ function productFromCategory(category, section) {
     tier ? `Decoration size tier: ${tier}.` : "",
     decorationFeeSku ? `Decoration fee SKU hint: ${decorationFeeSku}.` : "",
     nameRank === true ? "Name/rank personalization requested on right chest." : "",
-    nameRank === false ? "No name/rank right-chest personalization requested." : ""
+    nameRank === false ? "No name/rank right-chest personalization requested." : "",
+    categoryNotes ? `Customer note: ${categoryNotes}` : ""
   ].filter(Boolean);
 
   return {

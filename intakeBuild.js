@@ -24,10 +24,11 @@
       restart mid-build, and show what failed without digging through logs.
    -------------------------------------------------------------------------- */
 
+const sharp = require("sharp");
 const { generateBlankGarment, generateProductDescription } = require("./ai");
 const { findSupplierBlank } = require("./blanks");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
-const { placementGuidance } = require("./placements");
+const { placementFace, placementGuidance } = require("./placements");
 const { parseStructuredIntakeText, combineIntakes, intakeTags } = require("./intake");
 const {
   getCustomerIntake,
@@ -184,13 +185,30 @@ async function runBuild(intakeId, build, options) {
     stepFail(step, new Error("No usable logo files."));
     throw new Error("None of the uploaded logo files could be decoded.");
   }
+  // Compositing runs through sharp, which cannot rasterize AI/EPS/PDF. Probe
+  // now, before any paid generation, and drop what can't be placed - failing
+  // per-product AFTER the base image was generated wastes credits, and a run
+  // that dies on the first product for a file-format reason reads as broken.
+  const compositable = [];
+  for (const logo of logoRuns) {
+    try {
+      await sharp(logo.buffer).metadata();
+      compositable.push(logo);
+    } catch {
+      log(build, `logo "${logo.originalName}" is not a raster format sharp can place (AI/EPS/PDF need conversion); archived to Drive but not composited`);
+    }
+  }
+  if (!compositable.length) {
+    stepFail(step, new Error("No logo file is in a format that can be placed on garments (upload a PNG/JPG version alongside vector files)."));
+    throw new Error("None of the uploaded logos can be composited: upload a PNG or JPG version alongside vector artwork.");
+  }
   stepDone(step, `${products.length} garment${products.length === 1 ? "" : "s"}, ${logoRuns.length} logo file${logoRuns.length === 1 ? "" : "s"}`);
   await saveBuild(intakeId, build, { status: "building" });
 
   /* Step 2 - Shopify collection. ensureManualCollection* reuses an existing
      collection by title, so a resubmit lands in the same store. */
   step = stepStart(build, "collection", "Ensure the Shopify collection");
-  const firstLogo = logoRuns[0];
+  const firstLogo = compositable[0];
   const collection = await ensureManualCollectionWithImage(
     departmentName,
     firstLogo ? { buffer: firstLogo.buffer, alt: `${departmentName} logo` } : null
@@ -210,6 +228,13 @@ async function runBuild(intakeId, build, options) {
     for (const product of current.products || []) existingTitles.add(String(product.title || "").toLowerCase());
   } catch (error) {
     log(build, `could not list existing products (${error.message}); building without skip-list`);
+  }
+  // A product created on a previous run whose image upload or collection-add
+  // failed is NOT in the collection, but it exists in Shopify and is recorded
+  // in the prior build. Seed from that record too, or every re-run after such
+  // a failure would create a duplicate.
+  for (const prior of record.build?.products || []) {
+    if (prior?.title) existingTitles.add(String(prior.title).toLowerCase());
   }
 
   /* Step 3 - Drive folders. "skip" strategy: reuse the department folder if it
@@ -266,8 +291,18 @@ async function runBuild(intakeId, build, options) {
         onLog: (message) => log(build, `${title}: ${message}`)
       });
 
+      // Supplier photos are FRONT views (the search scores flat-front shots
+      // highest). A back placement composited onto a front photo would print
+      // the department's full-back graphic across the chest, so back-face
+      // placements always generate a back-view base instead - the supplier
+      // spec still guides the generation toward the right cut.
+      const wantsBackFace = placementFace(placement) === "back";
+      if (wantsBackFace && supplier.imageBuffer) {
+        log(build, `${title}: placement "${placement}" is on the back; skipping the supplier's front photo and generating a back view`);
+      }
+
       const baseBuffer =
-        supplier.imageBuffer ||
+        (!wantsBackFace && supplier.imageBuffer) ||
         (await generateBlankGarment({
           productPrompt: product.productPrompt || `a ${product.productType || "garment"}`,
           garmentColor: product.garmentColor,
@@ -278,19 +313,39 @@ async function runBuild(intakeId, build, options) {
             .join(" ")
         }));
 
-      const logos = resolveLogos(product, logoRuns);
+      // Belts, Class B pants, and anything the department marked "None" ship
+      // undecorated: the product photo is the blank garment itself, and no
+      // Front Logo option exists. Compositing a crest onto a leather belt is
+      // exactly the kind of wrong the fixed-field form exists to prevent.
+      const undecorated =
+        String(product.decorationMethod || "").toLowerCase() === "none" ||
+        ["belt", "class b uniform pants"].includes(product.productType);
+
       const logoVariants = [];
-      for (const logo of logos) {
-        const mockupBuffer = await compositeLogoOnGarment(baseBuffer, logo.buffer, placementKey);
+      if (undecorated) {
         let driveFile = null;
         if (folders) {
           try {
-            driveFile = await uploadGeneratedImage(`${slug(title)}--${logo.slug}.png`, mockupBuffer, folders.productImages.id);
+            driveFile = await uploadGeneratedImage(`${slug(title)}--blank.png`, baseBuffer, folders.productImages.id);
           } catch (error) {
-            log(build, `drive upload skipped for ${title}/${logo.filenameBase}: ${error.message}`);
+            log(build, `drive upload skipped for ${title}: ${error.message}`);
           }
         }
-        logoVariants.push({ logo, mockupBuffer, driveFile });
+        logoVariants.push({ logo: null, mockupBuffer: baseBuffer, driveFile });
+      } else {
+        const logos = resolveLogos(product, compositable);
+        for (const logo of logos) {
+          const mockupBuffer = await compositeLogoOnGarment(baseBuffer, logo.buffer, placementKey);
+          let driveFile = null;
+          if (folders) {
+            try {
+              driveFile = await uploadGeneratedImage(`${slug(title)}--${logo.slug}.png`, mockupBuffer, folders.productImages.id);
+            } catch (error) {
+              log(build, `drive upload skipped for ${title}/${logo.filenameBase}: ${error.message}`);
+            }
+          }
+          logoVariants.push({ logo, mockupBuffer, driveFile });
+        }
       }
 
       const descriptionHtml = await generateProductDescription(departmentName, product).catch((error) => {
@@ -303,7 +358,7 @@ async function runBuild(intakeId, build, options) {
         logoVariants.length > 1 && logoVariants.length * sizes.length <= MAX_VARIANTS
           ? [{ title, logoVariants }]
           : logoVariants.map((lv) => ({
-              title: logoVariants.length > 1 ? `${title} - ${lv.logo.filenameBase}` : title,
+              title: logoVariants.length > 1 ? `${title} - ${lv.logo?.filenameBase}` : title,
               logoVariants: [lv]
             }));
 
@@ -325,39 +380,47 @@ async function runBuild(intakeId, build, options) {
             product.decorationFeeSku || "",
             product.decorationSizeTier ? `decoration-${product.decorationSizeTier}` : ""
           ].filter(Boolean),
-          logoValues: plan.logoVariants.map((lv) => lv.logo.filenameBase),
+          logoValues: plan.logoVariants.filter((lv) => lv.logo).map((lv) => lv.logo.filenameBase),
           sizes,
           status: "DRAFT"
         });
 
-        const idsByLogo = variantIdsByLogo(created.variants, created.useLogoOption);
-        await uploadProductImages(
-          created.productGid,
-          plan.logoVariants.map((lv) => ({
-            filename: `${slug(plan.title)}-${lv.logo.slug}-mockup.png`,
-            buffer: lv.mockupBuffer,
-            alt: `${plan.title} — ${lv.logo.filenameBase}`,
-            variantIds: idsByLogo.get(created.useLogoOption ? lv.logo.filenameBase : "__all__") || []
-          }))
-        );
-        await addProductToCollection(created.productId, collection.id);
-
+        // The product EXISTS in Shopify from this moment. Record it before the
+        // image upload and collection-add so a failure in either cannot orphan
+        // it: a re-run would otherwise not see it in the collection and create
+        // a duplicate.
         existingTitles.add(plan.title.toLowerCase());
-        built.push({
+        const builtEntry = {
           title: created.title,
           productId: created.productId,
           url: adminProductUrl(created.productId),
           status: "DRAFT",
           variantCount: created.variantCount,
-          logoCount: plan.logoVariants.length,
+          logoCount: plan.logoVariants.filter((lv) => lv.logo).length,
           blankSource: supplier.imageBuffer ? "supplier" : "generated",
           blankSourceUrl: supplier.sourceUrl || null,
           vendor: product.vendor || "",
           driveImageUrl: plan.logoVariants[0]?.driveFile?.webViewLink || null
-        });
+        };
+        built.push(builtEntry);
+        build.products = built;
+        await saveBuild(intakeId, build).catch((error) => log(build, `progress flush failed (${error.message}); continuing`));
+
+        const idsByLogo = variantIdsByLogo(created.variants, created.useLogoOption);
+        await uploadProductImages(
+          created.productGid,
+          plan.logoVariants.map((lv) => ({
+            filename: `${slug(plan.title)}-${lv.logo ? lv.logo.slug : "blank"}${lv.logo ? "-mockup" : ""}.png`,
+            buffer: lv.mockupBuffer,
+            alt: lv.logo ? `${plan.title} — ${lv.logo.filenameBase}` : plan.title,
+            variantIds: idsByLogo.get(created.useLogoOption && lv.logo ? lv.logo.filenameBase : "__all__") || []
+          }))
+        );
+        await addProductToCollection(created.productId, collection.id);
       }
 
-      stepDone(step, `${supplier.imageBuffer ? "supplier photo" : "generated base"} · ${logos.length} logo${logos.length === 1 ? "" : "s"} · DRAFT`);
+      const logoCount = logoVariants.filter((lv) => lv.logo).length;
+      stepDone(step, `${supplier.imageBuffer ? "supplier photo" : "generated base"} · ${undecorated ? "undecorated" : `${logoCount} logo${logoCount === 1 ? "" : "s"}`} · DRAFT`);
     } catch (error) {
       // One garment failing must not sink the other eleven. The step records
       // the failure; the summary marks the build partial.
@@ -367,7 +430,10 @@ async function runBuild(intakeId, build, options) {
     }
 
     build.products = built;
-    await saveBuild(intakeId, build);
+    // A transient Drive hiccup on a progress flush must not sink the remaining
+    // products - the in-memory build object stays authoritative and the next
+    // successful flush carries everything.
+    await saveBuild(intakeId, build).catch((error) => log(build, `progress flush failed (${error.message}); continuing`));
   }
 
   build.state = failures.length ? (built.length ? "partial" : "failed") : "complete";
@@ -387,18 +453,38 @@ async function runBuild(intakeId, build, options) {
  * safe: all progress lands in the Drive record.
  */
 async function startIntakeBuild(intakeId, options = {}) {
+  // Reserve the slot BEFORE any await: two concurrent starts (double submit,
+  // operator click racing the auto-build) must not both pass the check.
   if (activeBuilds.has(intakeId)) {
     return { started: false, reason: "A build for this store request is already running." };
   }
-  const record = await getCustomerIntake(intakeId);
-  if (record.build?.state === "running") {
-    // A record can claim "running" after a server restart killed the build
-    // mid-flight. Stale if untouched for 15+ minutes - allow a restart then.
-    const started = Date.parse(record.build.startedAt || 0);
-    const fresh = Date.now() - started < 15 * 60 * 1000;
-    if (fresh && !options.force) {
-      return { started: false, reason: "This store request is already building." };
+  const placeholder = { state: "starting" };
+  activeBuilds.set(intakeId, placeholder);
+
+  let record;
+  try {
+    record = await getCustomerIntake(intakeId);
+    if (record.build?.state === "running") {
+      // A record can claim "running" after a server restart killed the build
+      // mid-flight. Stale when nothing has been written for 15+ minutes -
+      // judged by the freshest step timestamp, not the build's start time, so
+      // a long legitimate build is not mistaken for a dead one.
+      const timestamps = [record.build.startedAt, ...(record.build.steps || []).flatMap((step) => [step.startedAt, step.finishedAt])]
+        .map((value) => Date.parse(value || ""))
+        .filter(Number.isFinite);
+      const lastActivity = timestamps.length ? Math.max(...timestamps) : 0;
+      const fresh = Date.now() - lastActivity < 15 * 60 * 1000;
+      if (fresh && !options.force) {
+        activeBuilds.delete(intakeId);
+        return { started: false, reason: "This store request is already building." };
+      }
     }
+  } catch (error) {
+    activeBuilds.delete(intakeId);
+    throw error;
+  }
+  if (activeBuilds.get(intakeId) !== placeholder) {
+    return { started: false, reason: "A build for this store request is already running." };
   }
 
   const build = newBuildState(record);

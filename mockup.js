@@ -29,8 +29,18 @@ const PLACEMENTS = {
   "right-chest": { cx: 0.365, cy: 0.3, w: 0.13, h: 0.12 },
   "center-chest": { cx: 0.5, cy: 0.34, w: 0.26, h: 0.2 },
   "full-front": { cx: 0.5, cy: 0.42, w: 0.4, h: 0.3 },
+  // Back placements composite onto a BACK-view base — the build pipeline
+  // requests the back face from the image model for these (a supplier photo,
+  // which is a front view, is skipped for back placements). Centered across
+  // the upper back per the FN placement standard (~25cm below the collar).
+  "center-back": { cx: 0.5, cy: 0.34, w: 0.42, h: 0.32 },
+  // Sleeves on a flat-lay front view: wearer's left is the viewer's right.
+  "left-sleeve": { cx: 0.875, cy: 0.245, w: 0.085, h: 0.09 },
+  "right-sleeve": { cx: 0.125, cy: 0.245, w: 0.085, h: 0.09 },
   // Caps: centered on the front panel, above the brim.
   "front-panel": { cx: 0.5, cy: 0.44, w: 0.34, h: 0.22 },
+  // Cap side decoration sits over the wearer's left temple panel.
+  "cap-side": { cx: 0.74, cy: 0.5, w: 0.16, h: 0.14 },
   // Beanies: decoration sits on the turned-up cuff, near the bottom edge.
   "beanie-cuff": { cx: 0.5, cy: 0.74, w: 0.3, h: 0.14 },
   // Legwear: on the thigh, well clear of the crotch seam (~0.3 down a flat
@@ -54,11 +64,18 @@ function resolvePlacement(product) {
     .toLowerCase();
 
   if (BEANIE_TYPES.test(garment)) return "beanie-cuff";
-  if (CAP_TYPES.test(garment)) return "front-panel";
+  if (CAP_TYPES.test(garment)) return /\bside\b/.test(text) ? "cap-side" : "front-panel";
   // Legwear has no chest, so chest wording can never apply to it.
   if (LEG_TYPES.test(garment)) {
     return /right[\s-]?(thigh|leg|hip)/.test(text) ? "right-thigh" : "left-thigh";
   }
+
+  // Back before chest: "center back" contains no chest wording, but the old
+  // fall-through still landed it on the left chest — the single most common
+  // fire-tee decoration, silently misplaced.
+  if (/((center|centre|middle|full|upper|top)[\s-]?back|\bback\b)/.test(text)) return "center-back";
+  if (/(left[\s-]?sleeve|both[\s-]?sleeves)/.test(text)) return "left-sleeve";
+  if (/right[\s-]?sleeve/.test(text)) return "right-sleeve";
 
   if (/(full[\s-]?front|full[\s-]?chest|across the (front|chest)|large front)/.test(text)) return "full-front";
   if (/(center|centre|middle)[\s-]?(chest|front)/.test(text)) return "center-chest";

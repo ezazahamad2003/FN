@@ -1200,7 +1200,7 @@ function renderNewStoresShell(records) {
           <button class="store-request-card" type="button" data-intake-id="${escapeHtml(record.id)}" data-active="${index === 0 ? "true" : "false"}">
             <span>
               <b>${escapeHtml(record.departmentName || record.store?.departmentName || "Untitled department")}</b>
-              <small>${escapeHtml(record.departmentCode || record.store?.departmentCode || "No code yet")} - ${escapeHtml(record.summary?.includedCategories || 0)} categories</small>
+              <small>${escapeHtml(record.departmentCode || record.store?.departmentCode || "No code yet")} - ${escapeHtml(record.summary?.includedCount ?? 0)} categories</small>
             </span>
             <em>${escapeHtml(intakeStatusLabel(record.status))}</em>
           </button>
@@ -1213,33 +1213,51 @@ function renderNewStoresShell(records) {
   openCustomerIntake(records[0].id);
 }
 
+/* The editor mirrors customerIntakes.js normalizeCategory EXACTLY. A field
+   name that drifts from that schema is silently dropped by the server's
+   normalize pass on save — which is how the previous version of this editor
+   managed to discard every category edit an operator made. */
+const INTAKE_METHODS = ["Embroidery", "Screen Print", "Heat Transfer", "Patch", "None"];
+const INTAKE_TIERS = ["Small", "Standard", "Large / Full Back", "Custom"];
+const INTAKE_SIZE_RANGES = ["S-3XL", "S-5XL", "Youth sizes", "Women's cut", "Other"];
+
+function intakeOption(items, selected) {
+  return '<option value="">—</option>' + items.map((item) =>
+    `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(item)}</option>`).join("");
+}
+
 function categoryEditor(category) {
   const enabled = category.include ? "checked" : "";
   return `
-    <details class="intake-category-editor" data-category-id="${escapeHtml(category.id)}" ${category.include ? "open" : ""}>
+    <details class="intake-category-editor" data-category-key="${escapeHtml(category.key)}" ${category.include ? "open" : ""}>
       <summary>
-        <span>${escapeHtml(category.label)}</span>
+        <span>${escapeHtml(category.title)}</span>
         <em>${category.include ? "Included" : "Skipped"}</em>
       </summary>
       <div class="category-edit-grid">
         <label><span>Include</span><input type="checkbox" name="include" ${enabled}></label>
-        <label><span>Styles and colors</span><textarea name="stylesAndColors" rows="3">${escapeHtml(category.stylesAndColors)}</textarea></label>
-        <label><span>Decoration method</span><select name="decorationMethod">
-          ${["Embroidery", "Screen Print", "Patch", "Heat Press"].map((item) => `<option ${category.decorationMethod === item ? "selected" : ""}>${item}</option>`).join("")}
+        <label><span>Vendor / brand</span><input name="vendor" value="${escapeHtml(category.vendor || "")}"></label>
+        <label><span>Style number</span><input name="styleNumber" value="${escapeHtml(category.styleNumber || "")}"></label>
+        <label><span>Color(s)</span><input name="colors" value="${escapeHtml(category.colors || "")}"></label>
+        <label><span>Style notes</span><input name="style" value="${escapeHtml(category.style || "")}"></label>
+        <label><span>Belt style</span><input name="beltStyle" value="${escapeHtml(category.beltStyle || "")}"></label>
+        <label><span>Decoration method</span><select name="decorationMethod">${intakeOption(INTAKE_METHODS, category.decorationMethod)}</select></label>
+        <label><span>Size tier</span><select name="sizeTier">${intakeOption(INTAKE_TIERS, category.sizeTier)}</select></label>
+        <label><span>Custom tier size</span><input name="customSizeTier" value="${escapeHtml(category.customSizeTier || "")}"></label>
+        <label><span>Placement</span><input name="placement" value="${escapeHtml(category.placement || "")}"></label>
+        <label><span>Logo choice</span><select name="logoChoice">
+          <option value="department" ${category.logoChoice !== "additional" ? "selected" : ""}>Department logo</option>
+          <option value="additional" ${category.logoChoice === "additional" ? "selected" : ""}>Specific uploaded logo</option>
         </select></label>
-        <label><span>Logo labels</span><input name="logoLabels" value="${escapeHtml(category.logoLabels)}"></label>
-        <label><span>Size tier</span><select name="sizeTier">
-          ${[
-            ["small", "Small - about 4 in"],
-            ["standard", "Standard - about 6 in"],
-            ["large", "Large / full back - 8-10 in"]
-          ].map(([value, label]) => `<option value="${value}" ${category.sizeTier === value ? "selected" : ""}>${label}</option>`).join("")}
+        <label><span>Logo notes</span><input name="logoNotes" value="${escapeHtml(category.logoNotes || "")}"></label>
+        <label><span>Name/rank right chest</span><select name="nameRank">
+          <option value="" ${!category.nameRank ? "selected" : ""}>—</option>
+          <option value="yes" ${category.nameRank === "yes" ? "selected" : ""}>Yes</option>
+          <option value="no" ${category.nameRank === "no" ? "selected" : ""}>No</option>
         </select></label>
-        <label><span>Placement</span><input name="placement" value="${escapeHtml(category.placement)}"></label>
-        <label><span>Name/rank</span><select name="nameRank">
-          ${["No", "Name only", "Rank only", "Name and rank"].map((item) => `<option ${category.nameRank === item ? "selected" : ""}>${item}</option>`).join("")}
-        </select></label>
-        <label><span>Size range</span><input name="sizeRange" value="${escapeHtml(category.sizeRange)}"></label>
+        <label><span>Size range</span><select name="sizeRange">${intakeOption(INTAKE_SIZE_RANGES, category.sizeRange)}</select></label>
+        <label><span>Other sizes</span><input name="otherSizes" value="${escapeHtml(category.otherSizes || "")}"></label>
+        <label><span>Notes</span><input name="notes" value="${escapeHtml(category.notes || "")}"></label>
       </div>
     </details>`;
 }
@@ -1251,23 +1269,33 @@ function collectEditedIntake(record) {
     ...next.store,
     departmentName: panel.querySelector("[data-store-field='departmentName']")?.value.trim() || next.store.departmentName,
     departmentCode: panel.querySelector("[data-store-field='departmentCode']")?.value.trim() || next.store.departmentCode,
-    primaryContactName: panel.querySelector("[data-store-field='primaryContactName']")?.value.trim() || "",
-    primaryContactEmail: panel.querySelector("[data-store-field='primaryContactEmail']")?.value.trim() || "",
+    contactName: panel.querySelector("[data-store-field='contactName']")?.value.trim() || next.store.contactName,
+    contactEmail: panel.querySelector("[data-store-field='contactEmail']")?.value.trim() || next.store.contactEmail,
+    contactPhone: panel.querySelector("[data-store-field='contactPhone']")?.value.trim() ?? next.store.contactPhone,
     notes: panel.querySelector("[data-store-field='notes']")?.value.trim() || ""
   };
   next.categories = next.categories.map((category) => {
-    const node = panel.querySelector(`[data-category-id="${CSS.escape(category.id)}"]`);
+    const node = panel.querySelector(`[data-category-key="${CSS.escape(category.key)}"]`);
     if (!node) return category;
+    const read = (name) => node.querySelector(`[name='${name}']`)?.value.trim() ?? "";
     return {
       ...category,
       include: Boolean(node.querySelector("[name='include']")?.checked),
-      stylesAndColors: node.querySelector("[name='stylesAndColors']")?.value.trim() || "",
-      decorationMethod: node.querySelector("[name='decorationMethod']")?.value || "",
-      logoLabels: node.querySelector("[name='logoLabels']")?.value.trim() || "",
-      sizeTier: node.querySelector("[name='sizeTier']")?.value || "",
-      placement: node.querySelector("[name='placement']")?.value.trim() || "",
-      nameRank: node.querySelector("[name='nameRank']")?.value || "",
-      sizeRange: node.querySelector("[name='sizeRange']")?.value.trim() || ""
+      vendor: read("vendor"),
+      styleNumber: read("styleNumber"),
+      colors: read("colors"),
+      style: read("style"),
+      beltStyle: read("beltStyle"),
+      decorationMethod: read("decorationMethod"),
+      sizeTier: read("sizeTier"),
+      customSizeTier: read("customSizeTier"),
+      placement: read("placement"),
+      logoChoice: read("logoChoice") || "department",
+      logoNotes: read("logoNotes"),
+      nameRank: read("nameRank"),
+      sizeRange: read("sizeRange"),
+      otherSizes: read("otherSizes"),
+      notes: read("notes")
     };
   });
   return next;
@@ -1290,6 +1318,15 @@ function setFileInputFiles(input, files) {
 
 async function saveCustomerIntake(record, status = "in-review") {
   const edited = collectEditedIntake(record);
+  // Never send derived or server-owned state back. `build` especially: the
+  // snapshot in this editor goes stale the moment the builder writes a step,
+  // and PATCHing it back would overwrite live build progress. Same for the
+  // collection pointer - nulling it would un-protect the store from cleanup.
+  delete edited.build;
+  delete edited.shopifyCollection;
+  delete edited.structuredText;
+  delete edited.summary;
+  delete edited.driveFile;
   const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}`, {
     method: "PATCH",
     body: JSON.stringify({ ...edited, status })
@@ -1299,29 +1336,9 @@ async function saveCustomerIntake(record, status = "in-review") {
   return payload.intake;
 }
 
-async function loadCustomerIntakeIntoOnboarding(record) {
-  const saved = await saveCustomerIntake(record, "approved-for-build");
-  departmentInput.value = saved.store.departmentName || "";
-  if (logoInput) {
-    setFileInputFiles(logoInput, (saved.logos || []).map(fileFromStoredLogo));
-    renderLogoThumbs();
-  }
-  if (intakeInput) {
-    const text = saved.structuredText || "";
-    setFileInputFiles(intakeInput, [new File([text], `${saved.store.departmentCode || saved.requestId}-customer-intake.txt`, { type: "text/plain" })]);
-    renderIntakeChips();
-  }
-  if (followUpInput) {
-    setFileInputFiles(followUpInput, []);
-    renderFollowUpChips();
-  }
-  const followText = el("followUpText");
-  if (followText) followText.value = "";
-  hideFieldError(departmentInput, departmentError);
-  hideFieldError(logoInput, logoError);
-  addNotice("Customer package loaded. Run onboarding to generate images, then approve products for Shopify.");
-  location.hash = "#/onboarding";
-}
+// The old "load into the onboarding form" handoff is gone on purpose: the
+// build runs directly from the record now (Build store now / auto-build on
+// submit), so there is no manual re-entry step for customer intakes.
 
 /* -----------------------------------------------------------------------------
    Build progress. The intake record carries the build state (written step by
@@ -1366,13 +1383,27 @@ function pollBuild(id) {
     try {
       const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(id)}`);
       const payload = await res.json().catch(() => ({}));
-      if (res.ok && payload.intake) {
-        const active = document.querySelector(`.store-request-card[data-active="true"]`);
-        // Only repaint if the operator is still looking at this record.
-        if (active?.dataset.intakeId === id) renderCustomerIntakeEditor(payload.intake);
+      const active = document.querySelector(`.store-request-card[data-active="true"]`);
+      if (res.ok && payload.intake && active?.dataset.intakeId === id) {
+        const record = payload.intake;
+        // Surgical repaint: only the build panel and the build button. A full
+        // editor repaint every 5s would wipe whatever the operator is typing.
+        const panel = el("storeReviewPanel");
+        const buildNode = panel?.querySelector(".build-panel");
+        if (buildNode) buildNode.outerHTML = buildPanelHtml(record);
+        const btn = panel?.querySelector("[data-build-intake]");
+        if (btn) {
+          const running = record.build?.state === "running";
+          btn.disabled = running;
+          btn.textContent = running ? "Building…" : record.build ? "Re-run build" : "Build store now";
+        }
+        if (record.build?.state === "running") pollBuild(id);
       }
     } catch {
-      /* transient - next poll retries */
+      // Transient network error: keep polling as long as the operator is
+      // still looking at this record, or the panel freezes on stale state.
+      const active = document.querySelector(`.store-request-card[data-active="true"]`);
+      if (active?.dataset.intakeId === id) pollBuild(id);
     }
   }, 5000);
 }
@@ -1401,8 +1432,9 @@ function renderCustomerIntakeEditor(record) {
     <div class="store-edit-grid">
       <label><span>Department name</span><input data-store-field="departmentName" value="${escapeHtml(record.store.departmentName)}"></label>
       <label><span>Department code</span><input data-store-field="departmentCode" value="${escapeHtml(record.store.departmentCode)}"></label>
-      <label><span>Contact name</span><input data-store-field="primaryContactName" value="${escapeHtml(record.store.primaryContactName)}"></label>
-      <label><span>Contact email</span><input data-store-field="primaryContactEmail" value="${escapeHtml(record.store.primaryContactEmail)}"></label>
+      <label><span>Contact name</span><input data-store-field="contactName" value="${escapeHtml(record.store.contactName)}"></label>
+      <label><span>Contact email</span><input data-store-field="contactEmail" value="${escapeHtml(record.store.contactEmail)}"></label>
+      <label><span>Contact phone</span><input data-store-field="contactPhone" value="${escapeHtml(record.store.contactPhone)}"></label>
       <label class="span-2"><span>Internal/customer notes</span><textarea data-store-field="notes" rows="3">${escapeHtml(record.store.notes)}</textarea></label>
     </div>
     <div class="logo-strip">
