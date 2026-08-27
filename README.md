@@ -33,12 +33,12 @@ AZURE_OPENAI_AUDIO_ENDPOINT=https://your-voice-resource.openai.azure.com
 AZURE_OPENAI_AUDIO_API_KEY=your-voice-resource-key
 AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT=whisper
 AZURE_OPENAI_AUDIO_API_VERSION=2024-10-21
-AZURE_OPENAI_SPEECH_MODEL=tts-1
+AZURE_OPENAI_SPEECH_MODEL=fn-tts
 AZURE_OPENAI_SPEECH_API_VERSION=preview
 AZURE_OPENAI_SPEECH_VOICE=alloy
 ```
 
-The dashboard voice agent records short browser mic turns, sends them to Azure OpenAI transcription, runs the dashboard agent harness with live Shopify/Drive/platform context, and returns synthesized speech when `AZURE_OPENAI_SPEECH_MODEL` is configured. `AZURE_OPENAI_AUDIO_ENDPOINT` and `AZURE_OPENAI_AUDIO_API_KEY` can point transcription at a separate Azure OpenAI resource while chat keeps using `AZURE_OPENAI_ENDPOINT`. If speech output is not configured, the browser speech fallback is used for playback.
+The dashboard voice agent records short browser mic turns, sends them to Azure OpenAI transcription, runs the dashboard agent harness with live Shopify/Drive/platform context, and returns synthesized speech when `AZURE_OPENAI_SPEECH_MODEL` is configured. `AZURE_OPENAI_AUDIO_ENDPOINT` and `AZURE_OPENAI_AUDIO_API_KEY` can point transcription at a separate Azure OpenAI resource while chat keeps using `AZURE_OPENAI_ENDPOINT`. `AZURE_OPENAI_SPEECH_ENDPOINT` and `AZURE_OPENAI_SPEECH_API_KEY` can override the speech resource separately, but by default speech reuses `AZURE_OPENAI_AUDIO_ENDPOINT` and `AZURE_OPENAI_AUDIO_API_KEY`. If speech output is not configured, the browser speech fallback is used for playback.
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 
@@ -73,16 +73,16 @@ the in-app Connect buttons), since Render's filesystem is ephemeral.
 
 ## The console
 
-The app opens on **Departments** — every Shopify collection in the store, one
-card per fire department. The nav bar has two entries:
+The app opens on **Dashboard** for live platform status and the voice-first operations agent. The nav bar has four entries:
 
 | Nav item | Route | What it does |
 | --- | --- | --- |
-| **Departments** | `#/departments` | Browse all collections; click one to open it |
+| **Dashboard** | `#/dashboard` | Live service status plus the voice operations agent |
+| **New Stores** | `#/new-stores` | Internal review queue for customer-submitted store requests |
+| **Departments** | `#/departments` | Browse all Shopify collections; click one to open it |
 | **Onboard new** | `#/onboarding` | The full policy-driven intake described below |
 
-Onboarding is what you run *once* to stand up a new department. Browsing and
-editing is the everyday task, so it is the landing view.
+Onboarding is what you run *once* to stand up a new department. Browsing, reviewing customer submissions, and editing live Shopify collections are the everyday tasks.
 
 ### Departments → one department
 
@@ -118,6 +118,13 @@ From there:
 
 ## Onboarding workflow
 
+### Customer intake link
+
+Send customers `/intake`. They fill a fixed-field store request based on the FNS form draft: store setup, logo upload, decoration size/placement, and repeated category choices for shirts, sweatshirts, jackets, polos, shorts, sweatpants, Class B items, belts, and hats.
+
+On submit, the app saves the request JSON and logos to Google Drive under `Customer Store Intakes`, creates or reuses the matching Shopify collection immediately, and places the request in **New Stores**. The internal queue is protected with `FN_ADMIN_TOKEN`; the customer link does not need that token.
+
+From **New Stores**, review or edit the customer answers, open the Shopify collection, then click **Approve to build store**. That loads the generated structured intake and logos into the existing onboarding workflow so the image/product generation can run with the normal approval gate.
 The onboarding view accepts a department name, logo images, policy documents, and
 optional follow-up answers from the department. Onboarding runs in **two phases
 with a review gate in between — nothing is published to Shopify without explicit

@@ -120,7 +120,7 @@ function structuredTextFromCustomerIntake(recordInput) {
   for (const category of record.categories) {
     const definition = categoryDefinition(category.key);
     lines.push("", definition.title || category.title, "Field Response / Options");
-    lines.push("Include this category in " + (category.include ? "[x] Yes [ ] No" : "[ ] Yes [x] No") + " store?");
+    lines.push("Include this category in store? " + (category.include ? "[x] Yes [ ] No" : "[ ] Yes [x] No"));
     if (!category.include) continue;
 
     if (definition.belt) {

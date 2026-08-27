@@ -29,10 +29,18 @@ function azureAudioConfigured() {
   );
 }
 
+function speechEndpoint() {
+  return cleanEndpoint(process.env.AZURE_OPENAI_SPEECH_ENDPOINT || process.env.AZURE_OPENAI_AUDIO_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT);
+}
+
+function speechApiKey() {
+  return process.env.AZURE_OPENAI_SPEECH_API_KEY || process.env.AZURE_OPENAI_AUDIO_API_KEY || process.env.AZURE_OPENAI_API_KEY;
+}
+
 function azureSpeechConfigured() {
   return Boolean(
-    process.env.AZURE_OPENAI_ENDPOINT &&
-      process.env.AZURE_OPENAI_API_KEY &&
+    speechEndpoint() &&
+      speechApiKey() &&
       (process.env.AZURE_OPENAI_SPEECH_DEPLOYMENT ||
         process.env.AZURE_OPENAI_TTS_DEPLOYMENT ||
         process.env.AZURE_OPENAI_SPEECH_MODEL)
@@ -61,7 +69,8 @@ function genAIStatus() {
       speechDeployment,
       voiceInputConfigured: azureAudioConfigured(),
       audioEndpoint: audioEndpoint() ? "configured" : "",
-      voiceOutputConfigured: azureSpeechConfigured()
+      voiceOutputConfigured: azureSpeechConfigured(),
+      speechEndpoint: speechEndpoint() ? "configured" : ""
     };
   }
   return {
@@ -162,7 +171,7 @@ async function azureTextToSpeech({ text, voice, speed = 1.04, format = "mp3" }) 
   if (!azureSpeechConfigured()) return null;
   if (!globalThis.fetch) throw new Error("Node 18 fetch is required for Azure OpenAI speech synthesis.");
 
-  const endpoint = cleanEndpoint(process.env.AZURE_OPENAI_ENDPOINT);
+  const endpoint = speechEndpoint();
   const apiVersion = process.env.AZURE_OPENAI_SPEECH_API_VERSION || "preview";
   const model =
     process.env.AZURE_OPENAI_SPEECH_DEPLOYMENT ||
@@ -175,7 +184,7 @@ async function azureTextToSpeech({ text, voice, speed = 1.04, format = "mp3" }) 
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "api-key": process.env.AZURE_OPENAI_API_KEY
+      "api-key": speechApiKey()
     },
     body: JSON.stringify({
       model,
