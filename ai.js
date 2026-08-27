@@ -1,12 +1,39 @@
-const OpenAI = require("openai");
 const fetch = require("node-fetch");
 const { PDFParse } = require("pdf-parse");
+const { generateImage, reason } = require("./azureOpenai");
 
+// Provider-agnostic stand-in for the OpenAI SDK client this file used to build
+// directly.
+//
+// Why a shim rather than rewriting all seven call sites: the pipeline runs on
+// Azure OpenAI in production, but every call here was pinned to a literal
+// "gpt-4o" model id and a raw OPENAI_API_KEY, so onboarding hard-failed on a
+// deploy that only had Azure configured. Keeping the SDK's call shape means the
+// routing decision (Azure first, direct OpenAI as fallback) lives in exactly one
+// place — azureOpenai.js — and the reasoning/vision/image call sites below read
+// the same as before.
 function client() {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is missing. Add a fresh key to .env before running onboarding.");
-  }
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return {
+    chat: {
+      completions: {
+        create: async ({ messages, max_tokens: maxTokens, temperature, response_format: responseFormat }) => {
+          const content = await reason({
+            messages,
+            maxTokens,
+            temperature,
+            jsonObject: responseFormat?.type === "json_object"
+          });
+          return { choices: [{ message: { content } }] };
+        }
+      }
+    },
+    images: {
+      generate: async ({ prompt, size, quality }) => {
+        const buffer = await generateImage({ prompt, size, quality });
+        return { data: [{ b64_json: buffer.toString("base64") }] };
+      }
+    }
+  };
 }
 
 function imageDataUrl(file) {

@@ -35,6 +35,7 @@ const {
   updateProduct
 } = require("./catalog");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
+const { REFERENCE_IMAGES, placementGuidance } = require("./placements");
 const { findSupplierBlank } = require("./blanks");
 const {
   combineIntakes,
@@ -48,6 +49,7 @@ const {
   createCustomerIntake,
   getCustomerIntake,
   listCustomerIntakes,
+  structuredTextFromCustomerIntake,
   updateCustomerIntake
 } = require("./customerIntakes");
 const { azureTextToSpeech, azureTranscribeAudio } = require("./azureOpenai");
@@ -287,10 +289,20 @@ function tokenFromRequest(req) {
   return bearer || String(req.get("x-admin-token") || req.query.admin || "").trim();
 }
 
+// Open by default so the internal queue can be exercised end to end without a
+// token handshake during testing. Set FN_REQUIRE_ADMIN_TOKEN=1 (alongside
+// FN_ADMIN_TOKEN) to put the gate back.
+//
+// Worth knowing before this points at real departments: the endpoints behind
+// this gate return customer contact details (name, email, phone) and uploaded
+// artwork, so an open gate means anyone who can reach the URL can read them.
+function adminGateEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.FN_REQUIRE_ADMIN_TOKEN || "").trim()) && Boolean(adminToken());
+}
+
 function requireAdminToken(req, res, next) {
-  const configured = adminToken();
-  if (!configured) return res.status(503).json({ error: "Admin token is not configured." });
-  if (tokenFromRequest(req) !== configured) return res.status(401).json({ error: "Admin token required." });
+  if (!adminGateEnabled()) return next();
+  if (tokenFromRequest(req) !== adminToken()) return res.status(401).json({ error: "Admin token required." });
   next();
 }
 
@@ -322,7 +334,7 @@ app.get("/health", (req, res) => {
 });
 
 app.get("/api/platform/status", (req, res) => {
-  res.json(platformStatus());
+  res.json({ ...platformStatus(), adminGate: adminGateEnabled() });
 });
 
 app.post("/api/agents/dashboard/chat", async (req, res) => {
@@ -453,6 +465,84 @@ app.patch("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
     res.json({ intake: await updateCustomerIntake(req.params.id, req.body || {}) });
   } catch (error) {
     res.status(400).json({ error: error.message });
+  }
+});
+
+/* -----------------------------------------------------------------------------
+   Onboarding agent handoff.
+
+   A submitted customer form is already the same fixed-field schema the PDF
+   store build form produces, so it feeds the existing pipeline directly: render
+   the record to structured text, parse it with the same parser used for an
+   uploaded form, then run the reasoning agent over it.
+
+   This deliberately stops at a PLAN. It reasons about what to build, what the
+   department left ambiguous, and how each garment should be decorated - but it
+   does not create products or spend image credits. An operator reviews the plan
+   in the New Stores queue and starts the build, which is the review gate the
+   store build process is supposed to have.
+   -------------------------------------------------------------------------- */
+app.post("/api/customer-intakes/:id/plan", requireAdminToken, async (req, res) => {
+  try {
+    const record = await getCustomerIntake(req.params.id);
+    const departmentName = record.store.departmentName || "the department";
+
+    // Same parse path as an uploaded store build form.
+    const parsed = parseStructuredIntakeText(structuredTextFromCustomerIntake(record));
+    const intake = combineIntakes([parsed]);
+
+    // Logo catalog by filename - names alone are enough to assign artwork to
+    // garments, and skipping Vision here keeps the plan fast.
+    const logoRuns = (record.logos || []).map((logo) => ({
+      originalName: logo.name,
+      filenameBase: titleCase(logo.name),
+      slug: slug(logo.name),
+      logoDescription: ""
+    }));
+    dedupeLogoLabels(logoRuns);
+
+    const context = [intakeContextText(intake), record.customerNotes, record.store.notes]
+      .filter((part) => part && part.trim())
+      .join("\n\n");
+    if (!context.trim()) throw new Error("This intake has no garment selections to plan from.");
+
+    const products = mergeIntakeProducts(await determinePolicyProducts(departmentName, context, logoRuns), intake);
+    const gaps = await analyzePolicyGaps(departmentName, context, products, logoRuns);
+
+    const plan = products.map((product) => {
+      const placement = product.placement || resolvePlacement(product).replace(/-/g, " ");
+      return {
+        productLabel: product.productLabel,
+        garmentColor: product.garmentColor,
+        brandStyle: product.brandStyle,
+        placement,
+        placementStated: Boolean(product.placement),
+        placementGuidance: placementGuidance(placement, product.decorationSizeTier),
+        decorationMethod: product.decorationMethod,
+        decorationSizeTier: product.decorationSizeTier || "",
+        decorationFeeSku: product.decorationFeeSku || "",
+        sizes: product.sizes?.length ? product.sizes : DEFAULT_SIZES,
+        sizesStated: Boolean(product.sizes?.length),
+        logos: resolveProductLogos(product, logoRuns).map((logo) => logo.filenameBase),
+        intakeSource: Boolean(product.intakeSource)
+      };
+    });
+
+    await updateCustomerIntake(req.params.id, { status: "planned" });
+
+    res.json({
+      requestId: record.requestId,
+      departmentName,
+      departmentCode: record.store.departmentCode,
+      productCount: plan.length,
+      products: plan,
+      gaps: { confidence: gaps.confidence, missing: gaps.missing },
+      emailDraft: gaps.emailDraft,
+      referenceImages: REFERENCE_IMAGES,
+      tags: intakeTags(intake)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -722,6 +812,11 @@ app.post(
           item.blankNote = supplier.note;
           item.blankSourceUrl = supplier.sourceUrl;
 
+          // Fold the production placement standard into the prompt. The base is
+          // still blank — what this changes is which FACE gets photographed, so
+          // a center-back print composites onto a back view instead of a chest.
+          const placementNote = placementGuidance(item.placement || item.placementKey, item.decorationSizeTier);
+
           item.baseBuffer =
             supplier.imageBuffer ||
             (await generateBlankGarment({
@@ -729,7 +824,7 @@ app.post(
               garmentColor: item.garmentColor,
               brandStyle: item.brandStyle,
               spec: supplier.spec,
-              imageGuidance: item.imageGuidance
+              imageGuidance: [item.imageGuidance, placementNote].filter(Boolean).join(" ")
             }));
 
           for (const logo of item.logos) {
@@ -1207,7 +1302,8 @@ app.post(
             productPrompt: product.productPrompt,
             garmentColor: product.garmentColor,
             brandStyle: product.brandStyle,
-            spec: supplier.spec
+            spec: supplier.spec,
+            imageGuidance: placementGuidance(placementInput || placementKey, product.decorationSizeTier)
           })
         );
       });

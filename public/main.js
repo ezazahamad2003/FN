@@ -1145,10 +1145,13 @@ function statusChip(status) {
 /* -----------------------------------------------------------------------------
    New Stores queue - customer intake review before running the store builder.
    -------------------------------------------------------------------------- */
-function adminTokenValue() {
+// The queue is open unless the deploy turns the gate back on
+// (FN_REQUIRE_ADMIN_TOKEN). Only prompt after the server has actually rejected
+// a request, so the common case costs the operator nothing.
+function adminTokenValue(force = false) {
   let token = sessionStorage.getItem("fnAdminToken") || "";
-  if (!token) {
-    token = window.prompt("Admin token for the internal New Stores queue:") || "";
+  if (!token && force) {
+    token = window.prompt("This deploy requires an admin token for the New Stores queue:") || "";
     if (token) sessionStorage.setItem("fnAdminToken", token);
   }
   return token;
@@ -1156,16 +1159,23 @@ function adminTokenValue() {
 
 async function adminFetch(url, options = {}) {
   const token = adminTokenValue();
-  if (!token) throw new Error("Admin token is required for the internal queue.");
   const headers = new Headers(options.headers || {});
-  headers.set("Authorization", "Bearer " + token);
+  if (token) headers.set("Authorization", "Bearer " + token);
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(url, { ...options, headers });
+  let res = await fetch(url, { ...options, headers });
   if (res.status === 401) {
+    // Gate is on for this deploy: ask once, then retry the same request.
     sessionStorage.removeItem("fnAdminToken");
-    throw new Error("Admin token was rejected. Open New Stores again and enter the current token.");
+    const retryToken = adminTokenValue(true);
+    if (!retryToken) throw new Error("This deploy requires an admin token for the New Stores queue.");
+    headers.set("Authorization", "Bearer " + retryToken);
+    res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+      sessionStorage.removeItem("fnAdminToken");
+      throw new Error("Admin token was rejected. Open New Stores again and enter the current token.");
+    }
   }
   return res;
 }

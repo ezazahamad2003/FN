@@ -3,109 +3,258 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>FN Store Intake</title>
-    <meta name="description" content="Submit a fixed-field FN Simple Uniforms store build request.">
+    <title>FN Simple Uniforms · Store Setup</title>
+    <meta name="description" content="Set up your department's uniform store with FN Simple Uniforms — pick garments, upload artwork, choose decoration placement.">
     <link rel="stylesheet" href="/styles.css">
+    <script>
+      /* Runs before first paint so the stored theme never flashes. Light is the
+         CSS default, so this only ever has to opt in to dark. */
+      (function () {
+        try {
+          var saved = localStorage.getItem("fnTheme");
+          var dark = saved ? saved === "dark"
+                           : window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
   </head>
   <body class="customer-intake-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="intake-topbar">
+      <a class="brand-lockup" href="/intake" aria-label="FN Simple Uniforms store setup">
+        <span class="brand-mark">FN</span>
+        <span>
+          <span class="sub">FN Simple Uniforms</span>
+          <span class="title" style="display:block">Store setup</span>
+        </span>
+      </a>
+      <div class="intake-topbar-actions">
+        <span class="save-note" id="saveNote" role="status" aria-live="polite"></span>
+        <div data-theme-toggle></div>
+      </div>
+    </header>
+
     <main class="customer-shell" id="main">
       <section class="customer-hero">
         <div>
-          <p class="eyebrow">FN Simple Uniforms</p>
-          <h1>Build your department store request</h1>
-          <p>Choose the garments, upload your logo files, and send FN a complete fixed-field package for store setup.</p>
+          <p class="eyebrow">Department store build</p>
+          <h1>Let's build your department's store</h1>
+          <p>Tell us the garments you want, upload your artwork, and pick where each logo goes. We'll build the store and send it back for your approval — most departments finish this form in about ten minutes.</p>
         </div>
-        <aside class="customer-steps" aria-label="Form steps">
-          <span><b>1</b> Department setup</span>
-          <span><b>2</b> Logo upload</span>
-          <span><b>3</b> Garment choices</span>
-          <span><b>4</b> Submit to FN</span>
-        </aside>
       </section>
 
+      <!-- Step rail. Reflects real progress; steps you've completed are clickable. -->
+      <ol class="wizard-rail" id="wizardRail" aria-label="Progress">
+        <li data-step="1"><button type="button"><span class="wr-num">1</span><span class="wr-label">Department</span></button></li>
+        <li data-step="2"><button type="button"><span class="wr-num">2</span><span class="wr-label">Artwork</span></button></li>
+        <li data-step="3"><button type="button"><span class="wr-num">3</span><span class="wr-label">Garments</span></button></li>
+        <li data-step="4"><button type="button"><span class="wr-num">4</span><span class="wr-label">Review</span></button></li>
+      </ol>
+
       <form class="customer-form" id="customerIntakeForm" novalidate>
-        <section class="card card-pad intake-band">
+
+        <!-- ══════════════════ Step 1 · Department ══════════════════ -->
+        <section class="wizard-step card card-pad" data-step="1">
           <div class="card-head">
             <div>
-              <p class="eyebrow">Store setup</p>
+              <p class="eyebrow">Step 1 of 4</p>
               <h2>Department information</h2>
+              <p class="muted">This titles your store and sets the product code used on every SKU.</p>
             </div>
           </div>
+
           <div class="customer-grid two">
-            <label class="field">Department / organization name
-              <input name="departmentName" required placeholder="Sacramento Fire Department">
+            <label class="field">Department / organization name <em class="req">Required</em>
+              <input name="departmentName" required placeholder="Sacramento Fire Department" autocomplete="organization">
+              <small class="hint">The full public name — this becomes your store title.</small>
             </label>
-            <label class="field">Department code
-              <input name="departmentCode" required maxlength="6" placeholder="SFD">
+            <label class="field">Department code <em class="req">Required</em>
+              <input name="departmentCode" required maxlength="6" placeholder="SFD" style="text-transform:uppercase" autocomplete="off">
+              <small class="hint">3–4 letters used on SKUs and product tags (e.g. VAC, FRF, BNC). We'll confirm it fits our convention.</small>
             </label>
-            <label class="field">Contact name
-              <input name="contactName" required placeholder="Jane Smith">
+            <label class="field">Your name <em class="req">Required</em>
+              <input name="contactName" required placeholder="Jane Smith" autocomplete="name">
             </label>
-            <label class="field">Contact email
-              <input name="contactEmail" required type="email" placeholder="jane@department.gov">
+            <label class="field">Email <em class="req">Required</em>
+              <input name="contactEmail" required type="email" placeholder="jane@department.gov" autocomplete="email">
+              <small class="hint">Where we send the store preview for approval.</small>
             </label>
-            <label class="field">Contact phone
-              <input name="contactPhone" placeholder="555-555-5555">
+            <label class="field">Phone
+              <input name="contactPhone" placeholder="555-555-5555" autocomplete="tel">
             </label>
             <label class="field">Needed by
               <input name="neededBy" type="date">
+              <small class="hint">Optional — helps us prioritize the build.</small>
             </label>
           </div>
-          <label class="field">Anything FN should know before setup?
-            <textarea name="notes" rows="3" placeholder="Union rules, policy notes, approvals, special catalog limits..."></textarea>
+
+          <label class="field">Anything we should know before setup?
+            <textarea name="notes" rows="3" placeholder="Union rules, uniform policy notes, who approves the store, catalog limits…"></textarea>
           </label>
+
+          <div class="wizard-nav">
+            <span></span>
+            <button class="btn btn-primary" type="button" data-next>Continue to artwork</button>
+          </div>
         </section>
 
-        <section class="card card-pad intake-band">
+        <!-- ══════════════════ Step 2 · Artwork ══════════════════ -->
+        <section class="wizard-step card card-pad" data-step="2" hidden>
           <div class="card-head">
             <div>
-              <p class="eyebrow">Logo files</p>
-              <h2>Upload production artwork</h2>
+              <p class="eyebrow">Step 2 of 4</p>
+              <h2>Upload your logo files</h2>
+              <p class="muted">Upload every mark you want available — department seal, station logos, rank insignia, division badges.</p>
             </div>
           </div>
-          <div class="customer-logo-upload">
-            <input id="customerLogos" name="logos" type="file" accept="image/*,.pdf,.ai,.eps" multiple required>
-            <p><b>Accepted:</b> vector AI/EPS for embroidery, or high-resolution PNG/PDF for print and heat transfer.</p>
-            <div class="chips" id="customerLogoList"></div>
-          </div>
-        </section>
 
-        <section class="placement-guide card card-pad" aria-label="Decoration placement guide">
-          <div class="card-head">
+          <div class="spec-callout">
             <div>
-              <p class="eyebrow">Placement guide</p>
-              <h2>Pick the location for each garment</h2>
+              <b>Embroidery</b>
+              <small>Vector <code>.AI</code> or <code>.EPS</code> required for digitizing.</small>
             </div>
-          </div>
-          <div class="placement-grid">
-            <span><b>Front left chest</b><small>Small logo, badge, or station mark</small></span>
-            <span><b>Center back</b><small>Large department graphic or full-back print</small></span>
-            <span><b>Left / right sleeve</b><small>Patch, flag, rank, or secondary logo</small></span>
-            <span><b>Left / right leg</b><small>Shorts and sweatpants placement</small></span>
-            <span><b>Front center / side</b><small>Hat front or side decoration</small></span>
-          </div>
-        </section>
-
-        <section class="card card-pad intake-band">
-          <div class="card-head">
             <div>
-              <p class="eyebrow">Garment selections</p>
-              <h2>Select what belongs in the store</h2>
+              <b>Screen print &amp; heat transfer</b>
+              <small>High-resolution <code>.PNG</code> or <code>.PDF</code>, min. 300&nbsp;DPI at final print size.</small>
+            </div>
+            <div>
+              <b>Not sure?</b>
+              <small>Upload the best file you have — we'll flag anything that needs recreating.</small>
             </div>
           </div>
-          <div id="customerCategories" class="customer-categories"></div>
+
+          <div class="dropzone" id="logoDrop" data-has-files="false" tabindex="0" role="button" aria-label="Upload logo files">
+            <input id="customerLogos" name="logos" type="file" accept="image/*,.pdf,.ai,.eps,.svg" multiple hidden>
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v13"/></svg>
+            <b>Drop logo files here, or click to browse</b>
+            <small>AI, EPS, PDF, PNG, JPG, SVG — up to 20 files</small>
+          </div>
+          <div class="chips" id="customerLogoList"></div>
+          <p class="field-error" id="logoError" hidden></p>
+
+          <div class="wizard-nav">
+            <button class="btn btn-ghost" type="button" data-back>Back</button>
+            <button class="btn btn-primary" type="button" data-next>Continue to garments</button>
+          </div>
         </section>
 
-        <section class="customer-submit card card-pad" id="customerSubmitPanel">
-          <div>
-            <p class="eyebrow">Submit</p>
-            <h2>Send this package to FN</h2>
-            <p class="muted">FN will create the Shopify collection right away, then review products, images, prices, and variants internally before publishing products.</p>
+        <!-- ══════════════════ Step 3 · Garments ══════════════════ -->
+        <section class="wizard-step" data-step="3" hidden>
+
+          <!-- Placement reference straight from the FN store build form. -->
+          <section class="card card-pad placement-guide">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Reference</p>
+                <h2>Where your logo will sit</h2>
+                <p class="muted">These are our production placement standards. Click any diagram to enlarge it, then pick the matching placement on each garment below.</p>
+              </div>
+            </div>
+
+            <div class="placement-gallery">
+              <article class="placement-ref">
+                <figure>
+                  <button type="button" class="pr-img" data-zoom="/reference/logo-placements-garments.png" aria-label="Enlarge logo placement diagram by garment type">
+                    <img src="/reference/logo-placements-garments.png" alt="Diagram of standard logo placements across t-shirts, sweatshirts, polos, button shirts, trousers, jackets, shorts and overalls — front and back views." loading="lazy" width="595" height="672">
+                  </button>
+                  <figcaption>
+                    <b>Placement by garment type</b>
+                    <small>Standard front and back positions for every category in this form.</small>
+                  </figcaption>
+                </figure>
+              </article>
+
+              <article class="placement-ref">
+                <figure>
+                  <button type="button" class="pr-img" data-zoom="/reference/placement-measurements-front-back.png" aria-label="Enlarge front and back placement measurement diagram">
+                    <img src="/reference/placement-measurements-front-back.png" alt="Front and back placement measurements: sleeve, centre front, chest, front hip, back neck, top back, centre back and bottom back, with distances in centimetres." loading="lazy" width="1720" height="848">
+                  </button>
+                  <figcaption>
+                    <b>Exact measurements — tops</b>
+                    <small>Left/right as worn, measured to the centre of the logo. Chest: men 20–21&nbsp;cm, women 16–17&nbsp;cm, child 15–16&nbsp;cm.</small>
+                  </figcaption>
+                </figure>
+              </article>
+
+              <article class="placement-ref">
+                <figure>
+                  <button type="button" class="pr-img" data-zoom="/reference/placement-pants-shorts.png" aria-label="Enlarge pants and shorts placement diagram">
+                    <img src="/reference/placement-pants-shorts.png" alt="Placement options for pants and shorts: outer thigh 5x5 inches, side hip 3x1.5, pocket 3x3, lower leg 3x6, full leg 4x16, waistband 6x2 inches." loading="lazy" width="757" height="814">
+                  </button>
+                  <figcaption>
+                    <b>Pants &amp; shorts</b>
+                    <small>Outer thigh 5×5″ · side hip 3×1.5″ · pocket 3×3″ · lower leg 3×6″ · full leg 4×16″ · waistband 6×2″.</small>
+                  </figcaption>
+                </figure>
+              </article>
+            </div>
+
+            <div class="tier-table" role="table" aria-label="Decoration size tiers">
+              <div role="row" class="tt-head"><span role="columnheader">Size tier</span><span role="columnheader">Typical use</span><span role="columnheader">Approx. width</span></div>
+              <div role="row"><span role="cell"><b>Small</b></span><span role="cell">Left/right chest, sleeve</span><span role="cell">~4″</span></div>
+              <div role="row"><span role="cell"><b>Standard</b></span><span role="cell">Center chest, cap front</span><span role="cell">~6″</span></div>
+              <div role="row"><span role="cell"><b>Large / Full Back</b></span><span role="cell">Center back, full front</span><span role="cell">~8–10″</span></div>
+            </div>
+          </section>
+
+          <section class="card card-pad">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Step 3 of 4</p>
+                <h2>Choose your garments</h2>
+                <p class="muted">Turn on every category you want in the store. Each one opens its own options.</p>
+              </div>
+              <span class="rv-count" id="categoryCount">0 selected</span>
+            </div>
+            <div id="customerCategories" class="customer-categories"></div>
+            <p class="field-error" id="categoryError" hidden></p>
+          </section>
+
+          <div class="wizard-nav card card-pad">
+            <button class="btn btn-ghost" type="button" data-back>Back</button>
+            <button class="btn btn-primary" type="button" data-next>Review request</button>
           </div>
-          <button class="btn btn-primary" type="submit" id="customerSubmitButton">Submit store request</button>
+        </section>
+
+        <!-- ══════════════════ Step 4 · Review ══════════════════ -->
+        <section class="wizard-step" data-step="4" hidden>
+          <section class="card card-pad">
+            <div class="card-head">
+              <div>
+                <p class="eyebrow">Step 4 of 4</p>
+                <h2>Review your request</h2>
+                <p class="muted">Check everything below, then send it to FN. You can go back and change any section.</p>
+              </div>
+            </div>
+            <div id="reviewPanel" class="review-panel"></div>
+          </section>
+
+          <section class="customer-submit card card-pad" id="customerSubmitPanel">
+            <div>
+              <p class="eyebrow">Submit</p>
+              <h2>Send this package to FN</h2>
+              <p class="muted">We'll create your store collection immediately, then our team reviews products, mockups, pricing, and sizing before anything goes live. You'll get an email at the address above when it's ready to approve.</p>
+            </div>
+            <div class="wizard-nav">
+              <button class="btn btn-ghost" type="button" data-back>Back</button>
+              <button class="btn btn-primary" type="submit" id="customerSubmitButton">Submit store request</button>
+            </div>
+          </section>
         </section>
       </form>
     </main>
+
+    <!-- Lightbox for the placement diagrams -->
+    <div class="ref-lightbox" id="refLightbox" hidden>
+      <button type="button" class="rl-close" id="refLightboxClose" aria-label="Close">&times;</button>
+      <img id="refLightboxImg" src="" alt="">
+    </div>
+
+    <script src="/theme.js"></script>
     <script src="/customer-intake.js"></script>
   </body>
 </html>

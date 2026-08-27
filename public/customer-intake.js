@@ -1,3 +1,21 @@
+/* -----------------------------------------------------------------------------
+   Customer store intake.
+
+   A four-step wizard over the FN store build form. The schema is deliberately
+   identical to customerIntakes.js on the server — every category carries the
+   same fixed fields, so the build agent never has to special-case a category.
+
+   Three things this does beyond rendering inputs:
+     • validates per step, so a customer finds a problem on the step that caused
+       it instead of at submit;
+     • autosaves a draft to localStorage (files excluded — the browser will not
+       let us re-populate a file input), so a half-finished form survives a
+       closed tab;
+     • shows the real placement diagrams next to the placement picker, because
+       "Center back" means nothing to someone who hasn't seen the production
+       standard.
+   -------------------------------------------------------------------------- */
+
 const CATEGORIES = [
   { key: "t-shirts", title: "T-Shirts", placements: ["Front left chest", "Center back", "Left sleeve", "Right sleeve"], decorated: true },
   { key: "long-sleeve-shirts", title: "Long Sleeve Shirts", placements: ["Front left chest", "Center back", "Left sleeve", "Right sleeve"], decorated: true },
@@ -12,127 +30,476 @@ const CATEGORIES = [
   { key: "belts", title: "Belts", placements: [], decorated: false, belt: true },
   { key: "hats", title: "Hats", placements: ["Front center", "Side"], decorated: true }
 ];
+
 const METHODS = ["Embroidery", "Screen Print", "Heat Transfer", "Patch", "None"];
 const TIERS = ["Small", "Standard", "Large / Full Back", "Custom"];
 const SIZES = ["S-3XL", "S-5XL", "Youth sizes", "Women's cut", "Other"];
+const DRAFT_KEY = "fnIntakeDraft";
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[c]));
 }
+
 function options(items, selected = "") {
-  return '<option value="">Select</option>' + items.map((item) => '<option value="' + esc(item) + '"' + (item === selected ? ' selected' : '') + '>' + esc(item) + '</option>').join('');
+  return '<option value="">Select…</option>' + items.map((item) =>
+    '<option value="' + esc(item) + '"' + (item === selected ? " selected" : "") + ">" + esc(item) + "</option>").join("");
 }
+
+/* ── Category cards ──────────────────────────────────────────────────────── */
+
 function categoryHtml(category) {
-  const placement = category.placements?.length ? '<label>Placement<select name="placement">' + options(category.placements) + '</select></label>' : '';
-  const decorated = category.decorated ? '<label>Decoration method<select name="decorationMethod">' + options(METHODS) + '</select></label>' +
-    '<label>Decoration size tier<select name="sizeTier">' + options(TIERS) + '</select></label>' +
-    '<label class="custom-tier" hidden>Custom size / dimensions<input name="customSizeTier" placeholder="Example: 3.5 inch sleeve patch"></label>' +
-    placement +
-    '<label>Logo choice<select name="logoChoice"><option value="department">Use department logo</option><option value="additional">Use additional/specific logo</option></select></label>' +
-    '<label>Logo notes<input name="logoNotes" placeholder="Example: station patch for this garment"></label>' +
-    '<label>Name/rank on right chest?<select name="nameRank"><option value="">Select</option><option value="yes">Yes</option><option value="no">No</option></select></label>' : '';
+  const placement = category.placements?.length
+    ? '<label class="field">Placement <em class="req">Required</em><select name="placement">' + options(category.placements) + "</select>" +
+      '<small class="hint">See the diagrams above for exactly where this lands.</small></label>'
+    : "";
+
+  const decorated = category.decorated
+    ? '<label class="field">Decoration method <em class="req">Required</em><select name="decorationMethod">' + options(METHODS) + "</select></label>" +
+      '<label class="field">Decoration size tier<select name="sizeTier">' + options(TIERS) + "</select>" +
+      '<small class="hint">Small ~4″ · Standard ~6″ · Large ~8–10″</small></label>' +
+      '<label class="field custom-tier" hidden>Custom size / dimensions<input name="customSizeTier" placeholder="Example: 3.5 inch sleeve patch"></label>' +
+      placement +
+      '<label class="field">Which logo?<select name="logoChoice"><option value="department">Use our main department logo</option><option value="additional">Use a specific uploaded logo</option></select></label>' +
+      '<label class="field">Logo notes<input name="logoNotes" placeholder="Example: use station-7.png for this garment"></label>' +
+      '<label class="field">Name / rank on right chest?<select name="nameRank"><option value="">Select…</option><option value="yes">Yes</option><option value="no">No</option></select></label>'
+    : "";
+
   const style = category.belt
-    ? '<label>Belt style<input name="beltStyle" placeholder="Basket weave leather, flat leather, or style number"></label>'
-    : '<label>Style / catalog preference<input name="style" placeholder="FN approved catalog style or known style number"></label><label>Color(s)<input name="colors" placeholder="Navy, black, gray..."></label>';
-  const size = category.belt ? '' : '<label>Size range<select name="sizeRange">' + options(SIZES) + '</select></label><label class="other-sizes" hidden>Other sizes<input name="otherSizes" placeholder="Comma-separated sizes"></label>';
+    ? '<label class="field">Belt style <em class="req">Required</em><input name="beltStyle" placeholder="Basket weave leather, flat leather, or a style number"></label>'
+    : '<label class="field">Style / catalog preference<input name="style" placeholder="FN approved catalog style, or a style number you already use"></label>' +
+      '<label class="field">Color(s) <em class="req">Required</em><input name="colors" placeholder="Navy, black, gray…"></label>';
+
+  const size = category.belt
+    ? ""
+    : '<label class="field">Size range <em class="req">Required</em><select name="sizeRange">' + options(SIZES) + "</select></label>" +
+      '<label class="field other-sizes" hidden>Other sizes<input name="otherSizes" placeholder="Comma-separated sizes"></label>';
+
   return '<article class="customer-category" data-category="' + esc(category.key) + '">' +
-    '<header><label class="toggle-line"><input type="checkbox" name="include"> <span>' + esc(category.title) + '</span></label>' +
-    '<small>' + (category.decorated ? 'Decoration and sizing fields appear when selected.' : 'Shortened fixed-field schema.') + '</small></header>' +
-    '<div class="category-fields" hidden>' + style + decorated + size + '<label>Notes<input name="notes" placeholder="Optional details"></label></div></article>';
+    '<header><label class="toggle-line"><input type="checkbox" name="include"> <span>' + esc(category.title) + "</span></label>" +
+    "<small>" + (category.decorated ? "Decoration and sizing options open when selected." : "Short form — no decoration fields.") + "</small></header>" +
+    '<div class="category-fields" hidden>' + style + decorated + size +
+    '<label class="field">Notes<input name="notes" placeholder="Optional details"></label></div></article>';
 }
+
 function renderCategories() {
-  $('#customerCategories').innerHTML = CATEGORIES.map(categoryHtml).join('');
+  $("#customerCategories").innerHTML = CATEGORIES.map(categoryHtml).join("");
 }
+
 function updateCategoryState(card) {
   const active = $('[name="include"]', card).checked;
-  $('.category-fields', card).hidden = !active;
+  $(".category-fields", card).hidden = !active;
+  card.dataset.on = String(active);
 }
+
 function selectedCategories() {
-  return $$('.customer-category').map((card) => {
-    const value = { key: card.dataset.category, title: CATEGORIES.find((item) => item.key === card.dataset.category)?.title || card.dataset.category };
-    $$('input, select', card).forEach((input) => {
-      if (input.name === 'include') value.include = input.checked;
+  return $$(".customer-category").map((card) => {
+    const value = {
+      key: card.dataset.category,
+      title: CATEGORIES.find((item) => item.key === card.dataset.category)?.title || card.dataset.category
+    };
+    $$("input, select", card).forEach((input) => {
+      if (input.name === "include") value.include = input.checked;
       else value[input.name] = input.value.trim();
     });
     return value;
   });
 }
-function updateLogoList() {
-  const files = [...$('#customerLogos').files];
-  $('#customerLogoList').innerHTML = files.map((file) => '<span class="chip"><span class="chip-name">' + esc(file.name) + '</span><span class="chip-size">' + Math.ceil(file.size / 1024) + ' KB</span></span>').join('');
+
+function includedCategories() {
+  return selectedCategories().filter((category) => category.include);
 }
-function payloadFromForm(form) {
-  const data = new FormData(form);
+
+function updateCategoryCount() {
+  const count = includedCategories().length;
+  $("#categoryCount").textContent = count === 1 ? "1 selected" : count + " selected";
+}
+
+/* ── Logo files ──────────────────────────────────────────────────────────── */
+
+// A DataTransfer is the only way to keep an accumulating file list on an
+// <input type=file>: assigning .files replaces, so we rebuild it each time.
+const logoBag = new DataTransfer();
+
+function syncLogoInput() {
+  $("#customerLogos").files = logoBag.files;
+  renderLogoList();
+}
+
+function addLogoFiles(files) {
+  const existing = new Set([...logoBag.files].map((file) => file.name + ":" + file.size));
+  for (const file of files) {
+    if (logoBag.files.length >= 20) break;
+    if (!existing.has(file.name + ":" + file.size)) logoBag.items.add(file);
+  }
+  syncLogoInput();
+}
+
+function renderLogoList() {
+  const files = [...logoBag.files];
+  $("#logoDrop").dataset.hasFiles = String(files.length > 0);
+  $("#customerLogoList").innerHTML = files.map((file, index) =>
+    '<span class="chip"><span class="chip-name">' + esc(file.name) + "</span>" +
+    '<span class="chip-size">' + Math.max(1, Math.ceil(file.size / 1024)) + " KB</span>" +
+    '<button type="button" class="file-remove" data-remove="' + index + '" aria-label="Remove ' + esc(file.name) + '">&times;</button></span>').join("");
+}
+
+/* ── Draft autosave ──────────────────────────────────────────────────────── */
+
+function storeFields() {
+  const data = new FormData($("#customerIntakeForm"));
   return {
-    store: {
-      departmentName: data.get('departmentName'),
-      departmentCode: data.get('departmentCode'),
-      contactName: data.get('contactName'),
-      contactEmail: data.get('contactEmail'),
-      contactPhone: data.get('contactPhone'),
-      neededBy: data.get('neededBy'),
-      notes: data.get('notes')
-    },
-    customerNotes: data.get('notes'),
-    categories: selectedCategories()
+    departmentName: data.get("departmentName"),
+    departmentCode: data.get("departmentCode"),
+    contactName: data.get("contactName"),
+    contactEmail: data.get("contactEmail"),
+    contactPhone: data.get("contactPhone"),
+    neededBy: data.get("neededBy"),
+    notes: data.get("notes")
   };
 }
+
+let saveTimer = null;
+function saveDraft() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ store: storeFields(), categories: selectedCategories() }));
+      const note = $("#saveNote");
+      note.textContent = "Draft saved";
+      note.dataset.on = "true";
+      setTimeout(() => { note.dataset.on = "false"; }, 1800);
+    } catch {
+      /* storage unavailable — the form still works, it just won't survive a reload */
+    }
+  }, 400);
+}
+
+function restoreDraft() {
+  let draft;
+  try {
+    draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+  } catch {
+    return;
+  }
+  if (!draft) return;
+
+  for (const [name, value] of Object.entries(draft.store || {})) {
+    const input = $('[name="' + name + '"]', $("#customerIntakeForm"));
+    if (input && value) input.value = value;
+  }
+  for (const saved of draft.categories || []) {
+    const card = $('.customer-category[data-category="' + saved.key + '"]');
+    if (!card) continue;
+    $$("input, select", card).forEach((input) => {
+      if (input.name === "include") input.checked = Boolean(saved.include);
+      else if (saved[input.name]) input.value = saved[input.name];
+    });
+    updateCategoryState(card);
+    refreshConditionals(card);
+  }
+  updateCategoryCount();
+}
+
+function refreshConditionals(card) {
+  const sizeRange = $('[name="sizeRange"]', card);
+  const otherSizes = $(".other-sizes", card);
+  if (sizeRange && otherSizes) otherSizes.hidden = sizeRange.value !== "Other";
+  const sizeTier = $('[name="sizeTier"]', card);
+  const customTier = $(".custom-tier", card);
+  if (sizeTier && customTier) customTier.hidden = sizeTier.value !== "Custom";
+}
+
+/* ── Wizard ──────────────────────────────────────────────────────────────── */
+
+let currentStep = 1;
+let furthestStep = 1;
+const TOTAL_STEPS = 4;
+
+function showStep(step) {
+  currentStep = step;
+  furthestStep = Math.max(furthestStep, step);
+  $$(".wizard-step").forEach((section) => {
+    section.hidden = Number(section.dataset.step) !== step;
+  });
+  $$("#wizardRail li").forEach((item) => {
+    const value = Number(item.dataset.step);
+    item.dataset.state = value === step ? "current" : value < step ? "done" : "todo";
+    $("button", item).disabled = value > furthestStep;
+  });
+  if (step === TOTAL_STEPS) renderReview();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function markInvalid(input, message) {
+  input.setAttribute("aria-invalid", "true");
+  const field = input.closest(".field");
+  if (field && !$(".field-error", field)) {
+    const node = document.createElement("small");
+    node.className = "field-error";
+    node.textContent = message;
+    field.appendChild(node);
+  }
+}
+
+function clearInvalid(scope) {
+  $$("[aria-invalid]", scope).forEach((input) => input.removeAttribute("aria-invalid"));
+  $$(".field .field-error", scope).forEach((node) => node.remove());
+}
+
+function validateStep(step) {
+  const section = $('.wizard-step[data-step="' + step + '"]');
+  clearInvalid(section);
+  let firstBad = null;
+
+  if (step === 1) {
+    for (const input of $$("input[required]", section)) {
+      if (!input.value.trim()) {
+        markInvalid(input, "This field is required.");
+        firstBad = firstBad || input;
+      } else if (input.type === "email" && !input.checkValidity()) {
+        markInvalid(input, "Enter a valid email address.");
+        firstBad = firstBad || input;
+      }
+    }
+  }
+
+  if (step === 2) {
+    const error = $("#logoError");
+    const ok = logoBag.files.length > 0;
+    error.hidden = ok;
+    error.textContent = ok ? "" : "Upload at least one logo file so we can decorate your garments.";
+    if (!ok) firstBad = $("#logoDrop");
+  }
+
+  if (step === 3) {
+    const included = includedCategories();
+    const error = $("#categoryError");
+    if (!included.length) {
+      error.hidden = false;
+      error.textContent = "Select at least one garment category for the store.";
+      firstBad = $("#customerCategories");
+    } else {
+      error.hidden = true;
+      for (const category of included) {
+        const definition = CATEGORIES.find((item) => item.key === category.key) || {};
+        const card = $('.customer-category[data-category="' + category.key + '"]');
+        const need = [];
+        if (definition.belt) need.push("beltStyle");
+        else {
+          need.push("colors", "sizeRange");
+          if (definition.decorated) {
+            need.push("decorationMethod");
+            if (definition.placements?.length) need.push("placement");
+          }
+        }
+        for (const name of need) {
+          const input = $('[name="' + name + '"]', card);
+          if (input && !input.value.trim()) {
+            markInvalid(input, "Required for " + definition.title + ".");
+            firstBad = firstBad || input;
+          }
+        }
+      }
+    }
+  }
+
+  if (firstBad) {
+    firstBad.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (firstBad.focus) firstBad.focus({ preventScroll: true });
+    return false;
+  }
+  return true;
+}
+
+/* ── Review ──────────────────────────────────────────────────────────────── */
+
+function reviewRow(label, value) {
+  return '<div class="rr"><span>' + esc(label) + "</span><b>" + (value ? esc(value) : '<i class="rr-empty">Not provided</i>') + "</b></div>";
+}
+
+function renderReview() {
+  const store = storeFields();
+  const included = includedCategories();
+
+  const detail = (category) => {
+    const definition = CATEGORIES.find((item) => item.key === category.key) || {};
+    if (definition.belt) return [category.beltStyle].filter(Boolean).join(" · ");
+    const parts = [category.colors, category.style, category.decorationMethod, category.placement,
+      category.sizeTier === "Custom" ? category.customSizeTier : category.sizeTier,
+      category.sizeRange === "Other" ? category.otherSizes : category.sizeRange];
+    return parts.filter(Boolean).join(" · ");
+  };
+
+  $("#reviewPanel").innerHTML =
+    '<div class="review-block"><h3>Department</h3>' +
+    reviewRow("Name", store.departmentName) +
+    reviewRow("Code", store.departmentCode) +
+    reviewRow("Contact", [store.contactName, store.contactEmail].filter(Boolean).join(" · ")) +
+    reviewRow("Phone", store.contactPhone) +
+    reviewRow("Needed by", store.neededBy) +
+    reviewRow("Notes", store.notes) +
+    '<button type="button" class="btn btn-ghost btn-sm" data-goto="1">Edit</button></div>' +
+
+    '<div class="review-block"><h3>Artwork · ' + logoBag.files.length + " file" + (logoBag.files.length === 1 ? "" : "s") + "</h3>" +
+    '<div class="chips">' + [...logoBag.files].map((file) => '<span class="chip"><span class="chip-name">' + esc(file.name) + "</span></span>").join("") + "</div>" +
+    '<button type="button" class="btn btn-ghost btn-sm" data-goto="2">Edit</button></div>' +
+
+    '<div class="review-block"><h3>Garments · ' + included.length + "</h3>" +
+    included.map((category) => '<div class="rr"><span>' + esc(category.title) + "</span><b>" + esc(detail(category)) + "</b></div>").join("") +
+    '<button type="button" class="btn btn-ghost btn-sm" data-goto="3">Edit</button></div>';
+}
+
+/* ── Submit ──────────────────────────────────────────────────────────────── */
+
+function payloadFromForm() {
+  const store = storeFields();
+  return { store, customerNotes: store.notes, categories: selectedCategories() };
+}
+
 function setSubmitState(kind, message) {
-  const panel = $('#customerSubmitPanel');
+  const panel = $("#customerSubmitPanel");
   panel.dataset.state = kind;
-  let node = $('#customerResult');
+  let node = $("#customerResult");
   if (!node) {
-    node = document.createElement('p');
-    node.id = 'customerResult';
-    node.className = 'customer-result';
+    node = document.createElement("p");
+    node.id = "customerResult";
+    node.className = "customer-result";
     panel.appendChild(node);
   }
   node.textContent = message;
 }
+
+function renderSuccess(payload) {
+  const collection = payload.collection
+    ? "<p>Your store collection <b>" + esc(payload.collection.title || payload.departmentName) + "</b> has been created in Shopify.</p>"
+    : "<p>Our team will create your store collection shortly.</p>";
+  $("#main").innerHTML =
+    '<section class="card card-pad intake-done">' +
+    '<span class="done-mark" aria-hidden="true">' +
+    '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>' +
+    "<h1>Request received</h1>" +
+    "<p>Thanks, " + esc(payload.contactName || "") + ". Reference <b>" + esc(String(payload.requestId || "").slice(0, 8).toUpperCase()) + "</b>.</p>" +
+    collection +
+    "<p class='muted'>Next: our team reviews your garments, builds product mockups from your artwork, and checks pricing and sizing. We'll email <b>" +
+    esc(payload.contactEmail || "you") + "</b> when the store is ready to approve.</p>" +
+    '<a class="btn btn-ghost" href="/intake">Submit another department</a></section>';
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+/* ── Wiring ──────────────────────────────────────────────────────────────── */
+
 renderCategories();
-$('#customerLogos').addEventListener('change', updateLogoList);
-document.addEventListener('change', (event) => {
-  const card = event.target.closest('.customer-category');
-  if (!card) return;
-  if (event.target.name === 'include') updateCategoryState(card);
-  if (event.target.name === 'sizeRange') $('.other-sizes', card).hidden = event.target.value !== 'Other';
-  if (event.target.name === 'sizeTier') $('.custom-tier', card).hidden = event.target.value !== 'Custom';
+restoreDraft();
+showStep(1);
+
+$("#logoDrop").addEventListener("click", () => $("#customerLogos").click());
+$("#logoDrop").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    $("#customerLogos").click();
+  }
 });
-$('#customerIntakeForm').addEventListener('submit', async (event) => {
+$("#logoDrop").addEventListener("dragover", (event) => {
   event.preventDefault();
-  const form = event.currentTarget;
-  const button = $('#customerSubmitButton');
-  if (!form.reportValidity()) return;
-  if (![...$('#customerLogos').files].length) {
-    setSubmitState('error', 'Upload at least one logo file.');
-    return;
+  $("#logoDrop").dataset.drag = "true";
+});
+$("#logoDrop").addEventListener("dragleave", () => { $("#logoDrop").dataset.drag = "false"; });
+$("#logoDrop").addEventListener("drop", (event) => {
+  event.preventDefault();
+  $("#logoDrop").dataset.drag = "false";
+  addLogoFiles(event.dataTransfer.files);
+});
+$("#customerLogos").addEventListener("change", (event) => {
+  addLogoFiles(event.target.files);
+});
+$("#customerLogoList").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove]");
+  if (!button) return;
+  logoBag.items.remove(Number(button.dataset.remove));
+  syncLogoInput();
+});
+
+document.addEventListener("change", (event) => {
+  const card = event.target.closest(".customer-category");
+  if (card) {
+    if (event.target.name === "include") updateCategoryState(card);
+    refreshConditionals(card);
+    updateCategoryCount();
   }
-  const included = selectedCategories().filter((category) => category.include);
-  if (!included.length) {
-    setSubmitState('error', 'Select at least one garment category for the store.');
-    return;
+  if (event.target.closest("#customerIntakeForm")) saveDraft();
+});
+document.addEventListener("input", (event) => {
+  if (event.target.closest("#customerIntakeForm")) saveDraft();
+});
+
+document.addEventListener("click", (event) => {
+  const next = event.target.closest("[data-next]");
+  if (next && validateStep(currentStep)) showStep(Math.min(TOTAL_STEPS, currentStep + 1));
+
+  const back = event.target.closest("[data-back]");
+  if (back) showStep(Math.max(1, currentStep - 1));
+
+  const goto = event.target.closest("[data-goto]");
+  if (goto) showStep(Number(goto.dataset.goto));
+
+  const rail = event.target.closest("#wizardRail button");
+  if (rail) {
+    const target = Number(rail.closest("li").dataset.step);
+    if (target <= furthestStep) showStep(target);
   }
+
+  const zoom = event.target.closest("[data-zoom]");
+  if (zoom) {
+    $("#refLightboxImg").src = zoom.dataset.zoom;
+    $("#refLightboxImg").alt = $("img", zoom)?.alt || "";
+    $("#refLightbox").hidden = false;
+    $("#refLightboxClose").focus();
+  }
+
+  if (event.target.closest("#refLightboxClose") || event.target.id === "refLightbox") {
+    $("#refLightbox").hidden = true;
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#refLightbox").hidden) $("#refLightbox").hidden = true;
+});
+
+$("#customerIntakeForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  for (let step = 1; step <= 3; step++) {
+    if (!validateStep(step)) {
+      showStep(step);
+      return;
+    }
+  }
+
+  const button = $("#customerSubmitButton");
   const body = new FormData();
-  body.append('payload', JSON.stringify(payloadFromForm(form)));
-  [...$('#customerLogos').files].forEach((file) => body.append('logos', file));
+  body.append("payload", JSON.stringify(payloadFromForm()));
+  [...logoBag.files].forEach((file) => body.append("logos", file));
+
   button.disabled = true;
-  button.textContent = 'Submitting...';
-  setSubmitState('running', 'Sending the store package to FN.');
+  button.textContent = "Submitting…";
+  setSubmitState("running", "Sending your store package to FN…");
+
   try {
-    const res = await fetch('/api/customer-intakes', { method: 'POST', body });
+    const res = await fetch("/api/customer-intakes", { method: "POST", body });
     const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload.error || 'Submission failed.');
-    const collectionText = payload.collection ? ' Shopify collection created for ' + payload.departmentName + '.' : ' FN will review the collection status.';
-    setSubmitState('success', 'Submitted. Request ' + payload.requestId.slice(0, 8) + ' is in FN review.' + collectionText);
-    form.reset();
-    updateLogoList();
-    $$('.customer-category').forEach(updateCategoryState);
+    if (!res.ok) throw new Error(payload.error || "Submission failed.");
+    try {
+      localStorage.removeItem(DRAFT_KEY);
+    } catch {
+      /* nothing to clear */
+    }
+    const store = storeFields();
+    renderSuccess({ ...payload, contactName: store.contactName, contactEmail: store.contactEmail });
   } catch (error) {
-    setSubmitState('error', error.message);
-  } finally {
+    setSubmitState("error", error.message);
     button.disabled = false;
-    button.textContent = 'Submit store request';
+    button.textContent = "Submit store request";
   }
 });
