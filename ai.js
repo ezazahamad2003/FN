@@ -627,6 +627,104 @@ async function renderDecoratedGarment({ baseBuffer, draftBuffer = null, decorati
 }
 
 /* -----------------------------------------------------------------------------
+   Patch-level artwork integration — the small-artwork renderer.
+
+   A 4-inch crest is ~130px on a full 1024px garment photo, and at that scale
+   an image model garbles the lettering it redraws. The fix is resolution:
+   the placement REGION is cropped and upscaled to the model's full canvas —
+   the crest's text becomes hundreds of pixels tall — the model renders it
+   genuinely printed/embroidered at that scale, the close-up is verified
+   against the original artwork file, and the caller feathers the region back
+   into the photo. Hyper-real integration AND correct lettering.
+   -------------------------------------------------------------------------- */
+
+async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo) {
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Image 1 is a CANDIDATE close-up of artwork applied to a garment. Image 2 is the same close-up BEFORE processing (the artwork correctly positioned but flat). Image 3 is the original artwork file.
+
+Return JSON only:
+{
+  "artworkFaithful": true|false,  // the candidate's artwork matches image 3 exactly: same shapes, colors, layout, and every piece of text spelled EXACTLY the same. Different, garbled, or rearranged letters are ALWAYS unfaithful
+  "artworkProblems": "what differs from the original artwork, if anything",
+  "samePlacement": true|false,    // the artwork sits at the same position and size as in image 2 (small drift is fine)
+  "looksApplied": true|false,     // it reads as genuinely printed/embroidered ON the fabric - follows the surface, plausible lighting - not a flat sticker
+  "fabricIntact": true|false,     // the surrounding fabric, seams, and background match image 2 - nothing else changed
+  "extraArtwork": true|false      // any text or graphic that is not part of the artwork
+}`
+          },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${candidateBuffer.toString("base64")}` } },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${draftBuffer.toString("base64")}` } },
+          { type: "image_url", image_url: { url: `data:${logo.logoMime || "image/png"};base64,${logo.logoBuffer.toString("base64")}` } }
+        ]
+      }
+    ],
+    max_tokens: 300
+  });
+
+  try {
+    const parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() || "{}") || {};
+    const reasons = [];
+    if (parsed.artworkFaithful !== true) reasons.push(`artwork not faithful (${parsed.artworkProblems || "differs from the original"})`);
+    if (parsed.samePlacement !== true) reasons.push("artwork moved or resized");
+    if (parsed.fabricIntact !== true) reasons.push("surrounding fabric changed");
+    if (parsed.extraArtwork === true) reasons.push("extra artwork or text appeared");
+    return { usable: reasons.length === 0, reasons };
+  } catch {
+    return { usable: false, reasons: ["verification response was unreadable"] };
+  }
+}
+
+/**
+ * Render one artwork region so the artwork looks genuinely applied.
+ * `patchBuffer` is a SQUARE close-up crop (upscaled to 1024) with the exact
+ * artwork already composited at the right spot. Returns the integrated patch
+ * or null when no attempt verified.
+ */
+async function integrateArtworkPatch({ patchBuffer, logo, decorationMethod = "", onLog }) {
+  const log = (message) => onLog && onLog(message);
+  const methodPhrase = /embroider/i.test(decorationMethod)
+    ? "embroidered: dense visible thread stitching, slight raised relief, satin-stitch edges"
+    : /patch/i.test(decorationMethod)
+      ? "a sewn-on twill patch: merrowed border, slight thickness, stitched to the fabric"
+      : "screen printed: ink laid into the fabric so the weave texture shows through it subtly";
+  const basePrompt = `Image 1 is a close-up photo of a garment with artwork placed at exactly the right position and size, but it currently looks like a flat digital sticker. Image 2 is the original artwork file. Re-render this close-up photorealistically so the artwork looks genuinely ${methodPhrase}. It must follow the fabric's surface, weave, and any folds, and pick up the photo's real lighting and shadows. Reproduce the artwork EXACTLY as in image 2 — identical shapes, colors, proportions, and text, every word spelled precisely the same, sharp and legible. Do not move or resize it. Keep the surrounding fabric, seams, and background exactly as they are. Nothing else changes.`;
+
+  let prompt = basePrompt;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let candidate;
+    try {
+      candidate = await editImage({
+        images: [
+          { buffer: patchBuffer, mimeType: "image/png", name: "region.png" },
+          { buffer: logo.logoBuffer, mimeType: logo.logoMime || "image/png", name: logo.logoName || "artwork.png" }
+        ],
+        prompt
+      });
+    } catch (error) {
+      log(`patch render attempt ${attempt} failed (${error.message})`);
+      continue;
+    }
+    const verdict = await verifyArtworkPatch(candidate, patchBuffer, logo).catch(() => ({ usable: false, reasons: ["verification unavailable"] }));
+    if (verdict.usable) {
+      log(`patch render accepted on attempt ${attempt}`);
+      return candidate;
+    }
+    log(`patch render attempt ${attempt} rejected: ${verdict.reasons.join("; ")}`);
+    prompt = `${basePrompt} A previous attempt was rejected because: ${verdict.reasons.join("; ")}. Correct exactly these problems.`;
+  }
+  return null;
+}
+
+/* -----------------------------------------------------------------------------
    Supplier product-page facts.
 
    A distributor's product page carries the two things the store listing needs
@@ -1016,6 +1114,7 @@ module.exports = {
   extractPolicyInstructions,
   generateBlankGarment,
   analyzeGarmentGeometry,
+  integrateArtworkPatch,
   extractSupplierFacts,
   generateProductDescription,
   renderDecoratedGarment,

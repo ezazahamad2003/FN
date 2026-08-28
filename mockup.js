@@ -337,18 +337,20 @@ function backdropFraction(map, left, top, width, height) {
 
 function snapToFabric(map, box, left, top, width, height) {
   if (backdropFraction(map, left, top, width, height) <= 0.1) return { left, top };
-  // Slide toward the garment's center in small steps; take the first clean
-  // position, or the cleanest seen if none fully clears.
-  const centerX = box.left + box.width / 2 - width / 2;
-  const centerY = box.top + box.height / 2 - height / 2;
+  // Search outward for the NEAREST clean position — dragging toward the
+  // garment center pulled leg artwork to the inseam; the closest patch of
+  // clean fabric in any direction keeps the intended spot's character.
+  const step = Math.max(6, Math.round(box.width * 0.02));
+  const directions = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]];
   let best = { left, top, fraction: backdropFraction(map, left, top, width, height) };
-  for (let step = 1; step <= 14; step++) {
-    const t = (step / 14) * 0.6;
-    const candidateLeft = Math.round(left + (centerX - left) * t);
-    const candidateTop = Math.round(top + (centerY - top) * t * 0.4); // mostly horizontal
-    const fraction = backdropFraction(map, candidateLeft, candidateTop, width, height);
-    if (fraction <= 0.1) return { left: candidateLeft, top: candidateTop };
-    if (fraction < best.fraction) best = { left: candidateLeft, top: candidateTop, fraction };
+  for (let radius = 1; radius <= 12; radius++) {
+    for (const [dx, dy] of directions) {
+      const candidateLeft = Math.round(left + dx * radius * step);
+      const candidateTop = Math.round(top + dy * radius * step * 0.7);
+      const fraction = backdropFraction(map, candidateLeft, candidateTop, width, height);
+      if (fraction <= 0.1) return { left: candidateLeft, top: candidateTop };
+      if (fraction < best.fraction) best = { left: candidateLeft, top: candidateTop, fraction };
+    }
   }
   return { left: best.left, top: best.top };
 }
@@ -366,6 +368,7 @@ async function compositeDecorationsAt(baseBuffer, placements) {
   const map = await fabricMap(baseBuffer);
   const garment = await garmentBox(baseBuffer, baseMeta);
   const layers = [];
+  const placed = [];
   for (const placement of placements) {
     const { data: logo, info } = await prepareLogo(
       placement.logoBuffer,
@@ -382,9 +385,10 @@ async function compositeDecorationsAt(baseBuffer, placements) {
     ({ left, top } = snapToFabric(map, garment, left, top, info.width, info.height));
     const blended = await fabricBlend(baseBuffer, logo, info, left, top);
     layers.push({ input: blended, left, top });
+    placed.push({ left, top, width: info.width, height: info.height });
   }
-  if (!layers.length) return sharp(baseBuffer).png().toBuffer();
-  return sharp(baseBuffer).composite(layers).png().toBuffer();
+  const buffer = layers.length ? await sharp(baseBuffer).composite(layers).png().toBuffer() : await sharp(baseBuffer).png().toBuffer();
+  return { buffer, placed };
 }
 
 /**
@@ -398,6 +402,7 @@ async function compositeDecorationsOnGarment(baseBuffer, decorations) {
   const map = await fabricMap(baseBuffer);
 
   const layers = [];
+  const placed = [];
   for (const decoration of decorations) {
     const spec = PLACEMENTS[decoration.placementKey] || PLACEMENTS["left-chest"];
     const { data: logo, info } = await prepareLogo(
@@ -419,17 +424,20 @@ async function compositeDecorationsOnGarment(baseBuffer, decorations) {
     ({ left, top } = snapToFabric(map, box, left, top, info.width, info.height));
     const blended = await fabricBlend(baseBuffer, logo, info, left, top);
     layers.push({ input: blended, left, top });
+    placed.push({ left, top, width: info.width, height: info.height });
   }
 
-  if (!layers.length) return sharp(baseBuffer).png().toBuffer();
-  return sharp(baseBuffer).composite(layers).png().toBuffer();
+  const buffer = layers.length ? await sharp(baseBuffer).composite(layers).png().toBuffer() : await sharp(baseBuffer).png().toBuffer();
+  return { buffer, placed };
 }
 
 async function compositeLogoOnGarment(baseBuffer, logoBuffer, placementKey) {
-  return compositeDecorationsOnGarment(baseBuffer, [{ logoBuffer, placementKey }]);
+  const { buffer } = await compositeDecorationsOnGarment(baseBuffer, [{ logoBuffer, placementKey }]);
+  return buffer;
 }
 
 module.exports = {
+  STATIC_PLACEMENTS: PLACEMENTS,
   compositeDecorationsAt,
   compositeDecorationsOnGarment,
   compositeLogoOnGarment,
