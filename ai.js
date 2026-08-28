@@ -644,7 +644,19 @@ async function renderDecoratedGarment({ baseBuffer, draftBuffer = null, decorati
    into the photo. Hyper-real integration AND correct lettering.
    -------------------------------------------------------------------------- */
 
-async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo, decorationMethod = "") {
+const SURFACE_RENDER_PHRASES = {
+  "cap-side": "This spot is the SIDE panel of a cap photographed from the front: the surface curves away steeply. The artwork must WRAP around the panel with strong perspective foreshortening — visibly compressed toward the rear, its far portion turning out of view so only roughly half to two-thirds reads fully, exactly like side-panel embroidery in a real front-view cap photo. Never render it facing the camera flat-on.",
+  sleeve: "This spot is the curved OUTER face of a sleeve: apply a subtle cylindrical wrap — gentle foreshortening toward the sleeve's edges so the artwork follows the arm's roundness instead of sitting perfectly flat.",
+  cuff: "This spot is a rounded knit cuff: give the artwork a slight curve following the cuff's cylinder."
+};
+
+const SURFACE_VERIFY_PHRASES = {
+  "cap-side": "The spot is a cap's SIDE panel seen from the front: CORRECT rendering shows the artwork wrapped and strongly foreshortened, partially turned out of view (roughly half to two-thirds visible). Judge the design and text through that perspective; a flat, fully frontal rendering here is WRONG — set looksApplied false for it.",
+  sleeve: "The spot is a sleeve's curved outer face: slight cylindrical foreshortening is correct and expected; judge the design through it.",
+  cuff: "The spot is a rounded cuff: a slight curve in the artwork is correct."
+};
+
+async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo, decorationMethod = "", surface = "flat") {
   const openai = client();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -657,7 +669,9 @@ async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo, decoration
             type: "text",
             text: `Image 1 is a CANDIDATE close-up of artwork applied to a garment. Image 2 is the same close-up BEFORE processing (the artwork correctly positioned but flat). Image 3 is the original artwork file.
 
-The artwork was INTENTIONALLY applied as ${/embroider/i.test(decorationMethod) ? "EMBROIDERY: stitch texture, thread sheen, satin-stitch borders, and slightly softened or thickened edges are CORRECT and expected — judge the DESIGN (layout, shapes, colors as their thread equivalents) and the exact text, not the flat-vector finish" : /patch/i.test(decorationMethod) ? "a SEWN PATCH: a merrowed border, slight thickness, and fabric texture are CORRECT and expected — judge the design and exact text, not the flat-vector finish" : "SCREEN PRINT: subtle fabric texture through the ink is correct; shapes and colors should otherwise match the file closely"}.
+The artwork was INTENTIONALLY applied as ${/embroider/i.test(decorationMethod) ? "EMBROIDERY: stitch texture, thread sheen, satin-stitch borders, and slightly softened or thickened edges are CORRECT and expected — judge the DESIGN (layout, shapes, colors as their thread equivalents) and the exact text, not the flat-vector finish" : /patch/i.test(decorationMethod) ? "a SEWN PATCH: a merrowed border, slight thickness, and fabric texture are CORRECT and expected — judge the design and exact text, not the flat-vector finish" : "SCREEN PRINT: subtle fabric texture through the ink is correct; shapes and colors should otherwise match the file closely"}.${SURFACE_VERIFY_PHRASES[surface] ? `
+
+${SURFACE_VERIFY_PHRASES[surface]}` : ""}
 
 Return JSON only:
 {
@@ -725,14 +739,14 @@ async function patchBorderIntact(originalCrop, candidateCrop) {
   return total === 0 || changed / total <= 0.12;
 }
 
-async function integrateArtworkPatch({ patchBuffer, logo, decorationMethod = "", onLog }) {
+async function integrateArtworkPatch({ patchBuffer, logo, decorationMethod = "", surface = "flat", onLog }) {
   const log = (message) => onLog && onLog(message);
   const methodPhrase = /embroider/i.test(decorationMethod)
     ? "embroidered: dense visible thread stitching, slight raised relief, satin-stitch edges"
     : /patch/i.test(decorationMethod)
       ? "a sewn-on twill patch: merrowed border, slight thickness, stitched to the fabric"
       : "screen printed: ink laid into the fabric so the weave texture shows through it subtly";
-  const basePrompt = `Image 1 is a close-up photo of a garment with artwork placed at exactly the right position and size, but it currently looks like a flat digital sticker. Image 2 is the original artwork file. Re-render this close-up photorealistically so the artwork looks genuinely ${methodPhrase}. It must follow the fabric's surface, weave, and any folds, and pick up the photo's real lighting and shadows. Reproduce the artwork EXACTLY as in image 2 — identical shapes, colors, proportions, and text, every word spelled precisely the same, sharp and legible. Do not move or resize it. Keep the surrounding fabric, seams, and background exactly as they are. Nothing else changes.`;
+  const basePrompt = `Image 1 is a close-up photo of a garment with artwork placed at exactly the right position and size, but it currently looks like a flat digital sticker. Image 2 is the original artwork file. Re-render this close-up photorealistically so the artwork looks genuinely ${methodPhrase}. It must follow the fabric's surface, weave, and any folds, and pick up the photo's real lighting and shadows.${SURFACE_RENDER_PHRASES[surface] ? ` ${SURFACE_RENDER_PHRASES[surface]}` : ""} Reproduce the artwork EXACTLY as in image 2 — identical shapes, colors, proportions, and text, every word spelled precisely the same, sharp and legible. Do not move or resize it. Keep the surrounding fabric, seams, and background exactly as they are. Nothing else changes.`;
 
   let prompt = basePrompt;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -754,7 +768,7 @@ async function integrateArtworkPatch({ patchBuffer, logo, decorationMethod = "",
       prompt = `${basePrompt} A previous attempt enlarged the artwork or painted to the edge of the image. Keep the artwork at EXACTLY its original position and size, and leave the outer area of the image completely untouched.`;
       continue;
     }
-    const verdict = await verifyArtworkPatch(candidate, patchBuffer, logo, decorationMethod).catch(() => ({ usable: false, reasons: ["verification unavailable"] }));
+    const verdict = await verifyArtworkPatch(candidate, patchBuffer, logo, decorationMethod, surface).catch(() => ({ usable: false, reasons: ["verification unavailable"] }));
     if (verdict.usable) {
       log(`patch render accepted on attempt ${attempt}`);
       return candidate;

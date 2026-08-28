@@ -57,6 +57,31 @@ function widthPercent(tier, garmentWidthInches) {
   return Math.max(5, Math.min(90, Math.round((tierInches(tier) / width) * 100)));
 }
 
+/* Some spots sit on surfaces the camera sees at an angle. Artwork there must
+   not read as a flat frontal decal: a cap's SIDE panel curves away steeply
+   (the mark shows roughly half, foreshortened), a sleeve's outer face has a
+   gentle cylindrical curve. The draft is pre-squeezed so even the fallback
+   composite reads angled, and the renderer + verifier are told what wrap to
+   produce and accept. */
+function surfaceFor(key) {
+  if (key === "cap-side") return "cap-side";
+  if (/sleeve/.test(key)) return "sleeve";
+  if (key === "beanie-cuff") return "cuff";
+  return "flat";
+}
+
+const SURFACE_SQUEEZE = { "cap-side": 0.58, sleeve: 0.88, cuff: 0.95, flat: 1 };
+
+async function squeezeLogo(buffer, factor) {
+  if (factor >= 1) return buffer;
+  const meta = await sharp(buffer).metadata();
+  if (!meta.width || !meta.height) return buffer;
+  return sharp(buffer)
+    .resize(Math.max(1, Math.round(meta.width * factor)), meta.height, { fit: "fill" })
+    .png()
+    .toBuffer();
+}
+
 function widthPhraseFor(decoration, garmentWidthInches) {
   const inches = tierInches(decoration.tier);
   const pct = widthPercent(decoration.tier, garmentWidthInches);
@@ -168,18 +193,26 @@ async function measureGeometryUncached(baseBuffer, decorations, onLog) {
 async function measuredComposite({ baseBuffer, decorations, geometry, onLog }) {
   if (!geometry) {
     const flat = [];
-    decorations.forEach((decoration, index) => {
-      for (const placementKey of decoration.keys || []) flat.push({ logoBuffer: decoration.logo.buffer, placementKey, decorationIndex: index });
-    });
+    for (const [index, decoration] of decorations.entries()) {
+      for (const placementKey of decoration.keys || []) {
+        const surface = surfaceFor(placementKey);
+        flat.push({
+          logoBuffer: await squeezeLogo(decoration.logo.buffer, SURFACE_SQUEEZE[surface]),
+          placementKey,
+          decorationIndex: index,
+          surface
+        });
+      }
+    }
     const { buffer, placed } = await compositeDecorationsOnGarment(baseBuffer, flat);
-    return { buffer, placed: placed.map((entry, i) => ({ ...entry, decorationIndex: flat[i].decorationIndex })) };
+    return { buffer, placed: placed.map((entry, i) => ({ ...entry, decorationIndex: flat[i].decorationIndex, surface: flat[i].surface })) };
   }
   const meta = await sharp(baseBuffer).metadata();
   const garmentWidthPx = geometry.garment.w * meta.width;
   const widthInches = geometry.garmentWidthInches || DEFAULT_GARMENT_WIDTH_INCHES;
 
   const placements = [];
-  decorations.forEach((decoration, index) => {
+  for (const [index, decoration] of decorations.entries()) {
     for (const key of decoration.keys || []) {
       const spot = geometry.spots[key];
       const box = {
@@ -193,20 +226,22 @@ async function measuredComposite({ baseBuffer, decorations, geometry, onLog }) {
       // spot box is exactly how chest crests grew past their tier.
       const physical = (tierInches(decoration.tier) / widthInches) * garmentWidthPx;
       const artWidth = Math.max(36, Math.min(physical, box.width * 0.82));
+      const surface = surfaceFor(key);
       placements.push({
-        logoBuffer: decoration.logo.buffer,
+        logoBuffer: await squeezeLogo(decoration.logo.buffer, SURFACE_SQUEEZE[surface]),
         box,
         maxWidth: artWidth,
         maxHeight: box.height * 0.9,
         // Large graphics hang from the top of the print area (just below the
         // collar), the production standard; small crests center in theirs.
         anchorTop: !tierIsSmall(decoration.tier) && /back|full/.test(key),
-        decorationIndex: index
+        decorationIndex: index,
+        surface
       });
     }
-  });
+  }
   const { buffer, placed } = await compositeDecorationsAt(baseBuffer, placements);
-  return { buffer, placed: placed.map((entry, i) => ({ ...entry, decorationIndex: placements[i].decorationIndex })) };
+  return { buffer, placed: placed.map((entry, i) => ({ ...entry, decorationIndex: placements[i].decorationIndex, surface: placements[i].surface })) };
 }
 
 /* ── Patch rendering ─────────────────────────────────────────────────────── */
@@ -263,6 +298,7 @@ async function patchRender({ workingBuffer, placedBox, decoration, method, onLog
       logoName: decoration.logo.originalName
     },
     decorationMethod: method,
+    surface: placedBox.surface || "flat",
     onLog
   });
   if (!integrated) return null;
