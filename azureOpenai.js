@@ -261,37 +261,53 @@ async function generateImage(options) {
    faithful. Runs on direct OpenAI: the Azure resource has no image
    deployment (gpt-image-1 is not offered in its region).
    -------------------------------------------------------------------------- */
+// Parameters newer models reject are learned once per model and skipped
+// afterwards (gpt-image-2 dropped input_fidelity — high fidelity is native).
+const unsupportedEditParams = new Map();
+
 async function editImage({ images, prompt, size = "1024x1024", quality = "high" }) {
   if (!openAIConfigured()) {
-    throw new Error("OPENAI_API_KEY is required for image edits (gpt-image-1).");
+    throw new Error("OPENAI_API_KEY is required for image edits.");
   }
   if (!globalThis.fetch || !globalThis.FormData || !globalThis.Blob) {
     throw new Error("Node 18 fetch, FormData, and Blob are required for image edits.");
   }
-  const form = new FormData();
-  form.append("model", process.env.OPENAI_IMAGE_MODEL || "gpt-image-1");
-  images.forEach((image, index) => {
-    form.append("image[]", new Blob([image.buffer], { type: image.mimeType || "image/png" }), image.name || `image-${index}.png`);
-  });
-  form.append("prompt", prompt);
-  form.append("n", "1");
-  form.append("size", size);
-  form.append("quality", quality);
-  form.append("input_fidelity", "high");
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  const skip = unsupportedEditParams.get(model) || new Set();
 
-  const res = await globalThis.fetch("https://api.openai.com/v1/images/edits", {
-    method: "POST",
-    headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    body: form
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const detail = json.error?.message || JSON.stringify(json).slice(0, 400) || "unknown error";
-    throw new Error(`OpenAI image edit failed (${res.status}): ${detail}`);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const form = new FormData();
+    form.append("model", model);
+    images.forEach((image, index) => {
+      form.append("image[]", new Blob([image.buffer], { type: image.mimeType || "image/png" }), image.name || `image-${index}.png`);
+    });
+    form.append("prompt", prompt);
+    form.append("n", "1");
+    for (const [key, value] of [["size", size], ["quality", quality], ["input_fidelity", "high"]]) {
+      if (!skip.has(key)) form.append(key, value);
+    }
+
+    const res = await globalThis.fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: form
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = json.error?.message || JSON.stringify(json).slice(0, 400) || "unknown error";
+      const unsupported = detail.match(/does not support the '([a-z_]+)' parameter/i);
+      if (unsupported) {
+        skip.add(unsupported[1]);
+        unsupportedEditParams.set(model, skip);
+        continue;
+      }
+      throw new Error(`OpenAI image edit failed (${res.status}): ${detail}`);
+    }
+    const image = json.data?.[0];
+    if (!image?.b64_json) throw new Error("Image edit returned no image data.");
+    return Buffer.from(image.b64_json, "base64");
   }
-  const image = json.data?.[0];
-  if (!image?.b64_json) throw new Error("Image edit returned no image data.");
-  return Buffer.from(image.b64_json, "base64");
+  throw new Error("OpenAI image edit failed: could not find a parameter set the model accepts.");
 }
 
 async function azureTranscribeAudio({ buffer, mimeType = "audio/webm", filename = "voice.webm", language = "en" }) {

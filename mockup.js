@@ -42,12 +42,16 @@ const PLACEMENTS = {
   // the backdrop on these cuts.
   "left-sleeve-long": { cx: 0.885, cy: 0.44, w: 0.08, h: 0.09 },
   "right-sleeve-long": { cx: 0.115, cy: 0.44, w: 0.08, h: 0.09 },
-  // Caps: centered on the front panel, above the brim.
-  "front-panel": { cx: 0.5, cy: 0.44, w: 0.34, h: 0.22 },
+  // Caps: centered on the front panel, above the brim. The reference stores
+  // (Woodbridge, Alameda, MU caps) carry cap artwork BIG — spanning roughly
+  // half to two-thirds of the cap's visible width — so the box budgets for
+  // that; the tier arithmetic still sets the true physical size.
+  "front-panel": { cx: 0.5, cy: 0.45, w: 0.56, h: 0.32 },
   // Cap side decoration sits over the wearer's left temple panel.
   "cap-side": { cx: 0.74, cy: 0.5, w: 0.16, h: 0.14 },
-  // Beanies: decoration sits on the turned-up cuff, near the bottom edge.
-  "beanie-cuff": { cx: 0.5, cy: 0.74, w: 0.3, h: 0.14 },
+  // Beanies: decoration fills the front face of the turned-up cuff — about
+  // half the beanie's width in the reference stores, not a small tag.
+  "beanie-cuff": { cx: 0.5, cy: 0.74, w: 0.44, h: 0.17 },
   // Legwear: OUTER thigh, well clear of the crotch seam. On a flat lay the
   // outer face of each leg sits near the garment's edge, not at 0.3/0.7 —
   // those coordinates drifted the artwork toward the inseam.

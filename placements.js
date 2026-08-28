@@ -68,7 +68,8 @@ const TOP_PLACEMENTS = {
   "front center": {
     label: "Front center (cap)",
     face: "front",
-    guidance: "centred on the cap front panel, sitting just above the brim seam"
+    guidance:
+      "centred on the cap front panel, sitting just above the brim seam and filling the panel generously — team-cap scale, roughly half to two-thirds of the cap's width"
   },
   side: {
     label: "Side (cap)",
