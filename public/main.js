@@ -1082,12 +1082,14 @@ const views = {
   departments: el("viewDepartments"),
   department: el("viewDepartment"),
   onboarding: el("viewOnboarding"),
-  newStores: el("viewNewStores")
+  newStores: el("viewNewStores"),
+  storeDetail: el("viewStoreDetail")
 };
 const departmentsBody = el("departmentsBody");
 const departmentDetailBody = el("departmentDetailBody");
 const departmentSearch = el("departmentSearch");
 const newStoresBody = el("newStoresBody");
+const storeDetailBody = el("storeDetailBody");
 const refreshNewStores = el("refreshNewStores");
 
 // Collections are fetched once per visit and filtered client-side — the list is
@@ -1184,6 +1186,54 @@ function intakeStatusLabel(status) {
   return String(status || "new").replace(/-/g, " ");
 }
 
+/* Every intake status collapses onto the shared semantic palette, so a card,
+   its chip, and its progress bar all read the same way. */
+function intakeStatusTone(status) {
+  const value = String(status || "new");
+  if (/^built$/.test(value)) return "ok";
+  if (/error|partial/.test(value)) return "warn";
+  if (/building|planned|collection-created/.test(value)) return "info";
+  return "muted";
+}
+
+function storeInitials(name) {
+  return String(name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0].toUpperCase())
+    .join("") || "?";
+}
+
+function storeCardHtml(record) {
+  const name = record.store?.departmentName || "Untitled department";
+  const code = record.store?.departmentCode || "No code yet";
+  const included = record.summary?.includedCount ?? 0;
+  const products = record.summary?.productCount ?? included;
+  const created = String(record.createdAt || "").slice(0, 10);
+  const tone = intakeStatusTone(record.status);
+  const build = record.build;
+  const steps = build?.steps || [];
+  const doneSteps = steps.filter((step) => step.state === "complete").length;
+  const pct = steps.length ? Math.round((doneSteps / steps.length) * 100) : 0;
+  const buildLine = build
+    ? `<div class="store-card-progress" data-tone="${intakeStatusTone(build.state === "complete" ? "built" : build.state === "running" ? "building" : "build-error")}">
+        <span class="scp-bar"><span style="width:${pct}%"></span></span>
+        <small>${escapeHtml(build.state === "running" ? `Building — step ${Math.min(doneSteps + 1, steps.length)} of ${steps.length}` : `${build.products?.length || 0} product${(build.products?.length || 0) === 1 ? "" : "s"} · ${escapeHtml(build.state)}`)}</small>
+      </div>`
+    : `<div class="store-card-progress" data-tone="muted"><small>Not built yet</small></div>`;
+  return `
+    <a class="store-card" href="#/new-stores/${encodeURIComponent(record.id)}" data-tone="${tone}">
+      <span class="store-card-badge" data-tone="${tone}" aria-hidden="true">${escapeHtml(storeInitials(name))}</span>
+      <span class="store-card-body">
+        <b>${escapeHtml(name)}</b>
+        <small>${escapeHtml(code)} · ${included} categor${included === 1 ? "y" : "ies"} · ${products} garment${products === 1 ? "" : "s"}${created ? " · " + escapeHtml(created) : ""}</small>
+        ${buildLine}
+      </span>
+      <em class="status-chip" data-tone="${tone}">${escapeHtml(intakeStatusLabel(record.status))}</em>
+    </a>`;
+}
+
 function renderNewStoresShell(records) {
   if (!newStoresBody) return;
   if (!records.length) {
@@ -1193,71 +1243,115 @@ function renderNewStoresShell(records) {
     });
     return;
   }
-  newStoresBody.innerHTML = `
-    <div class="store-queue-grid">
-      <aside class="store-request-list" aria-label="Customer store requests">
-        ${records.map((record, index) => `
-          <button class="store-request-card" type="button" data-intake-id="${escapeHtml(record.id)}" data-active="${index === 0 ? "true" : "false"}">
-            <span>
-              <b>${escapeHtml(record.departmentName || record.store?.departmentName || "Untitled department")}</b>
-              <small>${escapeHtml(record.departmentCode || record.store?.departmentCode || "No code yet")} - ${escapeHtml(record.summary?.includedCount ?? 0)} categories</small>
-            </span>
-            <em>${escapeHtml(intakeStatusLabel(record.status))}</em>
-          </button>
-        `).join("")}
-      </aside>
-      <section class="store-review-panel" id="storeReviewPanel">
-        ${stateBlock({ title: "Loading store request", sub: "Opening the newest customer submission.", spinner: true })}
-      </section>
-    </div>`;
-  openCustomerIntake(records[0].id);
+  newStoresBody.innerHTML = `<div class="store-card-grid">${records.map(storeCardHtml).join("")}</div>`;
 }
 
 /* The editor mirrors customerIntakes.js normalizeCategory EXACTLY. A field
    name that drifts from that schema is silently dropped by the server's
    normalize pass on save — which is how the previous version of this editor
-   managed to discard every category edit an operator made. */
+   managed to discard every category edit an operator made. Categories carry a
+   variants[] array: one entry per version of the garment (its own vendor,
+   color, decoration, and logo assignment). */
 const INTAKE_METHODS = ["Embroidery", "Screen Print", "Heat Transfer", "Patch", "None"];
 const INTAKE_TIERS = ["Small", "Standard", "Large / Full Back", "Custom"];
 const INTAKE_SIZE_RANGES = ["S-3XL", "S-5XL", "Youth sizes", "Women's cut", "Other"];
 
 function intakeOption(items, selected) {
-  return '<option value="">—</option>' + items.map((item) =>
+  const listed = items.includes(selected) || !selected
+    ? ""
+    : `<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}</option>`;
+  return '<option value="">—</option>' + listed + items.map((item) =>
     `<option value="${escapeHtml(item)}" ${item === selected ? "selected" : ""}>${escapeHtml(item)}</option>`).join("");
 }
 
-function categoryEditor(category) {
-  const enabled = category.include ? "checked" : "";
+/* Placement choices differ per category; offer what the customer form offers. */
+const INTAKE_PLACEMENTS_BY_KEY = {
+  "shorts": ["Left leg", "Right leg"],
+  "sweatpants": ["Left leg", "Right leg"],
+  "class-b-uniform-shirt": ["Left sleeve", "Right sleeve", "Both sleeves"],
+  "class-b-uniform-pants": [],
+  "belts": [],
+  "hats": ["Front center", "Side"]
+};
+
+function intakePlacementsFor(key) {
+  return INTAKE_PLACEMENTS_BY_KEY[key] ?? ["Front left chest", "Center back", "Left sleeve", "Right sleeve"];
+}
+
+function intakeLogoPicker(record, selectedSlugs) {
+  const selected = new Set(selectedSlugs || []);
+  const chips = (record.logos || []).map((logo) => {
+    const thumb = String(logo.dataUrl || "").startsWith("data:image/")
+      ? `<img src="${escapeHtml(logo.dataUrl)}" alt="">`
+      : `<span class="logo-chip-doc" aria-hidden="true">${escapeHtml((String(logo.name || "file").split(".").pop() || "file").toUpperCase().slice(0, 4))}</span>`;
+    return `<label class="logo-chip"><input type="checkbox" name="logoPick" value="${escapeHtml(logo.name)}" ${selected.has(logo.name) ? "checked" : ""}>${thumb}<span class="logo-chip-name">${escapeHtml(logo.name)}</span></label>`;
+  }).join("");
+  return `<div class="logo-pick">${chips || '<span class="logo-pick-empty">No logo files stored on this request.</span>'}</div>`;
+}
+
+function intakeVariantEditor(record, category, variant, index, count, placements) {
+  return `
+    <fieldset class="variant-editor" data-variant-id="${escapeHtml(variant.id || "v" + (index + 1))}">
+      <div class="variant-head">
+        <span class="variant-title">Version ${index + 1}</span>
+        <button type="button" class="variant-remove" data-remove-intake-variant ${count === 1 ? "hidden" : ""} aria-label="Remove version ${index + 1}">&times;</button>
+      </div>
+      <div class="category-edit-grid">
+        <label><span>Vendor / brand</span><input name="vendor" value="${escapeHtml(variant.vendor || "")}" placeholder="Sourcing agent pulls this vendor's photo"></label>
+        <label><span>Style number</span><input name="styleNumber" value="${escapeHtml(variant.styleNumber || "")}"></label>
+        <label><span>Color(s)</span><input name="colors" value="${escapeHtml(variant.colors || "")}"></label>
+        <label><span>Style notes</span><input name="style" value="${escapeHtml(variant.style || "")}"></label>
+        <label><span>Decoration method</span><select name="decorationMethod">${intakeOption(INTAKE_METHODS, variant.decorationMethod)}</select></label>
+        <label><span>Size tier</span><select name="sizeTier">${intakeOption(INTAKE_TIERS, variant.sizeTier)}</select></label>
+        <label><span>Custom tier size</span><input name="customSizeTier" value="${escapeHtml(variant.customSizeTier || "")}"></label>
+        <label><span>Placement</span><select name="placement">${intakeOption(placements, variant.placement)}</select></label>
+        <label><span>Name/rank right chest</span><select name="nameRank">
+          <option value="" ${!variant.nameRank ? "selected" : ""}>—</option>
+          <option value="yes" ${variant.nameRank === "yes" ? "selected" : ""}>Yes</option>
+          <option value="no" ${variant.nameRank === "no" ? "selected" : ""}>No</option>
+        </select></label>
+        <label><span>Size range</span><select name="sizeRange">${intakeOption(INTAKE_SIZE_RANGES, variant.sizeRange)}</select></label>
+        <label><span>Other sizes</span><input name="otherSizes" value="${escapeHtml(variant.otherSizes || "")}"></label>
+        <label><span>Version notes</span><input name="notes" value="${escapeHtml(variant.notes || "")}"></label>
+        <label><span>Logo notes${variant.logoNotes ? "" : " (legacy)"}</span><input name="logoNotes" value="${escapeHtml(variant.logoNotes || "")}" placeholder="Free-text assignment from older intakes"></label>
+      </div>
+      <div class="ce-logos">
+        <span class="ce-logos-label">Logos on this version <small>none selected = every uploaded logo${variant.logoNotes ? ", unless the logo notes name one" : ""}</small></span>
+        ${intakeLogoPicker(record, variant.logoSlugs)}
+      </div>
+    </fieldset>`;
+}
+
+function categoryEditor(record, category) {
+  const isBelt = category.key === "belts";
+  const variants = category.variants?.length ? category.variants : [category];
+  const versionNote = !isBelt && variants.length > 1 ? ` · ${variants.length} versions` : "";
+  const placements = intakePlacementsFor(category.key);
+
+  const body = isBelt
+    ? `<div class="category-edit-grid">
+        <label><span>Belt style</span><input name="beltStyle" value="${escapeHtml(category.beltStyle || "")}"></label>
+        <label><span>Notes</span><input name="categoryNotes" value="${escapeHtml(category.notes || "")}"></label>
+      </div>`
+    : `<div class="variant-editor-list">
+        ${variants.map((variant, index) => intakeVariantEditor(record, category, variant, index, variants.length, placements)).join("")}
+      </div>
+      <div class="variant-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-add-intake-variant>+ Add version</button>
+      </div>
+      <div class="category-edit-grid">
+        <label class="span-2"><span>Category notes</span><input name="categoryNotes" value="${escapeHtml(category.notes || "")}"></label>
+      </div>`;
+
   return `
     <details class="intake-category-editor" data-category-key="${escapeHtml(category.key)}" ${category.include ? "open" : ""}>
       <summary>
         <span>${escapeHtml(category.title)}</span>
-        <em>${category.include ? "Included" : "Skipped"}</em>
+        <em>${category.include ? "Included" + versionNote : "Skipped"}</em>
       </summary>
-      <div class="category-edit-grid">
-        <label><span>Include</span><input type="checkbox" name="include" ${enabled}></label>
-        <label><span>Vendor / brand</span><input name="vendor" value="${escapeHtml(category.vendor || "")}"></label>
-        <label><span>Style number</span><input name="styleNumber" value="${escapeHtml(category.styleNumber || "")}"></label>
-        <label><span>Color(s)</span><input name="colors" value="${escapeHtml(category.colors || "")}"></label>
-        <label><span>Style notes</span><input name="style" value="${escapeHtml(category.style || "")}"></label>
-        <label><span>Belt style</span><input name="beltStyle" value="${escapeHtml(category.beltStyle || "")}"></label>
-        <label><span>Decoration method</span><select name="decorationMethod">${intakeOption(INTAKE_METHODS, category.decorationMethod)}</select></label>
-        <label><span>Size tier</span><select name="sizeTier">${intakeOption(INTAKE_TIERS, category.sizeTier)}</select></label>
-        <label><span>Custom tier size</span><input name="customSizeTier" value="${escapeHtml(category.customSizeTier || "")}"></label>
-        <label><span>Placement</span><input name="placement" value="${escapeHtml(category.placement || "")}"></label>
-        <label><span>Logo choice</span><select name="logoChoice">
-          <option value="department" ${category.logoChoice !== "additional" ? "selected" : ""}>Department logo</option>
-          <option value="additional" ${category.logoChoice === "additional" ? "selected" : ""}>Specific uploaded logo</option>
-        </select></label>
-        <label><span>Logo notes</span><input name="logoNotes" value="${escapeHtml(category.logoNotes || "")}"></label>
-        <label><span>Name/rank right chest</span><select name="nameRank">
-          <option value="" ${!category.nameRank ? "selected" : ""}>—</option>
-          <option value="yes" ${category.nameRank === "yes" ? "selected" : ""}>Yes</option>
-          <option value="no" ${category.nameRank === "no" ? "selected" : ""}>No</option>
-        </select></label>
-        <label><span>Size range</span><select name="sizeRange">${intakeOption(INTAKE_SIZE_RANGES, category.sizeRange)}</select></label>
-        <label><span>Other sizes</span><input name="otherSizes" value="${escapeHtml(category.otherSizes || "")}"></label>
-        <label><span>Notes</span><input name="notes" value="${escapeHtml(category.notes || "")}"></label>
+      <div class="category-editor-body">
+        <label class="ce-include"><input type="checkbox" name="include" ${category.include ? "checked" : ""}> <span>Include this category</span></label>
+        ${body}
       </div>
     </details>`;
 }
@@ -1277,43 +1371,46 @@ function collectEditedIntake(record) {
   next.categories = next.categories.map((category) => {
     const node = panel.querySelector(`[data-category-key="${CSS.escape(category.key)}"]`);
     if (!node) return category;
-    const read = (name) => node.querySelector(`[name='${name}']`)?.value.trim() ?? "";
-    return {
-      ...category,
-      include: Boolean(node.querySelector("[name='include']")?.checked),
-      vendor: read("vendor"),
-      styleNumber: read("styleNumber"),
-      colors: read("colors"),
-      style: read("style"),
-      beltStyle: read("beltStyle"),
-      decorationMethod: read("decorationMethod"),
-      sizeTier: read("sizeTier"),
-      customSizeTier: read("customSizeTier"),
-      placement: read("placement"),
-      logoChoice: read("logoChoice") || "department",
-      logoNotes: read("logoNotes"),
-      nameRank: read("nameRank"),
-      sizeRange: read("sizeRange"),
-      otherSizes: read("otherSizes"),
-      notes: read("notes")
-    };
+    const include = Boolean(node.querySelector("[name='include']")?.checked);
+    const notes = node.querySelector("[name='categoryNotes']")?.value.trim() ?? category.notes ?? "";
+    const beltInput = node.querySelector("[name='beltStyle']");
+    if (beltInput) {
+      return { key: category.key, title: category.title, include, notes, beltStyle: beltInput.value.trim() };
+    }
+    const variants = [...node.querySelectorAll(".variant-editor")].map((block, index) => {
+      const read = (name) => block.querySelector(`[name='${name}']`)?.value.trim() ?? "";
+      const sizeRange = read("sizeRange");
+      return {
+        id: block.dataset.variantId || `v${index + 1}`,
+        vendor: read("vendor"),
+        styleNumber: read("styleNumber"),
+        colors: read("colors"),
+        style: read("style"),
+        decorationMethod: read("decorationMethod"),
+        sizeTier: read("sizeTier"),
+        customSizeTier: read("customSizeTier"),
+        placement: read("placement"),
+        logoSlugs: [...block.querySelectorAll("[name='logoPick']:checked")].map((input) => input.value),
+        // logoNotes carries legacy free-text assignments; dropping it here
+        // silently destroyed them on the next save (the historic silent-drop
+        // bug class this file warns about).
+        logoNotes: read("logoNotes"),
+        nameRank: read("nameRank"),
+        sizeRange,
+        // A stale custom-size value with a preset range must not ride along -
+        // the builder gives custom sizes precedence.
+        otherSizes: sizeRange === "Other" ? read("otherSizes") : "",
+        notes: read("notes")
+      };
+    });
+    // Fresh objects on purpose: carrying the old flat mirror fields alongside
+    // edited variants would just be stale duplicates - the server recomputes
+    // the mirror from variants[0]. logoChoice is the one exception: it is not
+    // derivable from the fields this editor renders, and legacy free-text
+    // assignments (logoChoice "additional" + logoNotes) die without it.
+    return { key: category.key, title: category.title, include, notes, logoChoice: category.logoChoice, variants };
   });
   return next;
-}
-
-function fileFromStoredLogo(logo, index) {
-  const match = String(logo.dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
-  const binary = atob(match[2]);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new File([bytes], logo.name || `customer-logo-${index + 1}`, { type: logo.mimeType || match[1] });
-}
-
-function setFileInputFiles(input, files) {
-  const transfer = new DataTransfer();
-  files.filter(Boolean).forEach((file) => transfer.items.add(file));
-  input.files = transfer.files;
 }
 
 async function saveCustomerIntake(record, status = "in-review") {
@@ -1379,15 +1476,19 @@ function buildPanelHtml(record) {
 let buildPollTimer = null;
 function pollBuild(id) {
   clearTimeout(buildPollTimer);
+  const stillOpen = () => {
+    const route = parseRoute();
+    return route.name === "storeDetail" && route.id === id;
+  };
   buildPollTimer = setTimeout(async () => {
+    if (!stillOpen()) return;
     try {
       const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(id)}`);
       const payload = await res.json().catch(() => ({}));
-      const active = document.querySelector(`.store-request-card[data-active="true"]`);
-      if (res.ok && payload.intake && active?.dataset.intakeId === id) {
+      if (res.ok && payload.intake && stillOpen()) {
         const record = payload.intake;
         // Surgical repaint: only the build panel and the build button. A full
-        // editor repaint every 5s would wipe whatever the operator is typing.
+        // page repaint every 5s would wipe whatever the operator is typing.
         const panel = el("storeReviewPanel");
         const buildNode = panel?.querySelector(".build-panel");
         if (buildNode) buildNode.outerHTML = buildPanelHtml(record);
@@ -1398,53 +1499,301 @@ function pollBuild(id) {
           btn.textContent = running ? "Building…" : record.build ? "Re-run build" : "Build store now";
         }
         if (record.build?.state === "running") pollBuild(id);
+        else {
+          // The build just finished: the showcase and Drive listing have new
+          // product images and files to show.
+          loadStoreProducts(record);
+          loadStoreDrive(record);
+        }
+      } else if (!res.ok && stillOpen()) {
+        // A transient 500/502 must not end polling for good - the panel would
+        // freeze on "Building…" until a manual reload.
+        pollBuild(id);
       }
-    } catch {
+    } catch (error) {
       // Transient network error: keep polling as long as the operator is
       // still looking at this record, or the panel freezes on stale state.
-      const active = document.querySelector(`.store-request-card[data-active="true"]`);
-      if (active?.dataset.intakeId === id) pollBuild(id);
+      // EXCEPT a cancelled admin-token prompt - re-arming would reopen the
+      // blocking prompt every 5 seconds.
+      if (stillOpen() && !/admin token/i.test(String(error?.message || ""))) pollBuild(id);
     }
   }, 5000);
 }
 
-function renderCustomerIntakeEditor(record) {
-  const panel = el("storeReviewPanel");
+/* -----------------------------------------------------------------------------
+   Store detail page (#/new-stores/:id). One full page per customer store:
+   the floating product showcase, live build progress, the intake rendered as
+   a printable document, the Drive folder contents, and the editor whose
+   vendor/color/logo fields feed the sourcing agent on the next build.
+   -------------------------------------------------------------------------- */
+
+let storeDocCache = null;
+
+function shopifyProductUrl(record, productId) {
+  const match = String(record.shopifyCollection?.url || "").match(/^(.*)\/collections\/\d+/);
+  return match ? `${match[1]}/products/${productId}` : "";
+}
+
+async function loadStoreProducts(record) {
+  const panel = el("storeProductsPanel");
   if (!panel) return;
+  const collectionId = record.shopifyCollection?.id;
+  if (!collectionId) {
+    panel.hidden = true;
+    return;
+  }
+  try {
+    const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not load collection products.");
+    const products = payload.products || [];
+    if (!products.length) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    panel.innerHTML = `
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">The store so far</p>
+          <h3>${products.length} product${products.length === 1 ? "" : "s"} in ${escapeHtml(payload.collection?.title || "the collection")}</h3>
+        </div>
+        <a class="btn btn-secondary btn-sm" href="#/departments/${encodeURIComponent(collectionId)}">Manage products</a>
+      </div>
+      <div class="float-shelf">
+        ${products.map((product, index) => {
+          const url = shopifyProductUrl(record, product.id);
+          const media = product.imageUrl
+            ? `<img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.imageAlt || product.title)}" loading="lazy">`
+            : `<span class="pg-noimg" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>`;
+          const inner = `
+            <span class="float-media" style="--float-delay:${(index % 8) * 0.4}s">${media}</span>
+            <span class="float-shadow" aria-hidden="true"></span>
+            <b>${escapeHtml(product.title)}</b>
+            <small>${escapeHtml(product.status)} · ${product.variantCount} variant${product.variantCount === 1 ? "" : "s"}</small>`;
+          return url
+            ? `<a class="float-card" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${inner}</a>`
+            : `<span class="float-card">${inner}</span>`;
+        }).join("")}
+      </div>`;
+  } catch {
+    panel.hidden = true;
+  }
+}
+
+async function loadStoreDocument(record) {
+  if (!el("storeDocBody")) return;
+  // Re-queried after every await: a slow response for a record the operator
+  // has already navigated away from must not overwrite the cache the Download
+  // PDF button prints, or the popup would print the WRONG store's intake.
+  const stillOpen = () => el("storeReviewPanel")?.dataset.intakeId === record.id;
+  try {
+    const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}/document`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not render the intake document.");
+    if (!stillOpen()) return;
+    storeDocCache = {
+      html: payload.html,
+      title: `Store Intake — ${payload.departmentName || record.store.departmentName || "Untitled"}`
+    };
+    // Server-generated and fully escaped in customerIntakes.intakeDocumentHtml.
+    const body = el("storeDocBody");
+    if (body) body.innerHTML = payload.html;
+    const print = document.querySelector("[data-print-doc]");
+    if (print) print.disabled = false;
+  } catch (error) {
+    if (!stillOpen()) return;
+    const body = el("storeDocBody");
+    if (body) body.innerHTML = stateBlock({ tone: "warn", title: "Document unavailable", sub: error.message });
+  }
+}
+
+function printStoreDocument() {
+  if (!storeDocCache) return;
+  const win = window.open("", "_blank");
+  if (!win) {
+    window.alert("Allow pop-ups for this site to download the intake PDF.");
+    return;
+  }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(storeDocCache.title)}</title>
+    <style>
+      body { font: 14px/1.55 "Segoe UI", system-ui, sans-serif; color: #16202b; margin: 40px auto; max-width: 760px; padding: 0 24px; }
+      h1 { font-size: 24px; margin: 0 0 4px; }
+      h1 + p { color: #4d5a6a; margin-top: 0; }
+      h2 { font-size: 16px; margin: 28px 0 8px; border-bottom: 1px solid #ccd4dd; padding-bottom: 4px; }
+      h3 { font-size: 12px; margin: 14px 0 6px; color: #4d5a6a; text-transform: uppercase; letter-spacing: .05em; }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      td { border-bottom: 1px solid #e6ebf1; }
+      @media print { body { margin: 0; } }
+    </style></head><body>${storeDocCache.html}<script>window.onload = function () { window.print(); };<\/script></body></html>`);
+  win.document.close();
+}
+
+async function loadStoreDrive(record) {
+  const body = el("storeDriveBody");
+  const open = el("storeDriveOpen");
+  if (!body) return;
+  const fileIcon = (mimeType) => {
+    const mime = String(mimeType || "");
+    if (mime.startsWith("image/")) {
+      return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+    }
+    if (mime.includes("google-apps.document") || mime.includes("pdf")) {
+      return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="14" y2="17"/></svg>';
+    }
+    return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>';
+  };
+  try {
+    const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}/drive`);
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not list the Drive folder.");
+    if (!payload.connected) {
+      body.innerHTML = stateBlock({ title: "Google Drive is not connected", sub: "Connect Drive on the Connections page to archive store assets." });
+      return;
+    }
+    if (!payload.folder) {
+      body.innerHTML = stateBlock({ title: "No Drive folder yet", sub: "The department folder is created on the first store build." });
+      return;
+    }
+    if (open) {
+      open.href = payload.folder.url;
+      open.hidden = false;
+    }
+    const groups = (payload.groups || []).filter((group) => group.files?.length);
+    body.innerHTML = groups.map((group) => `
+      <div class="drive-group">
+        <p class="drive-group-name">${escapeHtml(group.name)} <small>${group.files.length} file${group.files.length === 1 ? "" : "s"}</small></p>
+        <ul class="drive-files">
+          ${group.files.map((file) => `
+            <li><a href="${escapeHtml(file.webViewLink || payload.folder.url)}" target="_blank" rel="noreferrer">
+              ${fileIcon(file.mimeType)}<span>${escapeHtml(file.name)}</span>
+              <small>${escapeHtml(String(file.modifiedTime || "").slice(0, 10))}</small>
+            </a></li>`).join("")}
+        </ul>
+      </div>`).join("") || stateBlock({ title: "The folder is empty", sub: "Assets land here during the store build." });
+  } catch (error) {
+    body.innerHTML = stateBlock({ tone: "warn", title: "Drive listing unavailable", sub: error.message });
+  }
+}
+
+function renumberIntakeVariants(list) {
+  const blocks = [...list.querySelectorAll(".variant-editor")];
+  blocks.forEach((block, index) => {
+    block.querySelector(".variant-title").textContent = `Version ${index + 1}`;
+    const remove = block.querySelector("[data-remove-intake-variant]");
+    if (remove) {
+      remove.hidden = blocks.length === 1;
+      remove.setAttribute("aria-label", `Remove version ${index + 1}`);
+    }
+  });
+}
+
+function renderStoreDetail(record) {
+  if (!storeDetailBody) return;
+  storeDocCache = null;
   const collectionUrl = record.shopifyCollection?.url || "";
   const building = record.build?.state === "running";
-  panel.innerHTML = `
-    <div class="store-review-head">
-      <div>
-        <p class="eyebrow">Review queue</p>
-        <h2>${escapeHtml(record.store.departmentName || "Customer store request")}</h2>
-        <p>${escapeHtml(record.requestId)} - ${escapeHtml(intakeStatusLabel(record.status))}</p>
+  const tone = intakeStatusTone(record.status);
+  const created = String(record.createdAt || "").slice(0, 10);
+  storeDetailBody.innerHTML = `
+    <div class="store-detail" id="storeReviewPanel" data-intake-id="${escapeHtml(record.id)}">
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <a href="#/new-stores">New Stores</a>
+        <span aria-hidden="true">/</span>
+        <span aria-current="page">${escapeHtml(record.store.departmentName || "Store request")}</span>
+      </nav>
+      <header class="store-detail-head card card-pad">
+        <div>
+          <p class="eyebrow">Customer store</p>
+          <h2>${escapeHtml(record.store.departmentName || "Customer store request")}</h2>
+          <p class="sdh-meta">
+            <span class="status-chip" data-tone="${tone}">${escapeHtml(intakeStatusLabel(record.status))}</span>
+            <span>${escapeHtml(record.requestId.slice(0, 8).toUpperCase())}</span>
+            ${created ? `<span>submitted ${escapeHtml(created)}</span>` : ""}
+            ${record.store.contactName ? `<span>${escapeHtml(record.store.contactName)}${record.store.contactEmail ? " · " + escapeHtml(record.store.contactEmail) : ""}</span>` : ""}
+          </p>
+        </div>
+        <div class="store-review-actions">
+          ${collectionUrl ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(collectionUrl)}" target="_blank" rel="noreferrer">Open Shopify collection</a>` : ""}
+          <a class="btn btn-secondary btn-sm" id="storeDriveOpen" href="#" target="_blank" rel="noreferrer" hidden>Open Drive folder</a>
+          <button class="btn btn-secondary btn-sm" type="button" data-print-doc disabled>Download PDF</button>
+          <button class="btn btn-secondary btn-sm" type="button" data-save-intake>Save edits</button>
+          <button class="btn btn-primary btn-sm" type="button" data-build-intake ${building ? "disabled" : ""}>
+            ${building ? "Building…" : record.build ? "Re-run build" : "Build store now"}
+          </button>
+        </div>
+      </header>
+      <section class="card card-pad store-products-panel" id="storeProductsPanel" hidden></section>
+      ${buildPanelHtml(record)}
+      <div class="store-detail-grid">
+        <section class="card card-pad store-doc-panel">
+          <div class="card-head">
+            <div><p class="eyebrow">Intake document</p><h3>What the customer filled</h3></div>
+          </div>
+          <div class="store-doc" id="storeDocBody">${stateBlock({ title: "Rendering the intake document", spinner: true })}</div>
+        </section>
+        <section class="card card-pad store-drive-panel">
+          <div class="card-head">
+            <div><p class="eyebrow">Google Drive</p><h3>Folder contents</h3></div>
+          </div>
+          <div id="storeDriveBody">${stateBlock({ title: "Listing Drive files", spinner: true })}</div>
+        </section>
       </div>
-      <div class="store-review-actions">
-        ${collectionUrl ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(collectionUrl)}" target="_blank" rel="noreferrer">Open Shopify collection</a>` : ""}
-        <button class="btn btn-secondary btn-sm" type="button" data-save-intake>Save edits</button>
-        <button class="btn btn-primary btn-sm" type="button" data-build-intake ${building ? "disabled" : ""}>
-          ${building ? "Building…" : record.build ? "Re-run build" : "Build store now"}
-        </button>
-      </div>
-    </div>
-    ${buildPanelHtml(record)}
-    <div class="store-edit-grid">
-      <label><span>Department name</span><input data-store-field="departmentName" value="${escapeHtml(record.store.departmentName)}"></label>
-      <label><span>Department code</span><input data-store-field="departmentCode" value="${escapeHtml(record.store.departmentCode)}"></label>
-      <label><span>Contact name</span><input data-store-field="contactName" value="${escapeHtml(record.store.contactName)}"></label>
-      <label><span>Contact email</span><input data-store-field="contactEmail" value="${escapeHtml(record.store.contactEmail)}"></label>
-      <label><span>Contact phone</span><input data-store-field="contactPhone" value="${escapeHtml(record.store.contactPhone)}"></label>
-      <label class="span-2"><span>Internal/customer notes</span><textarea data-store-field="notes" rows="3">${escapeHtml(record.store.notes)}</textarea></label>
-    </div>
-    <div class="logo-strip">
-      ${(record.logos || []).map((logo) => logo.dataUrl?.startsWith("data:image/")
-        ? `<img src="${escapeHtml(logo.dataUrl)}" alt="${escapeHtml(logo.name)}">`
-        : `<span>${escapeHtml(logo.name)}</span>`).join("") || "<span>No logo file stored</span>"}
-    </div>
-    <div class="category-editor-stack">
-      ${record.categories.map(categoryEditor).join("")}
+      <section class="card card-pad">
+        <div class="card-head">
+          <div>
+            <p class="eyebrow">Edit request</p>
+            <h3>Store &amp; garment details</h3>
+            <p class="muted">Vendor, colors, and logo assignments here feed the sourcing agent on the next build.</p>
+          </div>
+        </div>
+        <div class="store-edit-grid">
+          <label><span>Department name</span><input data-store-field="departmentName" value="${escapeHtml(record.store.departmentName)}"></label>
+          <label><span>Department code</span><input data-store-field="departmentCode" value="${escapeHtml(record.store.departmentCode)}"></label>
+          <label><span>Contact name</span><input data-store-field="contactName" value="${escapeHtml(record.store.contactName)}"></label>
+          <label><span>Contact email</span><input data-store-field="contactEmail" value="${escapeHtml(record.store.contactEmail)}"></label>
+          <label><span>Contact phone</span><input data-store-field="contactPhone" value="${escapeHtml(record.store.contactPhone)}"></label>
+          <label class="span-2"><span>Internal/customer notes</span><textarea data-store-field="notes" rows="3">${escapeHtml(record.store.notes)}</textarea></label>
+        </div>
+        <div class="logo-strip">
+          ${(record.logos || []).map((logo) => logo.dataUrl?.startsWith("data:image/")
+            ? `<img src="${escapeHtml(logo.dataUrl)}" alt="${escapeHtml(logo.name)}">`
+            : `<span>${escapeHtml(logo.name)}</span>`).join("") || "<span>No logo file stored</span>"}
+        </div>
+        <div class="category-editor-stack">
+          ${record.categories.map((category) => categoryEditor(record, category)).join("")}
+        </div>
+      </section>
     </div>`;
+
+  const panel = el("storeReviewPanel");
+
+  panel.querySelector("[data-print-doc]")?.addEventListener("click", printStoreDocument);
+
+  panel.querySelector(".category-editor-stack")?.addEventListener("click", (event) => {
+    const add = event.target.closest("[data-add-intake-variant]");
+    if (add) {
+      const details = add.closest(".intake-category-editor");
+      const list = details.querySelector(".variant-editor-list");
+      const count = list.querySelectorAll(".variant-editor").length;
+      const placements = intakePlacementsFor(details.dataset.categoryKey);
+      list.insertAdjacentHTML(
+        "beforeend",
+        intakeVariantEditor(record, { key: details.dataset.categoryKey }, { id: `v${Date.now().toString(36)}` }, count, count + 1, placements)
+      );
+      renumberIntakeVariants(list);
+    }
+    const remove = event.target.closest("[data-remove-intake-variant]");
+    if (remove) {
+      const details = remove.closest(".intake-category-editor");
+      const list = remove.closest(".variant-editor-list");
+      remove.closest(".variant-editor").remove();
+      renumberIntakeVariants(list);
+      // The focused button just left the DOM; without this, keyboard focus
+      // falls to <body> and the operator re-tabs from the top of the page.
+      details.querySelector("[data-add-intake-variant]")?.focus();
+    }
+  });
 
   panel.querySelector("[data-save-intake]")?.addEventListener("click", async (event) => {
     const btn = event.currentTarget;
@@ -1452,7 +1801,10 @@ function renderCustomerIntakeEditor(record) {
     btn.textContent = "Saving...";
     try {
       const saved = await saveCustomerIntake(record, "in-review");
-      renderCustomerIntakeEditor(saved);
+      renderStoreDetail(saved);
+      loadStoreProducts(saved);
+      loadStoreDocument(saved);
+      loadStoreDrive(saved);
     } catch (error) {
       window.alert(error.message);
       btn.disabled = false;
@@ -1484,19 +1836,24 @@ function renderCustomerIntakeEditor(record) {
   if (record.build?.state === "running") pollBuild(record.id);
 }
 
-async function openCustomerIntake(id) {
-  const panel = el("storeReviewPanel");
-  if (panel) panel.innerHTML = stateBlock({ title: "Loading store request", spinner: true });
+async function loadStoreDetail(id) {
+  if (!storeDetailBody) return;
+  storeDetailBody.innerHTML = stateBlock({ title: "Loading store request", spinner: true });
   try {
     const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(id)}`);
     const payload = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(payload.error || "Could not open that store request.");
-    renderCustomerIntakeEditor(payload.intake);
-    document.querySelectorAll(".store-request-card").forEach((card) => {
-      card.dataset.active = card.dataset.intakeId === id ? "true" : "false";
-    });
+    renderStoreDetail(payload.intake);
+    loadStoreProducts(payload.intake);
+    loadStoreDocument(payload.intake);
+    loadStoreDrive(payload.intake);
   } catch (error) {
-    if (panel) panel.innerHTML = stateBlock({ tone: "warn", title: "Could not open store request", sub: error.message });
+    storeDetailBody.innerHTML = stateBlock({
+      tone: "warn",
+      title: "Could not open store request",
+      sub: error.message,
+      actionHtml: '<a class="btn btn-secondary btn-sm" href="#/new-stores">Back to New Stores</a>'
+    });
   }
 }
 
@@ -1904,6 +2261,7 @@ function parseRoute() {
   const parts = path.split("/").filter(Boolean);
   if (parts[0] === "dashboard") return { name: "dashboard" };
   if (parts[0] === "onboarding") return { name: "onboarding" };
+  if (parts[0] === "new-stores" && parts[1]) return { name: "storeDetail", id: decodeURIComponent(parts[1]) };
   if (parts[0] === "new-stores") return { name: "newStores" };
   if (parts[0] === "departments" && parts[1]) return { name: "department", id: decodeURIComponent(parts[1]) };
   return { name: "departments" };
@@ -1913,8 +2271,9 @@ function showView(name) {
   Object.entries(views).forEach(([key, node]) => {
     if (node) node.hidden = key !== name;
   });
-  // Department detail is a child of Departments, so the nav keeps that tab lit.
-  const navKey = name === "department" ? "departments" : name;
+  // Detail pages are children of their list views, so the nav keeps the
+  // parent tab lit.
+  const navKey = name === "department" ? "departments" : name === "storeDetail" ? "newStores" : name;
   document.querySelectorAll("[data-nav]").forEach((link) => {
     const active = link.dataset.nav === navKey;
     link.dataset.active = active ? "true" : "false";
@@ -1930,6 +2289,7 @@ async function handleRoute() {
   if (route.name === "dashboard") await loadPlatformStatus();
   else if (route.name === "departments") await loadDepartments();
   else if (route.name === "newStores") await loadNewStores();
+  else if (route.name === "storeDetail") await loadStoreDetail(route.id);
   else if (route.name === "department") await loadDepartment(route.id);
   window.scrollTo({ top: 0, behavior: "auto" });
 }
@@ -2623,9 +2983,6 @@ el("refreshDepartments").addEventListener("click", () => loadDepartments({ force
 if (refreshNewStores) refreshNewStores.addEventListener("click", () => loadNewStores());
 
 document.addEventListener("click", (e) => {
-  const intakeCard = e.target.closest(".store-request-card");
-  if (intakeCard?.dataset.intakeId) return openCustomerIntake(intakeCard.dataset.intakeId);
-
   const editId = e.target.closest("[data-edit-product]")?.dataset.editProduct;
   if (editId) return openProductEditor(editId);
 

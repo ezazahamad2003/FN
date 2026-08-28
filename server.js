@@ -16,7 +16,7 @@ const {
   openBrowser,
   shopifyInstallUrl
 } = require("./auth");
-const { createDepartmentFolders, trashFile, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
+const { createDepartmentFolders, findFolder, listFilesInFolder, trashFile, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
 const {
   analyzeLogo,
   analyzePolicyGaps,
@@ -48,6 +48,8 @@ const { answerDashboardAgent, platformStatus } = require("./agents");
 const {
   createCustomerIntake,
   getCustomerIntake,
+  intakeDocumentHtml,
+  intakeFromCustomerRecord,
   listCustomerIntakes,
   structuredTextFromCustomerIntake,
   updateCustomerIntake
@@ -530,6 +532,51 @@ app.get("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
   }
 });
 
+/* The intake as a document: single source of truth for the console's document
+   panel, its print/PDF view, and the copy archived to Drive during builds. */
+app.get("/api/customer-intakes/:id/document", requireAdminToken, async (req, res) => {
+  try {
+    const record = await getCustomerIntake(req.params.id);
+    res.json({
+      departmentName: record.store.departmentName,
+      requestId: record.requestId,
+      html: intakeDocumentHtml(record)
+    });
+  } catch (error) {
+    res.status(404).json({ error: error.message });
+  }
+});
+
+/* What lives in the store's Drive folder - the root files plus the Logos and
+   Product Images subfolders. Read-only; the console's store page renders it. */
+app.get("/api/customer-intakes/:id/drive", requireAdminToken, async (req, res) => {
+  try {
+    const record = await getCustomerIntake(req.params.id);
+    if (!googleConnected()) return res.json({ connected: false, folder: null, groups: [] });
+    const parentId = process.env.GDRIVE_PARENT_FOLDER_ID;
+    if (!parentId) return res.json({ connected: true, folder: null, groups: [] });
+    const root = await findFolder(record.store.departmentName, parentId);
+    if (!root) return res.json({ connected: true, folder: null, groups: [] });
+
+    const groups = [];
+    const rootFiles = (await listFilesInFolder(root.id)).filter(
+      (file) => file.mimeType !== "application/vnd.google-apps.folder"
+    );
+    groups.push({ name: "Store folder", files: rootFiles });
+    for (const sub of ["Logos", "Product Images"]) {
+      const folder = await findFolder(sub, root.id);
+      if (folder) groups.push({ name: sub, folderUrl: folder.webViewLink || null, files: await listFilesInFolder(folder.id) });
+    }
+    res.json({
+      connected: true,
+      folder: { id: root.id, name: root.name, url: root.webViewLink || `https://drive.google.com/drive/folders/${root.id}` },
+      groups
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.patch("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
   try {
     // Build state and the collection pointer are owned by the builder (which
@@ -562,9 +609,9 @@ app.post("/api/customer-intakes/:id/plan", requireAdminToken, async (req, res) =
     const record = await getCustomerIntake(req.params.id);
     const departmentName = record.store.departmentName || "the department";
 
-    // Same parse path as an uploaded store build form.
-    const parsed = parseStructuredIntakeText(structuredTextFromCustomerIntake(record));
-    const intake = combineIntakes([parsed]);
+    // Products straight from the record - one per variant, same shape the
+    // uploaded-form parse produces, without the lossy text round-trip.
+    const intake = intakeFromCustomerRecord(record);
 
     // Logo catalog by filename - names alone are enough to assign artwork to
     // garments, and skipping Vision here keeps the plan fast.

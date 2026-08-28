@@ -253,6 +253,7 @@ async function uploadHtmlDocument(name, html, folderId) {
 module.exports = {
   createDepartmentFolders,
   ensureSubfolder,
+  findFolder,
   listFilesInFolder,
   readFileText,
   trashFile,

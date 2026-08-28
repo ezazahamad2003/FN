@@ -29,10 +29,11 @@ const { generateBlankGarment, generateProductDescription } = require("./ai");
 const { findSupplierBlank } = require("./blanks");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
 const { placementFace, placementGuidance } = require("./placements");
-const { parseStructuredIntakeText, combineIntakes, intakeTags } = require("./intake");
+const { intakeTags } = require("./intake");
 const {
   getCustomerIntake,
-  structuredTextFromCustomerIntake,
+  intakeDocumentHtml,
+  intakeFromCustomerRecord,
   updateCustomerIntake
 } = require("./customerIntakes");
 const {
@@ -48,7 +49,7 @@ const {
   variantIdsByLogo
 } = require("./shopify");
 const { getCollectionWithProducts } = require("./catalog");
-const { createDepartmentFolders, uploadBuffer, uploadGeneratedImage } = require("./drive");
+const { createDepartmentFolders, listFilesInFolder, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
 const { googleConnected } = require("./auth");
 
 // One build per intake at a time. A Map because several DIFFERENT intakes may
@@ -101,18 +102,30 @@ function decodeLogos(record) {
 
 function resolveLogos(product, logoRuns) {
   const requested = (product.logoSlugs || []).map((value) => String(value).trim()).filter(Boolean);
-  if (!requested.length || requested.some((value) => value.toLowerCase() === "all")) return logoRuns;
-  const byKey = new Map();
+  if (!requested.length || requested.some((value) => value.toLowerCase() === "all")) {
+    return { logos: logoRuns, missing: [] };
+  }
+  // Exact file names first (the picker stores them verbatim), the
+  // extension-stripped fuzzy key only as a fallback for legacy free-text
+  // entries - fuzzy-only keying let "station7.png" resolve to "station7.jpg".
+  const byExact = new Map();
+  const byFuzzy = new Map();
   for (const logo of logoRuns) {
-    byKey.set(logoKey(logo.slug), logo);
-    byKey.set(logoKey(logo.originalName), logo);
+    byExact.set(logo.originalName.toLowerCase().trim(), logo);
+    if (!byFuzzy.has(logoKey(logo.slug))) byFuzzy.set(logoKey(logo.slug), logo);
+    if (!byFuzzy.has(logoKey(logo.originalName))) byFuzzy.set(logoKey(logo.originalName), logo);
   }
   const selected = [];
+  const missing = [];
   for (const value of requested) {
-    const match = byKey.get(logoKey(value));
+    const match = byExact.get(value.toLowerCase()) || byFuzzy.get(logoKey(value));
     if (match && !selected.includes(match)) selected.push(match);
+    else if (!match) missing.push(value);
   }
-  return selected.length ? selected : logoRuns;
+  // An EXPLICIT assignment that matches nothing must not silently become "all
+  // logos" - the customer specifically excluded the others. The caller fails
+  // that product with a clear reason instead.
+  return { logos: selected, missing };
 }
 
 /* ── Build-state bookkeeping ─────────────────────────────────────────────── */
@@ -172,9 +185,12 @@ async function runBuild(intakeId, build, options) {
   if (!shopifyConnected()) throw new Error("Shopify is not connected.");
 
   /* Step 1 - products from the fixed fields. Deterministic: the form IS the
-     spec, no model in the loop deciding what to build. */
+     spec, no model in the loop deciding what to build. Built straight from the
+     record, so every VARIANT of a category (different color, vendor, or logo
+     assignment) becomes its own product - the old text round-trip could only
+     see one version per category. */
   let step = stepStart(build, "plan", "Read the store request");
-  const intake = combineIntakes([parseStructuredIntakeText(structuredTextFromCustomerIntake(record))]);
+  const intake = intakeFromCustomerRecord(record);
   const products = intake.products || [];
   if (!products.length) {
     stepFail(step, new Error("No included garment categories."));
@@ -253,6 +269,19 @@ async function runBuild(intakeId, build, options) {
         } catch (error) {
           log(build, `logo upload skipped (${logo.originalName}): ${error.message}`);
         }
+      }
+      // Archive what the customer filled as a Google Doc next to the assets.
+      // Additive like everything else: an existing copy (same name) is kept,
+      // never replaced - the intake record itself is the source of truth.
+      try {
+        const docName = `Store Intake — ${departmentName} (${record.requestId.slice(0, 8).toUpperCase()})`;
+        const existingDocs = await listFilesInFolder(folders.root.id, { mimeType: "application/vnd.google-apps.document" });
+        if (!existingDocs.some((file) => file.name === docName)) {
+          await uploadHtmlDocument(docName, intakeDocumentHtml(record), folders.root.id);
+          log(build, `intake document archived to Drive as "${docName}"`);
+        }
+      } catch (error) {
+        log(build, `intake document upload skipped: ${error.message}`);
       }
       stepDone(step, folders.root.name);
     } catch (error) {
@@ -343,7 +372,15 @@ async function runBuild(intakeId, build, options) {
         }
         logoVariants.push({ logo: null, mockupBuffer: baseBuffer, driveFile });
       } else {
-        const logos = resolveLogos(product, compositable);
+        const { logos, missing } = resolveLogos(product, compositable);
+        if (missing.length) {
+          log(build, `${title}: assigned logo${missing.length === 1 ? "" : "s"} not usable: ${missing.join(", ")} (not uploaded, or a vector format that needs a PNG/JPG version)`);
+        }
+        if (!logos.length) {
+          throw new Error(
+            `None of the assigned logos (${missing.join(", ")}) can be composited - upload a PNG/JPG version of the artwork (or clear the assignment) and re-run.`
+          );
+        }
         for (const logo of logos) {
           const mockupBuffer = await compositeLogoOnGarment(baseBuffer, logo.buffer, placementKey);
           let driveFile = null;

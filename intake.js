@@ -63,7 +63,13 @@ function fieldBlock(section, fieldName) {
     // as size variants ("4XL, 5XL Notes rush order please"). Must end in a
     // word character - the lookahead closes with \b, which never matches
     // after a colon.
-    "Category Notes"
+    "Category Notes",
+    // Multi-variant intakes emit "Version N of M" between versions. The legacy
+    // parser only ever reads the FIRST version of a category, but this
+    // terminator keeps a later version's lines from bleeding into the first
+    // version's field captures if the document is pasted back through the
+    // onboarding flow.
+    "Version"
   ];
   const rest = labels.filter((label) => label !== fieldName).map(safeRegex).join("|");
   const pattern = rest
@@ -131,15 +137,24 @@ function extractStyleAndColor(section) {
   return { style, color };
 }
 
-function normalizeSizeRange(text) {
-  const value = checkedChoice(text, ["S-3XL", "S-5XL", "Youth sizes", "Women's cut"]);
-  const custom = clean(String(text || "").match(/Other:\s*([^☐]+)/i)?.[1] || "").replace(/_+/g, "").trim();
+/* Size-range label → concrete size list. Shared by the checkbox-text parser
+   below and the direct record→products path in customerIntakes.js, so both
+   expand "S-3XL" to the identical variant list. */
+function sizesFromRangeLabel(label, otherSizes = "") {
+  const custom = clean(otherSizes);
   if (custom) return custom.split(/,\s*/).filter(Boolean);
+  const value = String(label || "");
   if (/S[-–]3XL/i.test(value)) return ["S", "M", "L", "XL", "2XL", "3XL"];
   if (/S[-–]5XL/i.test(value)) return ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];
   if (/Youth/i.test(value)) return ["YXS", "YS", "YM", "YL", "YXL"];
   if (/Women/i.test(value)) return ["Women's XS", "Women's S", "Women's M", "Women's L", "Women's XL", "Women's 2XL", "Women's 3XL"];
   return [];
+}
+
+function normalizeSizeRange(text) {
+  const value = checkedChoice(text, ["S-3XL", "S-5XL", "Youth sizes", "Women's cut"]);
+  const custom = clean(String(text || "").match(/Other:\s*([^☐]+)/i)?.[1] || "").replace(/_+/g, "").trim();
+  return sizesFromRangeLabel(value, custom);
 }
 
 function decorationZone(placement, categoryType) {
@@ -151,13 +166,21 @@ function decorationZone(placement, categoryType) {
   return "front";
 }
 
+/* Tier label ("Small" / "Large / Full Back" / "Custom" + free text) → the
+   canonical tier key the fee-SKU map and placement guidance use. */
+function normalizeTierLabel(label, customTier = "") {
+  const value = String(label || "");
+  if (/Large/i.test(value)) return "large";
+  if (/Standard/i.test(value)) return "standard";
+  if (/Small/i.test(value)) return "small";
+  const custom = clean(customTier);
+  return custom ? `custom: ${custom}` : "";
+}
+
 function decorationTier(text) {
   const tier = checkedChoice(text, ["Small", "Standard", "Large / Full Back"]);
-  if (/Large/i.test(tier)) return "large";
-  if (/Standard/i.test(tier)) return "standard";
-  if (/Small/i.test(tier)) return "small";
   const custom = clean(String(text || "").match(/Custom:\s*([^☐]+)/i)?.[1] || "").replace(/_+/g, "");
-  return custom ? `custom: ${custom}` : "";
+  return normalizeTierLabel(tier, custom);
 }
 
 function feeSkuFor({ placement, productType, tier }) {
@@ -337,9 +360,13 @@ function intakeContextText(intake) {
 }
 
 module.exports = {
+  INTAKE_CATEGORY_META: CATEGORIES,
   combineIntakes,
+  feeSkuFor,
   intakeContextText,
   intakeTags,
   mergeIntakeProducts,
-  parseStructuredIntakeText
+  normalizeTierLabel,
+  parseStructuredIntakeText,
+  sizesFromRangeLabel
 };

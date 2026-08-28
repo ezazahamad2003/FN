@@ -1,19 +1,24 @@
 /* -----------------------------------------------------------------------------
    Customer store intake.
 
-   A four-step wizard over the FN store build form. The schema is deliberately
-   identical to customerIntakes.js on the server — every category carries the
-   same fixed fields, so the build agent never has to special-case a category.
+   A four-step wizard over the FN store build form. The schema mirrors
+   customerIntakes.js on the server: every category carries the same fixed
+   fields, and each category holds one or more VARIANTS - a variant is one
+   version of the garment (its own vendor, color, decoration, and logo
+   assignment), so "a navy Next Level tee with the station crest AND a red
+   Gildan tee with the EMS badge" is two variants, not a note nobody parses.
 
-   Three things this does beyond rendering inputs:
-     • validates per step, so a customer finds a problem on the step that caused
-       it instead of at submit;
-     • autosaves a draft to localStorage (files excluded — the browser will not
-       let us re-populate a file input), so a half-finished form survives a
-       closed tab;
-     • shows the real placement diagrams next to the placement picker, because
-       "Center back" means nothing to someone who hasn't seen the production
-       standard.
+   Beyond rendering inputs this file:
+     • draws a floating garment illustration per category that recolors live
+       as the customer types a color, so every category is recognizable at a
+       glance;
+     • lets each variant pick its logos from the uploaded artwork by thumbnail
+       instead of describing files in free text;
+     • validates per step, so a customer finds a problem on the step that
+       caused it instead of at submit;
+     • autosaves a draft to localStorage (files excluded - the browser will
+       not let us re-populate a file input), so a half-finished form survives
+       a closed tab.
    -------------------------------------------------------------------------- */
 
 const CATEGORIES = [
@@ -35,6 +40,7 @@ const METHODS = ["Embroidery", "Screen Print", "Heat Transfer", "Patch", "None"]
 const TIERS = ["Small", "Standard", "Large / Full Back", "Custom"];
 const SIZES = ["S-3XL", "S-5XL", "Youth sizes", "Women's cut", "Other"];
 const DRAFT_KEY = "fnIntakeDraft";
+const MAX_VARIANTS_PER_CATEGORY = 6;
 
 // Wholesale houses departments actually buy from. The field is a free-text
 // input with these as suggestions - any vendor name works, and naming one
@@ -59,51 +65,263 @@ function options(items, selected = "") {
     '<option value="' + esc(item) + '"' + (item === selected ? " selected" : "") + ">" + esc(item) + "</option>").join("");
 }
 
+/* ── Garment illustrations ───────────────────────────────────────────────────
+   Every category gets a flat-lay illustration built from the same vocabulary:
+   .g-body (garment fill, recolored via --g-fill), .g-shade / .g-sheen (form),
+   .g-line (seams and details). The scene floats; the shadow underneath
+   breathes with it, which is what sells the "hovering product photo" read. */
+
+function garmentSvg(inner) {
+  return '<svg class="garment-svg" viewBox="0 0 220 220" aria-hidden="true" focusable="false">' + inner + "</svg>";
+}
+
+const GARMENT_ART = {
+  "t-shirts": () => garmentSvg(
+    '<path class="g-body" d="M78 34 L46 48 L26 92 L54 106 L62 90 L62 184 L158 184 L158 90 L166 106 L194 92 L174 48 L142 34 C134 50 86 50 78 34 Z"/>' +
+    '<path class="g-shade" d="M62 90 L62 184 L80 184 C72 142 72 100 76 62 L62 90 Z"/>' +
+    '<path class="g-sheen" d="M126 66 C142 70 150 84 148 100 C136 96 126 82 126 66 Z"/>' +
+    '<path class="g-line" d="M88 38 C96 50 124 50 132 38"/>' +
+    '<path class="g-line" d="M62 92 L76 58 M158 92 L144 58 M64 172 L156 172"/>'
+  ),
+  "long-sleeve-shirts": () => garmentSvg(
+    '<path class="g-body" d="M78 34 L48 46 L36 74 L30 150 L56 156 L62 102 L62 184 L158 184 L158 102 L164 156 L190 150 L184 74 L172 46 L142 34 C134 50 86 50 78 34 Z"/>' +
+    '<path class="g-shade" d="M62 102 L62 184 L80 184 C73 144 72 104 76 62 L62 102 Z"/>' +
+    '<path class="g-sheen" d="M126 66 C142 70 150 84 148 100 C136 96 126 82 126 66 Z"/>' +
+    '<path class="g-line" d="M88 38 C96 50 124 50 132 38"/>' +
+    '<path class="g-line" d="M62 102 L68 60 M158 102 L152 60 M64 172 L156 172 M31 142 L57 148 M189 142 L163 148"/>'
+  ),
+  "crewneck-sweatshirts": () => garmentSvg(
+    '<path class="g-body" d="M76 32 L46 46 L32 76 L28 150 L56 158 L60 104 L60 184 L160 184 L160 104 L164 158 L192 150 L188 76 L174 46 L144 32 C136 50 84 50 76 32 Z"/>' +
+    '<path class="g-shade" d="M60 104 L60 184 L80 184 C72 144 71 104 76 60 L60 104 Z"/>' +
+    '<path class="g-sheen" d="M128 66 C144 72 152 86 150 102 C138 98 128 84 128 66 Z"/>' +
+    '<path class="g-line" d="M84 34 C90 52 130 52 136 34 M88 40 C94 54 126 54 132 40"/>' +
+    '<path class="g-line" d="M60 168 L160 168 M74 170 L74 182 M92 170 L92 182 M110 170 L110 182 M128 170 L128 182 M146 170 L146 182"/>' +
+    '<path class="g-line" d="M29 142 L57 150 M191 142 L163 150 M33 148 L58 155 M187 148 L162 155"/>'
+  ),
+  "hooded-sweatshirts": () => garmentSvg(
+    '<path class="g-body" d="M76 38 L46 50 L32 80 L28 152 L56 160 L60 106 L60 186 L160 186 L160 106 L164 160 L192 152 L188 80 L174 50 L144 38 C136 54 84 54 76 38 Z"/>' +
+    '<path class="g-body" d="M76 38 C64 16 156 16 144 38 C134 28 86 28 76 38 Z"/>' +
+    '<path class="g-shade" d="M60 106 L60 186 L80 186 C72 148 71 108 76 66 L60 106 Z"/>' +
+    '<path class="g-sheen" d="M128 70 C144 76 152 90 150 106 C138 102 128 88 128 70 Z"/>' +
+    '<path class="g-line" d="M80 42 C90 56 130 56 140 42"/>' +
+    '<path class="g-line" d="M101 56 L99 84 M119 56 L121 84"/>' +
+    '<circle class="g-dot" cx="99" cy="86" r="2.5"/><circle class="g-dot" cx="121" cy="86" r="2.5"/>' +
+    '<path class="g-line" d="M82 132 L138 132 L130 172 L90 172 Z M90 136 L96 148 M130 136 L124 148"/>'
+  ),
+  "jackets-job-shirts": () => garmentSvg(
+    '<path class="g-body" d="M74 36 L46 48 L32 80 L28 154 L56 160 L60 106 L60 186 L160 186 L160 106 L164 160 L192 154 L188 80 L174 48 L146 36 L146 44 L110 52 L74 44 Z"/>' +
+    '<path class="g-body" d="M82 26 L138 26 L146 44 L74 44 Z"/>' +
+    '<path class="g-shade" d="M60 106 L60 186 L80 186 C72 148 71 108 76 66 L60 106 Z"/>' +
+    '<path class="g-sheen" d="M130 72 C146 78 152 92 150 108 C138 104 130 90 130 72 Z"/>' +
+    '<path class="g-line" d="M110 52 L110 186 M104 52 L104 186"/>' +
+    '<rect class="g-dot" x="103" y="62" width="8" height="12" rx="2"/>' +
+    '<path class="g-line" d="M74 138 L92 158 M146 138 L128 158 M29 146 L57 153 M191 146 L163 153"/>'
+  ),
+  "polos": () => garmentSvg(
+    '<path class="g-body" d="M78 34 L46 48 L26 92 L54 106 L62 90 L62 184 L158 184 L158 90 L166 106 L194 92 L174 48 L142 34 C134 50 86 50 78 34 Z"/>' +
+    '<path class="g-body" d="M92 30 L110 54 L76 42 Z M128 30 L110 54 L144 42 Z"/>' +
+    '<path class="g-shade" d="M62 90 L62 184 L80 184 C72 142 72 100 76 62 L62 90 Z"/>' +
+    '<path class="g-sheen" d="M128 68 C144 72 150 86 148 102 C136 98 128 84 128 68 Z"/>' +
+    '<path class="g-line" d="M104 54 L104 92 L116 92 L116 54"/>' +
+    '<circle class="g-dot" cx="110" cy="66" r="2.5"/><circle class="g-dot" cx="110" cy="80" r="2.5"/>' +
+    '<path class="g-line" d="M62 92 L76 58 M158 92 L144 58 M64 172 L156 172"/>'
+  ),
+  "shorts": () => garmentSvg(
+    '<path class="g-body" d="M58 56 L162 56 L162 74 L170 148 L116 148 L110 102 L104 148 L50 148 L58 74 Z"/>' +
+    '<path class="g-shade" d="M58 74 L50 148 L70 148 L74 74 Z"/>' +
+    '<path class="g-sheen" d="M132 84 C144 88 150 100 148 114 C138 110 132 98 132 84 Z"/>' +
+    '<path class="g-line" d="M58 74 L162 74 M104 62 C107 68 113 68 116 62"/>' +
+    '<path class="g-line" d="M52 138 L72 138 M148 138 L168 138 M110 74 L110 102"/>'
+  ),
+  "sweatpants": () => garmentSvg(
+    '<path class="g-body" d="M68 34 L152 34 L152 52 L160 168 L124 168 L110 84 L96 168 L60 168 L68 52 Z"/>' +
+    '<path class="g-body" d="M58 168 L98 168 L98 184 L58 184 Z M122 168 L162 168 L162 184 L122 184 Z"/>' +
+    '<path class="g-shade" d="M68 52 L60 168 L78 168 L82 52 Z"/>' +
+    '<path class="g-line" d="M68 52 L152 52 M102 40 C106 46 114 46 118 40"/>' +
+    '<circle class="g-dot" cx="103" cy="46" r="2"/><circle class="g-dot" cx="117" cy="46" r="2"/>' +
+    '<path class="g-line" d="M66 176 L90 176 M130 176 L154 176 M110 52 L110 84"/>'
+  ),
+  "class-b-uniform-shirt": () => garmentSvg(
+    '<path class="g-body" d="M76 32 L48 44 L38 76 L34 150 L58 156 L62 102 L62 186 L158 186 L158 102 L162 156 L186 150 L182 76 L172 44 L144 32 L144 38 L110 48 L76 38 Z"/>' +
+    '<path class="g-body" d="M90 26 L110 48 L82 40 Z M130 26 L110 48 L138 40 Z"/>' +
+    '<path class="g-shade" d="M62 102 L62 186 L80 186 C73 146 72 106 76 62 L62 102 Z"/>' +
+    '<path class="g-line" d="M110 48 L110 186"/>' +
+    '<circle class="g-dot" cx="110" cy="64" r="2.5"/><circle class="g-dot" cx="110" cy="92" r="2.5"/><circle class="g-dot" cx="110" cy="120" r="2.5"/><circle class="g-dot" cx="110" cy="148" r="2.5"/>' +
+    '<path class="g-line" d="M70 90 L98 90 L98 116 L70 116 Z M70 98 L98 98 M122 90 L150 90 L150 116 L122 116 Z M122 98 L150 98"/>' +
+    '<path class="g-line" d="M62 102 L68 58 M158 102 L152 58"/>'
+  ),
+  "class-b-uniform-pants": () => garmentSvg(
+    '<path class="g-body" d="M72 32 L148 32 L148 48 L154 186 L118 186 L110 84 L102 186 L66 186 L72 48 Z"/>' +
+    '<path class="g-shade" d="M72 48 L66 186 L84 186 L88 48 Z"/>' +
+    '<path class="g-line" d="M72 48 L148 48 M80 34 L80 46 M110 34 L110 46 M140 34 L140 46"/>' +
+    '<circle class="g-dot" cx="122" cy="41" r="2.5"/>' +
+    '<path class="g-line" d="M88 60 L86 176 M132 60 L134 176 M110 48 L110 84"/>'
+  ),
+  "belts": () => garmentSvg(
+    '<circle class="belt-ring" cx="110" cy="124" r="56"/>' +
+    '<circle class="g-line" cx="110" cy="124" r="71"/>' +
+    '<circle class="g-line" cx="110" cy="124" r="41"/>' +
+    '<rect class="g-body" x="92" y="36" width="36" height="28" rx="5"/>' +
+    '<path class="g-line" d="M110 38 L110 60"/>' +
+    '<circle class="g-dot" cx="152" cy="96" r="2.5"/><circle class="g-dot" cx="160" cy="110" r="2.5"/><circle class="g-dot" cx="164" cy="126" r="2.5"/>'
+  ),
+  "hats": () => garmentSvg(
+    '<path class="g-body" d="M50 120 C50 64 82 42 110 42 C138 42 170 64 170 120 Z"/>' +
+    '<path class="g-shade" d="M50 120 C50 64 82 42 110 42 C96 48 78 74 76 120 Z"/>' +
+    '<path class="g-sheen" d="M132 56 C146 66 154 84 155 104 C144 96 134 76 132 56 Z"/>' +
+    '<path class="g-line" d="M83 50 C79 78 77 100 77 120 M137 50 C141 78 143 100 143 120 M110 42 L110 120"/>' +
+    '<circle class="g-dot" cx="110" cy="42" r="3.5"/>' +
+    '<path class="g-body" d="M46 120 C78 136 142 136 174 120 C186 126 188 138 180 144 C146 160 74 160 40 144 C32 138 34 126 46 120 Z"/>' +
+    '<path class="g-line" d="M50 124 C82 138 138 138 170 124"/>'
+  )
+};
+
+/* Color words → illustration fill. First match wins, so multi-word colors
+   ("light blue", "safety green") sit above their generic fallbacks. */
+const COLOR_SWATCHES = [
+  [/safety\s*green|hi.?vis|neon/, "#c3d431"],
+  [/light\s*blue|carolina|sky/, "#8fb3d9"],
+  [/navy|midnight/, "#25324e"],
+  [/charcoal|graphite|dark\s*gr[ae]y/, "#3c434c"],
+  [/black/, "#23262c"],
+  [/white|natural|ivory/, "#eef0f3"],
+  [/heather|gr[ae]y|athletic|silver/, "#9aa3ad"],
+  [/maroon|burgundy|cranberry|cardinal/, "#6e2a35"],
+  [/red|scarlet|fire/, "#b23129"],
+  [/royal|blue/, "#2c4f9e"],
+  [/forest|hunter|dark\s*green/, "#2c4a38"],
+  [/olive|military|od\s*green|army|coyote/, "#5a6047"],
+  [/green|kelly/, "#2f7d4f"],
+  [/orange/, "#cd6a2c"],
+  [/gold|yellow/, "#d7a233"],
+  [/tan|khaki|sand|stone/, "#c3a97e"],
+  [/brown|chocolate/, "#6b4f3b"],
+  [/purple/, "#5a3f7d"],
+  [/pink/, "#d68fa7"]
+];
+const DEFAULT_GARMENT_FILL = "#a7b0ba";
+
+function garmentFillFor(colorsText) {
+  const text = String(colorsText || "").toLowerCase();
+  for (const [pattern, fill] of COLOR_SWATCHES) {
+    if (pattern.test(text)) return fill;
+  }
+  return DEFAULT_GARMENT_FILL;
+}
+
 /* ── Category cards ──────────────────────────────────────────────────────── */
 
-function categoryHtml(category) {
+let variantCounter = 0;
+
+function variantHtml(category, index) {
+  variantCounter += 1;
+  const id = "v" + variantCounter;
   const placement = category.placements?.length
     ? '<label class="field">Placement <em class="req">Required</em><select name="placement">' + options(category.placements) + "</select>" +
       '<small class="hint">See the diagrams above for exactly where this lands.</small></label>'
     : "";
 
-  const decorated = category.decorated
-    ? '<label class="field">Decoration method <em class="req">Required</em><select name="decorationMethod">' + options(METHODS) + "</select></label>" +
+  const decoration = category.decorated
+    ? '<div class="vgroup"><p class="vgroup-label">Decoration</p><div class="customer-grid two">' +
+      '<label class="field">Decoration method <em class="req">Required</em><select name="decorationMethod">' + options(METHODS) + "</select></label>" +
       '<label class="field">Decoration size tier<select name="sizeTier">' + options(TIERS) + "</select>" +
       '<small class="hint">Small ~4″ · Standard ~6″ · Large ~8–10″</small></label>' +
       '<label class="field custom-tier" hidden>Custom size / dimensions<input name="customSizeTier" placeholder="Example: 3.5 inch sleeve patch"></label>' +
       placement +
-      '<label class="field">Which logo?<select name="logoChoice"><option value="department">Use our main department logo</option><option value="additional">Use a specific uploaded logo</option></select></label>' +
-      '<label class="field">Logo notes<input name="logoNotes" placeholder="Example: use station-7.png for this garment"></label>' +
-      '<label class="field">Name / rank on right chest?<select name="nameRank"><option value="">Select…</option><option value="yes">Yes</option><option value="no">No</option></select></label>'
+      '<label class="field">Name / rank on right chest?<select name="nameRank"><option value="">Select…</option><option value="yes">Yes</option><option value="no">No</option></select></label>' +
+      "</div>" +
+      '<div class="field logo-assign"><span class="logo-assign-label">Which logo goes on this version?</span>' +
+      '<div class="logo-pick" data-logo-pick data-selected="[]"></div>' +
+      '<small class="hint">Pick from your Step 2 uploads. Leave everything unselected and we offer every logo on this garment.</small></div>' +
+      "</div>"
     : "";
 
-  const style = category.belt
-    ? '<label class="field">Belt style <em class="req">Required</em><input name="beltStyle" placeholder="Basket weave leather, flat leather, or a style number"></label>'
-    : '<div class="vendor-row">' +
-      '<label class="field">Vendor / brand<input name="vendor" list="fnVendors" placeholder="Next Level, Carhartt, Richardson…">' +
-      '<small class="hint">Name a vendor and we pull the exact product photo from their catalog for your mockups.</small></label>' +
-      '<label class="field">Style number<input name="styleNumber" placeholder="NL3600, CTK121, 112…"></label>' +
-      "</div>" +
-      '<label class="field">Color(s) <em class="req">Required</em><input name="colors" placeholder="Navy, black, gray…"></label>' +
-      '<label class="field">Other style notes<input name="style" placeholder="Anything else about the cut or style"></label>';
+  return '<fieldset class="variant-block" data-variant-id="' + id + '">' +
+    '<div class="variant-head">' +
+    '<span class="variant-title">Version ' + (index + 1) + '</span>' +
+    '<span class="variant-swatch" aria-hidden="true"></span>' +
+    '<button type="button" class="variant-remove" data-remove-variant aria-label="Remove version ' + (index + 1) + '"' + (index === 0 ? " hidden" : "") + ">&times;</button>" +
+    "</div>" +
+    '<div class="vgroup"><p class="vgroup-label">Garment</p><div class="customer-grid two">' +
+    '<label class="field">Vendor / brand<input name="vendor" list="fnVendors" placeholder="Next Level, Carhartt, Richardson…">' +
+    '<small class="hint">Name a vendor and our sourcing agent pulls the exact product photo from their catalog.</small></label>' +
+    '<label class="field">Style number<input name="styleNumber" placeholder="NL3600, CTK121, 112…"></label>' +
+    '<label class="field">Color(s) <em class="req">Required</em><input name="colors" placeholder="Navy, black, gray…"></label>' +
+    '<label class="field">Other style notes<input name="style" placeholder="Anything else about the cut or style"></label>' +
+    "</div></div>" +
+    decoration +
+    '<div class="vgroup"><p class="vgroup-label">Sizes</p><div class="customer-grid two">' +
+    '<label class="field">Size range <em class="req">Required</em><select name="sizeRange">' + options(SIZES) + "</select></label>" +
+    '<label class="field other-sizes" hidden>Other sizes<input name="otherSizes" placeholder="Comma-separated sizes"></label>' +
+    "</div></div>" +
+    '<label class="field">Version notes<input name="notes" placeholder="Optional details for this version"></label>' +
+    "</fieldset>";
+}
 
-  const size = category.belt
-    ? ""
-    : '<label class="field">Size range <em class="req">Required</em><select name="sizeRange">' + options(SIZES) + "</select></label>" +
-      '<label class="field other-sizes" hidden>Other sizes<input name="otherSizes" placeholder="Comma-separated sizes"></label>';
+function categoryHtml(category, index) {
+  const art = GARMENT_ART[category.key] ? GARMENT_ART[category.key]() : "";
+  const hint = category.belt
+    ? "Short form — tell us the belt style."
+    : category.decorated
+      ? "Vendor, colors, decoration, and logo choices open when selected."
+      : "Short form — vendor, colors, and sizes.";
 
-  return '<article class="customer-category" data-category="' + esc(category.key) + '">' +
+  const fields = category.belt
+    ? '<label class="field">Belt style <em class="req">Required</em><input name="beltStyle" placeholder="Basket weave leather, flat leather, or a style number"></label>' +
+      '<label class="field">Category notes<input name="categoryNotes" placeholder="Optional details"></label>'
+    : '<div class="variant-list"></div>' +
+      '<div class="variant-actions"><button type="button" class="btn btn-ghost btn-sm" data-add-variant>+ Add another version <span class="muted-inline">different color, vendor, or logo</span></button></div>' +
+      '<label class="field">Category notes<input name="categoryNotes" placeholder="Optional details that apply to every version"></label>';
+
+  return '<article class="customer-category" data-category="' + esc(category.key) + '" data-on="false" style="--float-delay:' + (index * 0.45) + 's">' +
+    '<div class="garment-pane">' +
+    '<div class="garment-scene" style="--g-fill:' + DEFAULT_GARMENT_FILL + '">' +
+    '<div class="garment-float">' + art + "</div>" +
+    '<div class="garment-shadow" aria-hidden="true"></div>' +
+    "</div>" +
+    '<p class="garment-caption">' + (category.belt ? "&nbsp;" : "Recolors as you type a color") + "</p>" +
+    "</div>" +
+    '<div class="category-main">' +
     '<header><label class="toggle-line"><input type="checkbox" name="include"> <span>' + esc(category.title) + "</span></label>" +
-    "<small>" + (category.decorated ? "Decoration and sizing options open when selected." : "Short form — no decoration fields.") + "</small></header>" +
-    '<div class="category-fields" hidden>' + style + decorated + size +
-    '<label class="field">Notes<input name="notes" placeholder="Optional details"></label></div></article>';
+    "<small>" + hint + "</small></header>" +
+    '<div class="category-fields" hidden>' + fields + "</div>" +
+    "</div></article>";
 }
 
 function renderCategories() {
   $("#customerCategories").innerHTML =
     '<datalist id="fnVendors">' + VENDORS.map((vendor) => '<option value="' + esc(vendor) + '">').join("") + "</datalist>" +
     CATEGORIES.map(categoryHtml).join("");
+  // Every non-belt category starts with one version ready to fill.
+  $$(".customer-category").forEach((card) => {
+    const definition = CATEGORIES.find((item) => item.key === card.dataset.category) || {};
+    if (!definition.belt) addVariant(card, definition);
+  });
+}
+
+function addVariant(card, definition) {
+  const list = $(".variant-list", card);
+  if (!list) return null;
+  const count = $$(".variant-block", list).length;
+  if (count >= MAX_VARIANTS_PER_CATEGORY) return null;
+  list.insertAdjacentHTML("beforeend", variantHtml(definition, count));
+  const block = list.lastElementChild;
+  renderLogoPicker(block);
+  refreshVariantChrome(card);
+  return block;
+}
+
+function refreshVariantChrome(card) {
+  const blocks = $$(".variant-block", card);
+  blocks.forEach((block, index) => {
+    $(".variant-title", block).textContent = "Version " + (index + 1);
+    const remove = $(".variant-remove", block);
+    remove.hidden = blocks.length === 1;
+    remove.setAttribute("aria-label", "Remove version " + (index + 1));
+  });
+  const add = $("[data-add-variant]", card);
+  if (add) add.hidden = blocks.length >= MAX_VARIANTS_PER_CATEGORY;
+  updateGarmentTint(card);
 }
 
 function updateCategoryState(card) {
@@ -112,16 +330,123 @@ function updateCategoryState(card) {
   card.dataset.on = String(active);
 }
 
+/* The scene wears version 1's color; each variant head gets its own swatch so
+   a multi-version category still shows every colorway at a glance. */
+function updateGarmentTint(card) {
+  const blocks = $$(".variant-block", card);
+  const first = blocks[0] ? $('[name="colors"]', blocks[0])?.value : "";
+  const scene = $(".garment-scene", card);
+  if (scene) scene.style.setProperty("--g-fill", garmentFillFor(first));
+  blocks.forEach((block) => {
+    const swatch = $(".variant-swatch", block);
+    const colors = $('[name="colors"]', block)?.value || "";
+    if (swatch) {
+      swatch.style.background = garmentFillFor(colors);
+      swatch.dataset.on = String(Boolean(colors.trim()));
+    }
+  });
+}
+
+/* ── Logo picker ─────────────────────────────────────────────────────────────
+   Uploaded artwork from Step 2 rendered as selectable thumbnails inside every
+   decorated variant. Selections survive re-renders (files added or removed on
+   Step 2, drafts restored before files exist) via data-selected on the picker:
+   the chosen file NAMES are what the server matches logos by. */
+
+const logoPreviewUrls = new Map();
+
+function logoPreviewUrl(file) {
+  const key = file.name + ":" + file.size;
+  if (!logoPreviewUrls.has(key) && file.type.startsWith("image/")) {
+    logoPreviewUrls.set(key, URL.createObjectURL(file));
+  }
+  return logoPreviewUrls.get(key) || "";
+}
+
+function pickerSelection(picker) {
+  try {
+    const stored = JSON.parse(picker.dataset.selected || "[]");
+    return Array.isArray(stored) ? stored : [];
+  } catch {
+    return [];
+  }
+}
+
+function renderLogoPicker(scope) {
+  const files = [...logoBag.files];
+  $$("[data-logo-pick]", scope).forEach((picker) => {
+    const selected = new Set([
+      ...pickerSelection(picker),
+      ...$$("input:checked", picker).map((input) => input.value)
+    ]);
+    picker.dataset.selected = JSON.stringify([...selected]);
+    if (!files.length) {
+      picker.innerHTML = '<span class="logo-pick-empty">Upload artwork in Step 2 to assign specific logos.</span>';
+      return;
+    }
+    picker.innerHTML = files.map((file) => {
+      const url = logoPreviewUrl(file);
+      const thumb = url
+        ? '<img src="' + esc(url) + '" alt="">'
+        : '<span class="logo-chip-doc" aria-hidden="true">' + esc((file.name.split(".").pop() || "file").toUpperCase().slice(0, 4)) + "</span>";
+      const checked = selected.has(file.name) ? " checked" : "";
+      return '<label class="logo-chip"><input type="checkbox" name="logoPick" value="' + esc(file.name) + '"' + checked + ">" +
+        thumb + '<span class="logo-chip-name">' + esc(file.name) + "</span></label>";
+    }).join("");
+  });
+}
+
+function rememberPickerSelection(picker) {
+  picker.dataset.selected = JSON.stringify($$("input:checked", picker).map((input) => input.value));
+}
+
+/* ── Reading the form ────────────────────────────────────────────────────── */
+
+function readVariant(block) {
+  const read = (name) => $('[name="' + name + '"]', block)?.value.trim() ?? "";
+  const sizeRange = read("sizeRange");
+  // Until the customer re-uploads artwork (files never survive a reload), a
+  // restored draft's logo picks live only in data-selected on the picker -
+  // reading just the checkboxes here would wipe them on the first autosave.
+  const picker = $("[data-logo-pick]", block);
+  const renderedChips = picker ? $$("input", picker) : [];
+  const logoSlugs = renderedChips.length
+    ? renderedChips.filter((input) => input.checked).map((input) => input.value)
+    : picker
+      ? pickerSelection(picker)
+      : [];
+  return {
+    id: block.dataset.variantId || "",
+    vendor: read("vendor"),
+    styleNumber: read("styleNumber"),
+    colors: read("colors"),
+    style: read("style"),
+    decorationMethod: read("decorationMethod"),
+    sizeTier: read("sizeTier"),
+    customSizeTier: read("customSizeTier"),
+    placement: read("placement"),
+    logoSlugs,
+    nameRank: read("nameRank"),
+    sizeRange,
+    // A hidden Other-sizes input keeps its value when the customer switches
+    // back to a preset range; submitting that stale text would override the
+    // preset in the build.
+    otherSizes: sizeRange === "Other" ? read("otherSizes") : "",
+    notes: read("notes")
+  };
+}
+
 function selectedCategories() {
   return $$(".customer-category").map((card) => {
+    const definition = CATEGORIES.find((item) => item.key === card.dataset.category) || {};
     const value = {
       key: card.dataset.category,
-      title: CATEGORIES.find((item) => item.key === card.dataset.category)?.title || card.dataset.category
+      title: definition.title || card.dataset.category,
+      include: $('[name="include"]', card)?.checked || false,
+      notes: $('[name="categoryNotes"]', card)?.value.trim() || ""
     };
-    $$("input, select", card).forEach((input) => {
-      if (input.name === "include") value.include = input.checked;
-      else value[input.name] = input.value.trim();
-    });
+    if (definition.belt) value.beltStyle = $('[name="beltStyle"]', card)?.value.trim() || "";
+    else value.variants = $$(".variant-block", card).map(readVariant);
     return value;
   });
 }
@@ -131,8 +456,11 @@ function includedCategories() {
 }
 
 function updateCategoryCount() {
-  const count = includedCategories().length;
-  $("#categoryCount").textContent = count === 1 ? "1 selected" : count + " selected";
+  const included = includedCategories();
+  const versions = included.reduce((sum, category) => sum + (category.variants?.length || 1), 0);
+  $("#categoryCount").textContent = included.length === 0
+    ? "0 selected"
+    : included.length + " selected · " + versions + " garment" + (versions === 1 ? "" : "s");
 }
 
 /* ── Logo files ──────────────────────────────────────────────────────────── */
@@ -144,6 +472,7 @@ const logoBag = new DataTransfer();
 function syncLogoInput() {
   $("#customerLogos").files = logoBag.files;
   renderLogoList();
+  renderLogoPicker(document);
 }
 
 function addLogoFiles(files) {
@@ -208,6 +537,18 @@ function saveDraft() {
   }, 400);
 }
 
+function fillVariantBlock(block, saved) {
+  $$("input, select", block).forEach((input) => {
+    if (input.name === "logoPick" || !input.name) return;
+    if (saved[input.name] !== undefined && saved[input.name] !== "") input.value = saved[input.name];
+  });
+  const picker = $("[data-logo-pick]", block);
+  // Files never survive a reload, so the saved names wait on the picker until
+  // the customer re-uploads on Step 2 - then the matching chips come back
+  // checked automatically.
+  if (picker && Array.isArray(saved.logoSlugs)) picker.dataset.selected = JSON.stringify(saved.logoSlugs);
+}
+
 function restoreDraft() {
   let draft;
   try {
@@ -224,22 +565,42 @@ function restoreDraft() {
   for (const saved of draft.categories || []) {
     const card = $('.customer-category[data-category="' + saved.key + '"]');
     if (!card) continue;
-    $$("input, select", card).forEach((input) => {
-      if (input.name === "include") input.checked = Boolean(saved.include);
-      else if (saved[input.name]) input.value = saved[input.name];
-    });
+    const definition = CATEGORIES.find((item) => item.key === saved.key) || {};
+    $('[name="include"]', card).checked = Boolean(saved.include);
+    const categoryNotes = $('[name="categoryNotes"]', card);
+    if (categoryNotes && saved.notes) categoryNotes.value = saved.notes;
+
+    if (definition.belt) {
+      const beltStyle = $('[name="beltStyle"]', card);
+      if (beltStyle && saved.beltStyle) beltStyle.value = saved.beltStyle;
+    } else {
+      // Old drafts stored flat category fields; treat them as version 1 -
+      // minus notes (already restored into the category-notes input above;
+      // copying them here would submit and print them twice) and with any
+      // free-text logo instruction folded into the version notes, since the
+      // logoNotes input it lived in no longer exists.
+      const savedVariants = Array.isArray(saved.variants) && saved.variants.length
+        ? saved.variants
+        : [{ ...saved, notes: saved.logoNotes ? "Logo: " + saved.logoNotes : "" }];
+      savedVariants.forEach((savedVariant, index) => {
+        const block = $$(".variant-block", card)[index] || addVariant(card, definition);
+        if (block) fillVariantBlock(block, savedVariant);
+      });
+    }
     updateCategoryState(card);
-    refreshConditionals(card);
+    $$(".variant-block", card).forEach(refreshConditionals);
+    refreshVariantChrome(card);
   }
+  renderLogoPicker(document);
   updateCategoryCount();
 }
 
-function refreshConditionals(card) {
-  const sizeRange = $('[name="sizeRange"]', card);
-  const otherSizes = $(".other-sizes", card);
+function refreshConditionals(scope) {
+  const sizeRange = $('[name="sizeRange"]', scope);
+  const otherSizes = $(".other-sizes", scope);
   if (sizeRange && otherSizes) otherSizes.hidden = sizeRange.value !== "Other";
-  const sizeTier = $('[name="sizeTier"]', card);
-  const customTier = $(".custom-tier", card);
+  const sizeTier = $('[name="sizeTier"]', scope);
+  const customTier = $(".custom-tier", scope);
   if (sizeTier && customTier) customTier.hidden = sizeTier.value !== "Custom";
 }
 
@@ -260,6 +621,7 @@ function showStep(step) {
     item.dataset.state = value === step ? "current" : value < step ? "done" : "todo";
     $("button", item).disabled = value > furthestStep;
   });
+  if (step === 3) renderLogoPicker(document);
   if (step === TOTAL_STEPS) renderReview();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -317,22 +679,28 @@ function validateStep(step) {
       for (const category of included) {
         const definition = CATEGORIES.find((item) => item.key === category.key) || {};
         const card = $('.customer-category[data-category="' + category.key + '"]');
-        const need = [];
-        if (definition.belt) need.push("beltStyle");
-        else {
-          need.push("colors", "sizeRange");
-          if (definition.decorated) {
-            need.push("decorationMethod");
-            if (definition.placements?.length) need.push("placement");
-          }
-        }
-        for (const name of need) {
-          const input = $('[name="' + name + '"]', card);
+        if (definition.belt) {
+          const input = $('[name="beltStyle"]', card);
           if (input && !input.value.trim()) {
             markInvalid(input, "Required for " + definition.title + ".");
             firstBad = firstBad || input;
           }
+          continue;
         }
+        $$(".variant-block", card).forEach((block, index) => {
+          const need = ["colors", "sizeRange"];
+          if (definition.decorated) {
+            need.push("decorationMethod");
+            if (definition.placements?.length) need.push("placement");
+          }
+          for (const name of need) {
+            const input = $('[name="' + name + '"]', block);
+            if (input && !input.value.trim()) {
+              markInvalid(input, "Required for " + definition.title + " version " + (index + 1) + ".");
+              firstBad = firstBad || input;
+            }
+          }
+        });
       }
     }
   }
@@ -351,18 +719,26 @@ function reviewRow(label, value) {
   return '<div class="rr"><span>' + esc(label) + "</span><b>" + (value ? esc(value) : '<i class="rr-empty">Not provided</i>') + "</b></div>";
 }
 
+function variantSummary(variant) {
+  const vendorBit = [variant.vendor, variant.styleNumber].filter(Boolean).join(" ");
+  const logos = variant.logoSlugs?.length ? "Logos: " + variant.logoSlugs.join(", ") : "All uploaded logos";
+  return [vendorBit, variant.colors, variant.decorationMethod, variant.placement,
+    variant.sizeTier === "Custom" ? variant.customSizeTier : variant.sizeTier,
+    variant.sizeRange === "Other" ? variant.otherSizes : variant.sizeRange,
+    logos].filter(Boolean).join(" · ");
+}
+
 function renderReview() {
   const store = storeFields();
   const included = includedCategories();
 
-  const detail = (category) => {
+  const categoryBlock = (category) => {
     const definition = CATEGORIES.find((item) => item.key === category.key) || {};
-    if (definition.belt) return [category.beltStyle].filter(Boolean).join(" · ");
-    const vendorBit = [category.vendor, category.styleNumber].filter(Boolean).join(" ");
-    const parts = [vendorBit, category.colors, category.style, category.decorationMethod, category.placement,
-      category.sizeTier === "Custom" ? category.customSizeTier : category.sizeTier,
-      category.sizeRange === "Other" ? category.otherSizes : category.sizeRange];
-    return parts.filter(Boolean).join(" · ");
+    if (definition.belt) return '<div class="rr"><span>' + esc(category.title) + "</span><b>" + esc(category.beltStyle || "") + "</b></div>";
+    const variants = category.variants || [];
+    return variants.map((variant, index) =>
+      '<div class="rr"><span>' + esc(category.title) + (variants.length > 1 ? " · v" + (index + 1) : "") + "</span><b>" +
+      esc(variantSummary(variant)) + "</b></div>").join("");
   };
 
   $("#reviewPanel").innerHTML =
@@ -380,7 +756,7 @@ function renderReview() {
     '<button type="button" class="btn btn-ghost btn-sm" data-goto="2">Edit</button></div>' +
 
     '<div class="review-block"><h3>Garments · ' + included.length + "</h3>" +
-    included.map((category) => '<div class="rr"><span>' + esc(category.title) + "</span><b>" + esc(detail(category)) + "</b></div>").join("") +
+    included.map(categoryBlock).join("") +
     '<button type="button" class="btn btn-ghost btn-sm" data-goto="3">Edit</button></div>';
 }
 
@@ -460,12 +836,19 @@ document.addEventListener("change", (event) => {
   const card = event.target.closest(".customer-category");
   if (card) {
     if (event.target.name === "include") updateCategoryState(card);
-    refreshConditionals(card);
+    if (event.target.name === "logoPick") rememberPickerSelection(event.target.closest("[data-logo-pick]"));
+    const block = event.target.closest(".variant-block");
+    if (block) refreshConditionals(block);
+    updateGarmentTint(card);
     updateCategoryCount();
   }
   if (event.target.closest("#customerIntakeForm")) saveDraft();
 });
 document.addEventListener("input", (event) => {
+  if (event.target.name === "colors") {
+    const card = event.target.closest(".customer-category");
+    if (card) updateGarmentTint(card);
+  }
   if (event.target.closest("#customerIntakeForm")) saveDraft();
 });
 
@@ -483,6 +866,30 @@ document.addEventListener("click", (event) => {
   if (rail) {
     const target = Number(rail.closest("li").dataset.step);
     if (target <= furthestStep) showStep(target);
+  }
+
+  const addVariantButton = event.target.closest("[data-add-variant]");
+  if (addVariantButton) {
+    const card = addVariantButton.closest(".customer-category");
+    const definition = CATEGORIES.find((item) => item.key === card.dataset.category) || {};
+    const block = addVariant(card, definition);
+    if (block) {
+      $('[name="vendor"]', block)?.focus();
+      updateCategoryCount();
+      saveDraft();
+    }
+  }
+
+  const removeVariantButton = event.target.closest("[data-remove-variant]");
+  if (removeVariantButton) {
+    const card = removeVariantButton.closest(".customer-category");
+    removeVariantButton.closest(".variant-block").remove();
+    refreshVariantChrome(card);
+    updateCategoryCount();
+    // The focused button just left the DOM; without this, keyboard focus
+    // falls to <body> and the customer re-tabs from the top of the page.
+    $("[data-add-variant]", card)?.focus();
+    saveDraft();
   }
 
   const zoom = event.target.closest("[data-zoom]");
@@ -524,7 +931,10 @@ $("#customerIntakeForm").addEventListener("submit", async (event) => {
   }
   for (let step = 1; step <= 3; step++) {
     if (!validateStep(step)) {
+      // Focus and scrollIntoView are no-ops inside a hidden section, so show
+      // the failing step first and validate again to land on the bad field.
       showStep(step);
+      validateStep(step);
       return;
     }
   }
