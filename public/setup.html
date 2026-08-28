@@ -86,7 +86,7 @@
         });
       }
 
-      function actionFor(service, connected, store) {
+      function actionFor(service, connected) {
         if (connected) {
           return '<button class="btn btn-danger-ghost btn-sm disconnect-service" type="button" data-service="' + service.key + '">Disconnect</button>';
         }
@@ -117,7 +117,7 @@
                 '<div class="state"><span class="dot"></span><span class="state-text">' + stateText + '</span></div>' +
               '</div>' +
             '</div>' +
-            '<div class="actions">' + actionFor(service, connected, store) + '</div>' +
+            '<div class="actions">' + actionFor(service, connected) + '</div>' +
           '</article>';
       }
 

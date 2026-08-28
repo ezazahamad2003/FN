@@ -21,70 +21,59 @@ const TOP_PLACEMENTS = {
     label: "Front left chest",
     face: "front",
     guidance:
-      "left chest as worn, centre of the logo roughly 20-21 cm down from the shoulder seam for men's cuts (16-17 cm women's, 15-16 cm youth), sitting about one third up from the bottom of the sleeve to the torso join",
-    defaultTier: "Small"
+      "left chest as worn, centre of the logo roughly 20-21 cm down from the shoulder seam for men's cuts (16-17 cm women's, 15-16 cm youth), sitting about one third up from the bottom of the sleeve to the torso join"
   },
   "center back": {
     label: "Center back",
     face: "back",
-    guidance: "centred across the upper back, centre of the artwork about 25 cm down from the back neck seam",
-    defaultTier: "Large / Full Back"
+    guidance: "centred across the upper back, centre of the artwork about 25 cm down from the back neck seam"
   },
   "center chest": {
     label: "Center chest",
     face: "front",
-    guidance: "centred on the chest, about 10-11 cm down from the front neck seam on garments without a placket",
-    defaultTier: "Standard"
+    guidance: "centred on the chest, about 10-11 cm down from the front neck seam on garments without a placket"
   },
   "back neck": {
     label: "Back neck / under collar",
     face: "back",
-    guidance: "centred under the back collar, 6-8 cm down from the neck seam",
-    defaultTier: "Small"
+    guidance: "centred under the back collar, 6-8 cm down from the neck seam"
   },
   "top back": {
     label: "Through shoulders / top back",
     face: "back",
-    guidance: "centred across the shoulder blades, about 15 cm down from the back neck seam",
-    defaultTier: "Large / Full Back"
+    guidance: "centred across the shoulder blades, about 15 cm down from the back neck seam"
   },
   "left sleeve": {
     label: "Left sleeve",
     face: "front",
     guidance:
-      "on the wearer's left sleeve, 11 cm down from the shoulder seam on long sleeves, 2 cm up from the hem stitch on short sleeves, 22 cm from seam on raglan cuts",
-    defaultTier: "Small"
+      "on the wearer's left sleeve, 11 cm down from the shoulder seam on long sleeves, 2 cm up from the hem stitch on short sleeves, 22 cm from seam on raglan cuts"
   },
   "right sleeve": {
     label: "Right sleeve",
     face: "front",
     guidance:
-      "on the wearer's right sleeve, 11 cm down from the shoulder seam on long sleeves, 2 cm up from the hem stitch on short sleeves, 22 cm from seam on raglan cuts",
-    defaultTier: "Small"
+      "on the wearer's right sleeve, 11 cm down from the shoulder seam on long sleeves, 2 cm up from the hem stitch on short sleeves, 22 cm from seam on raglan cuts"
   },
   "both sleeves": {
     label: "Both sleeves",
     face: "front",
-    guidance: "mirrored on both sleeves, 11 cm down from each shoulder seam on long sleeves, 2 cm up from the hem stitch on short sleeves",
-    defaultTier: "Small"
+    guidance: "mirrored on both sleeves, 11 cm down from each shoulder seam on long sleeves, 2 cm up from the hem stitch on short sleeves"
   },
   "front hip": {
     label: "Front hip",
     face: "front",
-    guidance: "lower front hem, 2 cm up from the stitch and 2 cm in from the side seam",
-    defaultTier: "Small"
+    guidance: "lower front hem, 2 cm up from the stitch and 2 cm in from the side seam"
   },
   "front center": {
     label: "Front center (cap)",
     face: "front",
-    guidance: "centred on the cap front panel, sitting just above the brim seam",
-    defaultTier: "Standard"
+    guidance: "centred on the cap front panel, sitting just above the brim seam"
   },
   side: {
     label: "Side (cap)",
     face: "front",
-    guidance: "on the cap side panel, centred between the seams",
-    defaultTier: "Small"
+    guidance: "on the cap side panel, centred between the seams"
   }
 };
 
@@ -93,21 +82,19 @@ const LEG_PLACEMENTS = {
   "left leg": {
     label: "Left leg",
     face: "front",
-    guidance: "on the wearer's left outer thigh, print area about 5″ × 5″",
-    defaultTier: "Standard"
+    guidance: "on the wearer's left outer thigh, print area about 5″ × 5″"
   },
   "right leg": {
     label: "Right leg",
     face: "front",
-    guidance: "on the wearer's right outer thigh, print area about 5″ × 5″",
-    defaultTier: "Standard"
+    guidance: "on the wearer's right outer thigh, print area about 5″ × 5″"
   },
-  "outer thigh": { label: "Outer thigh", face: "front", guidance: "outer thigh, print area about 5″ × 5″", defaultTier: "Standard" },
-  "side hip": { label: "Side hip", face: "front", guidance: "side hip, print area about 3″ × 1.5″", defaultTier: "Small" },
-  pocket: { label: "Pocket", face: "back", guidance: "on the back pocket, print area about 3″ × 3″", defaultTier: "Small" },
-  "lower leg": { label: "Lower leg", face: "front", guidance: "lower leg above the cuff, print area about 3″ × 6″", defaultTier: "Small" },
-  "full leg": { label: "Full leg", face: "front", guidance: "running down the full outer leg, print area about 4″ × 16″", defaultTier: "Large / Full Back" },
-  waistband: { label: "Waistband", face: "back", guidance: "on the rear waistband, print area about 6″ × 2″", defaultTier: "Small" }
+  "outer thigh": { label: "Outer thigh", face: "front", guidance: "outer thigh, print area about 5″ × 5″" },
+  "side hip": { label: "Side hip", face: "front", guidance: "side hip, print area about 3″ × 1.5″" },
+  pocket: { label: "Pocket", face: "back", guidance: "on the back pocket, print area about 3″ × 3″" },
+  "lower leg": { label: "Lower leg", face: "front", guidance: "lower leg above the cuff, print area about 3″ × 6″" },
+  "full leg": { label: "Full leg", face: "front", guidance: "running down the full outer leg, print area about 4″ × 16″" },
+  waistband: { label: "Waistband", face: "back", guidance: "on the rear waistband, print area about 6″ × 2″" }
 };
 
 const PLACEMENTS = { ...TOP_PLACEMENTS, ...LEG_PLACEMENTS };

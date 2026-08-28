@@ -30,10 +30,6 @@ const CUSTOMER_INTAKE_CATEGORIES = [
   { key: "hats", title: "Hats", type: "hat", placements: ["Front center", "Side"], decorated: true }
 ];
 
-const DECORATION_METHODS = ["Embroidery", "Screen Print", "Heat Transfer", "Patch", "None"];
-const SIZE_TIERS = ["Small", "Standard", "Large / Full Back", "Custom"];
-const SIZE_RANGES = ["S-3XL", "S-5XL", "Youth sizes", "Women's cut", "Other"];
-
 function clean(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
@@ -43,14 +39,6 @@ function slug(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "") || "store";
-}
-
-function checked(selected, label) {
-  return clean(selected).toLowerCase() === clean(label).toLowerCase() ? "[x]" : "[ ]";
-}
-
-function choiceLine(selected, choices) {
-  return choices.map((choice) => checked(selected, choice) + " " + choice).join(" ");
 }
 
 function normalizeNameRank(value) {
@@ -99,8 +87,7 @@ function normalizeCategory(input = {}) {
     .map((item, index) => normalizeVariant(item, index));
   // Pre-variant records (and any client still sending flat fields) become
   // version 1, so old submissions keep building and old edits keep saving.
-  // Category-level notes stay on the category - copying them into the variant
-  // would print them twice in the structured document.
+  // Category-level notes stay on the category rather than the variant.
   if (!variants.length && !definition.belt) {
     const legacy = normalizeVariant({ ...source, notes: "", id: "" }, 0);
     if (variantHasContent(legacy) || include) variants = [legacy];
@@ -111,8 +98,8 @@ function normalizeCategory(input = {}) {
     key: source.key || definition.key || "",
     title: source.title || definition.title || "",
     include,
-    // Flat fields mirror version 1 so every pre-variant consumer (structured
-    // text, the plan endpoint, older records round-tripping) keeps working.
+    // Flat fields mirror version 1 so pre-variant records round-trip and the
+    // dashboard editor's category-level fields stay populated.
     style: first.style,
     vendor: first.vendor,
     styleNumber: first.styleNumber,
@@ -170,65 +157,6 @@ function categoryDefinition(key) {
   return CUSTOMER_INTAKE_CATEGORIES.find((item) => item.key === key) || {};
 }
 
-function structuredTextFromCustomerIntake(recordInput) {
-  const record = normalizeRecord(recordInput);
-  const lines = [
-    "FN Simple Uniforms Store Build Automation Form",
-    "Department & Store Setup",
-    "Department / Organization Name " + record.store.departmentName,
-    "Department Code " + record.store.departmentCode,
-    "Decoration Reference (applies across all garments below)",
-    "Logo file requirements: customer uploaded logo files through the intake link.",
-    "Garment Selections"
-  ];
-
-  for (const category of record.categories) {
-    const definition = categoryDefinition(category.key);
-    lines.push("", definition.title || category.title, "Field Response / Options");
-    lines.push("Include this category in store? " + (category.include ? "[x] Yes [ ] No" : "[ ] Yes [x] No"));
-    if (!category.include) continue;
-
-    if (definition.belt) {
-      lines.push("Belt Style " + (category.beltStyle || category.style));
-      if (category.notes) lines.push("Category Notes " + category.notes);
-      continue;
-    }
-
-    const variants = category.variants?.length ? category.variants : [category];
-    variants.forEach((variant, index) => {
-      if (variants.length > 1) lines.push(`Version ${index + 1} of ${variants.length}`);
-
-      // No placeholder when the style is blank: the parser turns whatever sits
-      // here into the Shopify product title prefix, and "FN Simple approved
-      // catalog T-Shirts" is not a product name anyone typed.
-      const styleParts = [variant.styleNumber, variant.style].filter(Boolean).join(" ");
-      lines.push("Style & Color(s) " + styleParts + " Color(s): " + variant.colors);
-      if (variant.vendor) lines.push("Vendor / Brand " + variant.vendor + (variant.styleNumber ? " — style " + variant.styleNumber : ""));
-
-      if (definition.decorated) {
-        lines.push("Decoration Method " + choiceLine(variant.decorationMethod, DECORATION_METHODS));
-        const pickedLogos = (variant.logoSlugs || []).join(", ") || variant.logoNotes;
-        lines.push(pickedLogos && (variant.logoSlugs?.length || category.logoChoice === "additional")
-          ? "Decoration Logo(s) [ ] Use department logo (Section A) [x] Upload additional logo(s): " + pickedLogos
-          : "Decoration Logo(s) [x] Use department logo (Section A) [ ] Upload additional logo(s):");
-        lines.push("Decoration Size Tier " + choiceLine(variant.sizeTier, SIZE_TIERS) + (variant.sizeTier === "Custom" ? " Custom: " + variant.customSizeTier : ""));
-        if (definition.placements && definition.placements.length) lines.push("Placement " + choiceLine(variant.placement, definition.placements));
-        lines.push("Name / Rank - Right Chest? " + (variant.nameRank === "yes" ? "[x] Yes [ ] No" : variant.nameRank === "no" ? "[ ] Yes [x] No" : "[ ] Yes [ ] No"));
-      }
-
-      lines.push("Size Range Needed " + choiceLine(variant.sizeRange, SIZE_RANGES) + (variant.sizeRange === "Other" ? " Other: " + variant.otherSizes : ""));
-      // "Category Notes" is deliberately reused for version notes: it is a
-      // known terminator label in intake.js fieldBlock, so a legacy text parse
-      // never bleeds these notes into the size-range capture.
-      if (variant.notes) lines.push("Category Notes " + variant.notes);
-    });
-    if (category.notes) lines.push("Category Notes " + category.notes);
-  }
-
-  if (record.customerNotes) lines.push("", "Customer notes", record.customerNotes);
-  return lines.join("\n");
-}
-
 function recordWithComputedFields(record, driveFile = {}) {
   const normalized = normalizeRecord(record);
   const included = normalized.categories.filter((category) => category.include);
@@ -265,15 +193,13 @@ function recordWithComputedFields(record, driveFile = {}) {
       logoCount: normalized.logos.length,
       missing,
       ready: included.length > 0 && missing.length === 0
-    },
-    structuredText: structuredTextFromCustomerIntake(normalized)
+    }
   };
 }
 
 function stripLargeFields(record) {
   const clone = JSON.parse(JSON.stringify(record));
   clone.logos = (clone.logos || []).map((logo) => ({ name: logo.name, mimetype: logo.mimetype, size: logo.size }));
-  delete clone.structuredText;
   return clone;
 }
 
@@ -600,6 +526,5 @@ module.exports = {
   intakeDocumentHtml,
   intakeFromCustomerRecord,
   listCustomerIntakes,
-  structuredTextFromCustomerIntake,
   updateCustomerIntake
 };

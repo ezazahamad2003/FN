@@ -42,7 +42,7 @@ The dashboard voice agent records short browser mic turns, sends them to Azure O
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 
-For local development without Azure, `OPENAI_API_KEY` remains available as a legacy fallback for text chat only.
+`OPENAI_API_KEY` does more than local development: it is the fallback for chat reasoning AND the active provider for image generation and the supplier blank web search whenever no `AZURE_OPENAI_IMAGE_DEPLOYMENT` is configured. In the current production deploy, image generation runs on this key.
 ## Re-Auth If Tokens Expire
 
 Stop the server, remove the expired token from `.env`, then restart:
@@ -80,7 +80,7 @@ The app opens on **Dashboard** for live platform status and the voice-first oper
 | **Dashboard** | `#/dashboard` | Live service status plus the voice operations agent |
 | **New Stores** | `#/new-stores` | Internal review queue for customer-submitted store requests |
 | **Departments** | `#/departments` | Browse all Shopify collections; click one to open it |
-| **Onboard new** | `#/onboarding` | The full policy-driven intake described below |
+| **Onboarding Agent** | `#/onboarding` | The full policy-driven intake described below |
 
 Onboarding is what you run *once* to stand up a new department. Browsing, reviewing customer submissions, and editing live Shopify collections are the everyday tasks.
 
@@ -122,7 +122,7 @@ From there:
 
 Send customers `/intake`. They fill a fixed-field store request based on the FNS form draft: store setup, logo upload, decoration size/placement, and repeated category choices for shirts, sweatshirts, jackets, polos, shorts, sweatpants, Class B items, belts, and hats.
 
-On submit, the app saves the request JSON and logos to Google Drive under `Customer Store Intakes`, creates or reuses the matching Shopify collection immediately, and places the request in **New Stores**. The internal queue is protected with `FN_ADMIN_TOKEN`; the customer link does not need that token.
+On submit, the app saves the request JSON and logos to Google Drive under `Customer Store Intakes`, creates or reuses the matching Shopify collection immediately, and places the request in **New Stores**. The internal queue is open by default while the platform is in testing; set `FN_REQUIRE_ADMIN_TOKEN=1` together with `FN_ADMIN_TOKEN` to require a token for it. The customer link never needs a token.
 
 From **New Stores**, open a store request to review or edit the customer answers, open the Shopify collection, and watch build progress. Ready submissions start building automatically on submit — products are created as **DRAFT**, so nothing is customer-visible until an operator publishes them in Shopify admin. Use **Build store now** / **Re-run build** on the store page to kick or re-run a build; re-runs are additive and skip existing products.
 The onboarding view accepts a department name, logo images, policy documents, and

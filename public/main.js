@@ -116,7 +116,7 @@ function stepRow(step) {
 
 function setStep(step, state) {
   const row = stepRow(step);
-  if (!row) return; // step 10 (summary) has no row — handled by setComplete()
+  if (!row) return; // defensive: ignore step numbers with no timeline row
   row.dataset.state = state;
   const stateEl = row.querySelector(".step-state");
   if (stateEl) stateEl.textContent = STATE_LABEL[state] || "";
@@ -959,7 +959,6 @@ async function submitOnboarding() {
   const res = await fetch("/onboard", { method: "POST", body: new FormData(form) });
 
   if (res.status === 409) {
-    const payload = await res.json();
     const choice = await openConflictModal();
     if (choice === "cancel") {
       setRunHeader("idle", "Run canceled", "The existing Drive folder was left untouched.");
@@ -1290,7 +1289,7 @@ function intakeLogoPicker(record, selectedSlugs) {
   return `<div class="logo-pick">${chips || '<span class="logo-pick-empty">No logo files stored on this request.</span>'}</div>`;
 }
 
-function intakeVariantEditor(record, category, variant, index, count, placements) {
+function intakeVariantEditor(record, variant, index, count, placements) {
   return `
     <fieldset class="variant-editor" data-variant-id="${escapeHtml(variant.id || "v" + (index + 1))}">
       <div class="variant-head">
@@ -1335,7 +1334,7 @@ function categoryEditor(record, category) {
         <label><span>Notes</span><input name="categoryNotes" value="${escapeHtml(category.notes || "")}"></label>
       </div>`
     : `<div class="variant-editor-list">
-        ${variants.map((variant, index) => intakeVariantEditor(record, category, variant, index, variants.length, placements)).join("")}
+        ${variants.map((variant, index) => intakeVariantEditor(record, variant, index, variants.length, placements)).join("")}
       </div>
       <div class="variant-actions">
         <button type="button" class="btn btn-ghost btn-sm" data-add-intake-variant>+ Add version</button>
@@ -1780,7 +1779,7 @@ function renderStoreDetail(record) {
       const placements = intakePlacementsFor(details.dataset.categoryKey);
       list.insertAdjacentHTML(
         "beforeend",
-        intakeVariantEditor(record, { key: details.dataset.categoryKey }, { id: `v${Date.now().toString(36)}` }, count, count + 1, placements)
+        intakeVariantEditor(record, { id: `v${Date.now().toString(36)}` }, count, count + 1, placements)
       );
       renumberIntakeVariants(list);
     }
@@ -1901,7 +1900,6 @@ let mediaRecorder = null;
 let voiceChunks = [];
 let voiceSessionActive = false;
 let turnInFlight = false;
-let speechStarted = false;
 let quietSince = 0;
 let recordStartedAt = 0;
 let discardRecording = false;
@@ -2111,7 +2109,6 @@ function beginRecording() {
   const mimeType = bestAudioMimeType();
   voiceChunks = [];
   discardRecording = false;
-  speechStarted = true;
   quietSince = 0;
   recordStartedAt = performance.now();
   mediaRecorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined);
@@ -2122,7 +2119,6 @@ function beginRecording() {
     const blob = new Blob(voiceChunks, { type: mediaRecorder?.mimeType || "audio/webm" });
     mediaRecorder = null;
     voiceChunks = [];
-    speechStarted = false;
     quietSince = 0;
     if (discardRecording || !voiceSessionActive || blob.size < 900) {
       turnInFlight = false;

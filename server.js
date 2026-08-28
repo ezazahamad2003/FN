@@ -35,7 +35,7 @@ const {
   updateProduct
 } = require("./catalog");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
-const { REFERENCE_IMAGES, placementGuidance } = require("./placements");
+const { placementGuidance } = require("./placements");
 const { findSupplierBlank } = require("./blanks");
 const {
   combineIntakes,
@@ -49,7 +49,6 @@ const {
   createCustomerIntake,
   getCustomerIntake,
   intakeDocumentHtml,
-  intakeFromCustomerRecord,
   listCustomerIntakes,
   updateCustomerIntake
 } = require("./customerIntakes");
@@ -281,8 +280,6 @@ function resolveProductLogos(product, logoRuns) {
   return selected.length ? selected : logoRuns;
 }
 
-// Front Logo option values must be unique per product, so duplicate display
-// names (e.g. "station-1.png" and "Station_1.jpg") get a numeric suffix.
 function adminToken() {
   return String(process.env.FN_ADMIN_TOKEN || "").trim();
 }
@@ -316,6 +313,8 @@ function logoBufferFromRecord(record) {
   return { buffer: Buffer.from(match[2], "base64"), alt: record.store.departmentName + " logo" };
 }
 
+// Front Logo option values must be unique per product, so duplicate display
+// names (e.g. "station-1.png" and "Station_1.jpg") get a numeric suffix.
 function dedupeLogoLabels(logoRuns) {
   const used = new Map();
   for (const logo of logoRuns) {
@@ -587,83 +586,6 @@ app.patch("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
     res.json({ intake: await updateCustomerIntake(req.params.id, patch) });
   } catch (error) {
     res.status(400).json({ error: error.message });
-  }
-});
-
-/* -----------------------------------------------------------------------------
-   Onboarding agent handoff.
-
-   A submitted customer form is already the same fixed-field schema the PDF
-   store build form produces, so products are built straight from the record
-   (intakeFromCustomerRecord) - one per variant, no text round-trip - and the
-   reasoning agent runs over them.
-
-   This deliberately stops at a PLAN. It reasons about what to build, what the
-   department left ambiguous, and how each garment should be decorated - but it
-   does not create products or spend image credits. The review gate is that
-   builds create DRAFT products; an operator flips them live in Shopify admin.
-   -------------------------------------------------------------------------- */
-app.post("/api/customer-intakes/:id/plan", requireAdminToken, async (req, res) => {
-  try {
-    const record = await getCustomerIntake(req.params.id);
-    const departmentName = record.store.departmentName || "the department";
-
-    // Products straight from the record - one per variant, same shape the
-    // uploaded-form parse produces, without the lossy text round-trip.
-    const intake = intakeFromCustomerRecord(record);
-
-    // Logo catalog by filename - names alone are enough to assign artwork to
-    // garments, and skipping Vision here keeps the plan fast.
-    const logoRuns = (record.logos || []).map((logo) => ({
-      originalName: logo.name,
-      filenameBase: titleCase(logo.name),
-      slug: slug(logo.name),
-      logoDescription: ""
-    }));
-    dedupeLogoLabels(logoRuns);
-
-    const context = [intakeContextText(intake), record.customerNotes, record.store.notes]
-      .filter((part) => part && part.trim())
-      .join("\n\n");
-    if (!context.trim()) throw new Error("This intake has no garment selections to plan from.");
-
-    const products = mergeIntakeProducts(await determinePolicyProducts(departmentName, context, logoRuns), intake);
-    const gaps = await analyzePolicyGaps(departmentName, context, products, logoRuns);
-
-    const plan = products.map((product) => {
-      const placement = product.placement || resolvePlacement(product).replace(/-/g, " ");
-      return {
-        productLabel: product.productLabel,
-        garmentColor: product.garmentColor,
-        brandStyle: product.brandStyle,
-        placement,
-        placementStated: Boolean(product.placement),
-        placementGuidance: placementGuidance(placement, product.decorationSizeTier),
-        decorationMethod: product.decorationMethod,
-        decorationSizeTier: product.decorationSizeTier || "",
-        decorationFeeSku: product.decorationFeeSku || "",
-        sizes: product.sizes?.length ? product.sizes : DEFAULT_SIZES,
-        sizesStated: Boolean(product.sizes?.length),
-        logos: resolveProductLogos(product, logoRuns).map((logo) => logo.filenameBase),
-        intakeSource: Boolean(product.intakeSource)
-      };
-    });
-
-    await updateCustomerIntake(req.params.id, { status: "planned" });
-
-    res.json({
-      requestId: record.requestId,
-      departmentName,
-      departmentCode: record.store.departmentCode,
-      productCount: plan.length,
-      products: plan,
-      gaps: { confidence: gaps.confidence, missing: gaps.missing },
-      emailDraft: gaps.emailDraft,
-      referenceImages: REFERENCE_IMAGES,
-      tags: intakeTags(intake)
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 

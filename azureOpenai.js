@@ -41,9 +41,7 @@ function azureSpeechConfigured() {
   return Boolean(
     speechEndpoint() &&
       speechApiKey() &&
-      (process.env.AZURE_OPENAI_SPEECH_DEPLOYMENT ||
-        process.env.AZURE_OPENAI_TTS_DEPLOYMENT ||
-        process.env.AZURE_OPENAI_SPEECH_MODEL)
+      process.env.AZURE_OPENAI_SPEECH_MODEL
   );
 }
 
@@ -82,11 +80,7 @@ function imageGenConfigured() {
 function genAIStatus() {
   if (azureOpenAIConfigured()) {
     const transcriptionDeployment = process.env.AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT || process.env.AZURE_OPENAI_VOICE_DEPLOYMENT || "";
-    const speechDeployment =
-      process.env.AZURE_OPENAI_SPEECH_DEPLOYMENT ||
-      process.env.AZURE_OPENAI_TTS_DEPLOYMENT ||
-      process.env.AZURE_OPENAI_SPEECH_MODEL ||
-      "";
+    const speechDeployment = process.env.AZURE_OPENAI_SPEECH_MODEL || "";
     return {
       configured: true,
       provider: "azure-openai",
@@ -150,20 +144,8 @@ async function azureChatCompletion({ messages, temperature = 0.2, maxTokens = 90
   return json.choices?.[0]?.message?.content?.trim() || "";
 }
 
-async function openAIChatCompletion({ messages, temperature = 0.2, maxTokens = 900 }) {
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await openai.chat.completions.create({
-    model: process.env.OPENAI_CHAT_MODEL || "gpt-4o",
-    messages,
-    temperature,
-    max_tokens: maxTokens
-  });
-  return response.choices[0]?.message?.content?.trim() || "";
-}
-
 async function chatCompletion(options) {
   if (azureOpenAIConfigured()) return azureChatCompletion(options);
-  if (options?.allowOpenAIFallback && openAIConfigured()) return openAIChatCompletion(options);
   throw new Error("Azure OpenAI chat is not configured. Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_OPENAI_CHAT_DEPLOYMENT.");
 }
 
@@ -299,10 +281,7 @@ async function azureTextToSpeech({ text, voice, speed = 1.04, format = "mp3" }) 
 
   const endpoint = speechEndpoint();
   const apiVersion = process.env.AZURE_OPENAI_SPEECH_API_VERSION || "preview";
-  const model =
-    process.env.AZURE_OPENAI_SPEECH_DEPLOYMENT ||
-    process.env.AZURE_OPENAI_TTS_DEPLOYMENT ||
-    process.env.AZURE_OPENAI_SPEECH_MODEL;
+  const model = process.env.AZURE_OPENAI_SPEECH_MODEL;
   const url = `${endpoint}/openai/v1/audio/speech?api-version=${encodeURIComponent(apiVersion)}`;
   const responseFormat = ["mp3", "opus", "aac", "flac", "wav", "pcm"].includes(format) ? format : "mp3";
 

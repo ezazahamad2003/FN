@@ -1,4 +1,3 @@
-const fetch = require("node-fetch");
 const { PDFParse } = require("pdf-parse");
 const { generateImage, reason } = require("./azureOpenai");
 
@@ -100,15 +99,10 @@ async function renderGarment(prompt) {
     prompt
   });
   const image = response.data?.[0];
-  if (image?.b64_json) {
-    return Buffer.from(image.b64_json, "base64");
-  }
-  const url = image?.url;
-  if (!url) throw new Error("OpenAI image generation did not return image data.");
-
-  const imageRes = await fetch(url);
-  if (!imageRes.ok) throw new Error(`Could not download generated garment image: ${imageRes.status}`);
-  return imageRes.buffer();
+  // The provider shim always returns base64 (it downloads URL results itself
+  // in azureOpenai.generateImage), so a missing payload is a hard error here.
+  if (!image?.b64_json) throw new Error("Image generation did not return image data.");
+  return Buffer.from(image.b64_json, "base64");
 }
 
 // Gate on the one failure mode that actually reaches customers: the image model
