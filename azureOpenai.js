@@ -121,7 +121,11 @@ async function azureChatCompletion({ messages, temperature = 0.2, maxTokens = 90
 
   const body = { messages };
   if (/^gpt-5/i.test(deployment) || deployment === "fn-chat") {
-    body.max_completion_tokens = maxTokens;
+    // Reasoning models spend completion tokens on hidden reasoning BEFORE the
+    // answer. A caller asking for a 900-token answer got an empty response
+    // whenever reasoning ate the whole budget, so the budget here covers
+    // reasoning + answer, never just the answer.
+    body.max_completion_tokens = Math.max(maxTokens + 2000, maxTokens * 3);
   } else {
     body.temperature = temperature;
     body.max_tokens = maxTokens;
@@ -162,7 +166,12 @@ async function reason({ messages, temperature = 0.2, maxTokens = 900, jsonObject
   const payload = { messages, temperature, maxTokens };
   if (azureOpenAIConfigured()) {
     try {
-      return await azureChatCompletion({ ...payload, jsonObject });
+      const content = await azureChatCompletion({ ...payload, jsonObject });
+      // An empty completion is a provider failure in this pipeline (a
+      // reasoning model that ran out of budget, a content filter, a hiccup) -
+      // fall back rather than hand "" to a caller that will parse it.
+      if (content) return content;
+      throw new Error("Azure chat returned an empty completion.");
     } catch (error) {
       if (!openAIConfigured()) throw error;
       console.warn("Azure chat failed, falling back to OpenAI:", error.message);

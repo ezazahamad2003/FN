@@ -156,10 +156,25 @@ function lookupPlacement(placement) {
  * an invented placement is worse than an undecorated base, because the real
  * logo gets composited on top of it afterwards.
  */
+// Tier labels arrive in two spellings: the form's ("Small", "Large / Full
+// Back") and normalizeTierLabel's lowercase keys ("small", "large",
+// "custom: …"). Accept both — a strict-case lookup silently dropped the
+// artwork-width clause from every build-pipeline prompt.
+function lookupTier(sizeTier) {
+  if (SIZE_TIERS[sizeTier]) return SIZE_TIERS[sizeTier];
+  const key = normalize(sizeTier);
+  if (!key) return null;
+  if (key.startsWith("custom")) {
+    const detail = String(sizeTier).replace(/^custom:?\s*/i, "").trim();
+    return detail ? { width: detail } : null;
+  }
+  return Object.entries(SIZE_TIERS).find(([label]) => normalize(label).startsWith(key))?.[1] || null;
+}
+
 function placementGuidance(placement, sizeTier) {
   const entry = lookupPlacement(placement);
   if (!entry) return "";
-  const tier = SIZE_TIERS[sizeTier];
+  const tier = lookupTier(sizeTier);
   const size = tier ? `, artwork approximately ${tier.width}` : "";
   return `Decoration position for this garment: ${entry.guidance}${size}. Show the ${entry.face} of the garment.`;
 }

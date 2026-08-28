@@ -1,6 +1,7 @@
 const OpenAI = require("openai");
 const fetch = require("node-fetch");
 const sharp = require("sharp");
+const { extractSupplierFacts } = require("./ai");
 
 /*
  * Source the BLANK garment photo from the supplier instead of generating it.
@@ -208,9 +209,62 @@ async function fetchImage(url) {
   return response.buffer();
 }
 
+/* Readable text of a product page, table structure preserved: size charts
+   live in <table> markup, so cells become "|"-separated columns and rows keep
+   their line breaks — flattening everything to one line made the chart
+   unrecoverable.
+
+   JS-rendered storefronts (Shopify themes like nextlevelapparel.com) put the
+   spec bullets in embedded product JSON instead of markup, so the fabric
+   facts would vanish with the <script> tags. Harvest JSON-LD blocks and the
+   longest "description" strings out of inline JSON FIRST, then strip. */
+function htmlToText(html) {
+  const source = String(html || "");
+
+  const harvested = [];
+  for (const match of source.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    harvested.push(match[1]);
+  }
+  const descriptions = [...source.matchAll(/"(?:description|body_html)"\s*:\s*"((?:[^"\\]|\\.){80,8000})"/gi)]
+    .map((match) => {
+      try {
+        return JSON.parse(`"${match[1]}"`);
+      } catch {
+        return match[1];
+      }
+    })
+    .sort((a, b) => b.length - a.length)
+    .slice(0, 3);
+  harvested.push(...descriptions);
+  const meta = source.match(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']+)/i)?.[1];
+  if (meta) harvested.push(meta);
+
+  const strip = (fragment) =>
+    String(fragment || "")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<\/(?:tr|h[1-6]|p|li|div)>/gi, "\n")
+      .replace(/<\/(?:td|th)>/gi, " | ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#0?39;|&apos;/gi, "'")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\s*\n\s*/g, "\n")
+      .trim();
+
+  const pageText = strip(source);
+  const extraText = harvested.map(strip).filter(Boolean).join("\n");
+  return [pageText, extraText ? `\n--- embedded product data ---\n${extraText}` : ""].join("");
+}
+
 // Pull every plausible product image off a product page, best shot first.
-async function imageCandidatesFromPage(pageUrl) {
+async function imageCandidatesFromPage(pageUrl, pageTexts = null) {
   const html = await fetchText(pageUrl);
+  if (pageTexts) pageTexts.set(pageUrl, htmlToText(html));
   const raw = new Set();
 
   for (const match of html.matchAll(/<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)/gi)) {
@@ -424,10 +478,15 @@ async function findSupplierBlank(product, { onLog } = {}) {
     // back is the weakest input, so it is only tried once pages are exhausted.
     const candidates = [];
     const vendorPageUrls = new Set();
+    const pageTexts = new Map();
+    const candidateSource = new Map();
     for (const pageUrl of found.productPages) {
       try {
-        const fromPage = await imageCandidatesFromPage(pageUrl);
+        const fromPage = await imageCandidatesFromPage(pageUrl, pageTexts);
         candidates.push(...fromPage);
+        for (const url of fromPage) {
+          if (!candidateSource.has(url)) candidateSource.set(url, pageUrl);
+        }
         if (isVendorHost(pageUrl)) for (const url of fromPage) vendorPageUrls.add(url);
       } catch (error) {
         log(`could not read ${pageUrl}: ${error.message}`);
@@ -480,11 +539,31 @@ async function findSupplierBlank(product, { onLog } = {}) {
       }
     }
 
+    // The listing's fabric bullets and size chart come from the page the
+    // accepted photo lives on (or the best product page found). Extraction is
+    // best-effort: description generation works without it, so a failure here
+    // never fails the product.
+    const factsPage = (imageUrl && candidateSource.get(imageUrl)) || found.productPages.find((url) => pageTexts.has(url)) || null;
+    let facts = null;
+    if (factsPage && pageTexts.get(factsPage)) {
+      try {
+        facts = await extractSupplierFacts(pageTexts.get(factsPage), {
+          brandStyle,
+          productType: product.productType || ""
+        });
+        const chartNote = facts.sizeChart ? `size chart (${facts.sizeChart.rows.length} rows)` : "no size chart";
+        log(`supplier page facts from ${factsPage}: ${facts.fabric.length} fabric spec${facts.fabric.length === 1 ? "" : "s"}, ${chartNote}`);
+      } catch (error) {
+        log(`supplier fact extraction failed (${error.message}); continuing without page facts`);
+      }
+    }
+
     result = {
       imageBuffer,
       imageUrl,
-      sourceUrl: found.productPages[0] || null,
+      sourceUrl: factsPage || found.productPages[0] || null,
       spec: found.spec,
+      facts,
       note: imageBuffer
         ? `Blank garment is the supplier's own photo of ${brandStyle}.`
         : rejected.length

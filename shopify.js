@@ -278,13 +278,13 @@ async function fetchAllVariants(productGid) {
 // "Front Logo" (one value per logo) and "Size". Single-logo products get only
 // a Size option. Large departments (30+ logos × 7 sizes) go through the async
 // productSet path, which supports up to 2048 variants.
-async function createProductWithVariants({ title, bodyHtml, price, productType, vendor, tags, logoValues = [], sizes = [], status = "ACTIVE" }) {
+async function createProductWithVariants({ title, bodyHtml, price, productType, vendor, tags, logoValues = [], sizes = [], status = "ACTIVE", logoOptionName = "Front Logo" }) {
   const sizeValues = sizes.length ? sizes : DEFAULT_SIZES;
   const useLogoOption = logoValues.length > 1;
 
   const productOptions = useLogoOption
     ? [
-        { name: "Front Logo", position: 1, values: logoValues.map((name) => ({ name })) },
+        { name: logoOptionName, position: 1, values: logoValues.map((name) => ({ name })) },
         { name: "Size", position: 2, values: sizeValues.map((name) => ({ name })) }
       ]
     : [{ name: "Size", position: 1, values: sizeValues.map((name) => ({ name })) }];
@@ -295,7 +295,7 @@ async function createProductWithVariants({ title, bodyHtml, price, productType, 
       for (const size of sizeValues) {
         variants.push({
           optionValues: [
-            { optionName: "Front Logo", name: logo },
+            { optionName: logoOptionName, name: logo },
             { optionName: "Size", name: size }
           ],
           price
@@ -356,17 +356,18 @@ async function createProductWithVariants({ title, bodyHtml, price, productType, 
     title: product.title,
     variants: createdVariants,
     variantCount: createdVariants.length,
-    useLogoOption
+    useLogoOption,
+    logoOptionName
   };
 }
 
-// Map each Front Logo option value to its variant GIDs so every logo's mockup
+// Map each logo option value to its variant GIDs so every logo's mockup
 // image can be attached to exactly its variants.
-function variantIdsByLogo(variants, useLogoOption) {
+function variantIdsByLogo(variants, useLogoOption, logoOptionName = "Front Logo") {
   const map = new Map();
   for (const variant of variants) {
     const key = useLogoOption
-      ? variant.selectedOptions.find((option) => option.name === "Front Logo")?.value || "__all__"
+      ? variant.selectedOptions.find((option) => option.name === logoOptionName)?.value || "__all__"
       : "__all__";
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(variant.id);
@@ -463,10 +464,18 @@ async function uploadProductImages(productGid, images) {
 
   await waitForMediaReady(mediaIds);
 
-  const variantMedia = images
-    .map((image, index) => ({ mediaIds: [mediaIds[index]], variantIds: image.variantIds || [] }))
-    .filter((entry) => entry.variantIds.length)
-    .flatMap((entry) => entry.variantIds.map((variantId) => ({ variantId, mediaIds: entry.mediaIds })));
+  // A Shopify variant carries exactly ONE attached media (the image shown
+  // when that variant is selected) — appending a second returns "The given
+  // variant already has attached media." So each variant gets its FIRST image
+  // (the front mockup; callers order front-first), and every other view stays
+  // in the product gallery, which productCreateMedia already populated.
+  const mediaByVariant = new Map();
+  images.forEach((image, index) => {
+    for (const variantId of image.variantIds || []) {
+      if (!mediaByVariant.has(variantId)) mediaByVariant.set(variantId, mediaIds[index]);
+    }
+  });
+  const variantMedia = [...mediaByVariant.entries()].map(([variantId, mediaId]) => ({ variantId, mediaIds: [mediaId] }));
   if (variantMedia.length) {
     const appended = await graphql(VARIANT_APPEND_MEDIA_MUTATION, { productId: productGid, variantMedia });
     assertNoUserErrors("productVariantAppendMedia", appended.productVariantAppendMedia.userErrors);

@@ -142,7 +142,15 @@ function extractStyleAndColor(section) {
    expand "S-3XL" to the identical variant list. */
 function sizesFromRangeLabel(label, otherSizes = "") {
   const custom = clean(otherSizes);
-  if (custom) return custom.split(/,\s*/).filter(Boolean);
+  if (custom) {
+    if (custom.includes(",")) return custom.split(/,\s*/).filter(Boolean);
+    // No commas: "4XL 5XL" is a size list, "One size fits all" is one size.
+    // Split on spaces only when every token reads as a size code.
+    const tokens = custom.split(/\s+/).filter(Boolean);
+    const sizeToken = /^(\d{0,2}X{0,4}[SML]|X{1,4}[SL]|\d+[WL]?|OSFA|OS)$/i;
+    if (tokens.length > 1 && tokens.every((token) => sizeToken.test(token))) return tokens;
+    return [custom];
+  }
   const value = String(label || "");
   if (/S[-–]3XL/i.test(value)) return ["S", "M", "L", "XL", "2XL", "3XL"];
   if (/S[-–]5XL/i.test(value)) return ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"];

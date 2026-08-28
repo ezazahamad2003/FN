@@ -3170,3 +3170,445 @@ a.float-card:focus-visible { outline: none; box-shadow: var(--ring); }
   .store-review-actions { width: 100%; }
 }
 
+
+/* =============================================================================
+   Intake form - decoration builder pass
+   -----------------------------------------------------------------------------
+   The signature element of the customer form: placement picked visually on
+   mini garment diagrams (marker dot = where the artwork lands, dashed ring =
+   back view), one config panel per chosen spot. Segmented controls replace
+   bare <select>s for the few-option choices so every option is visible at a
+   glance. All tokens, no new palette.
+   ========================================================================== */
+
+/* ---- Hero proof points -------------------------------------------------- */
+.hero-points {
+  display: flex;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  margin-top: var(--space-5);
+  padding: 0;
+  list-style: none;
+}
+.hero-points li { display: grid; gap: 2px; }
+.hero-points b {
+  color: var(--text);
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, sans-serif;
+  font-size: var(--fs-xl);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+.hero-points span { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+/* ---- Department code input ---------------------------------------------- */
+.code-input {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* ---- Field labels used outside <label> wrapping ------------------------- */
+.field-label {
+  display: block;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+/* ---- Artwork upload grid ------------------------------------------------ */
+.artwork-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.art-card {
+  position: relative;
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.art-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.art-thumb {
+  display: grid;
+  place-items: center;
+  height: 92px;
+  border-radius: var(--radius-sm);
+  background:
+    conic-gradient(var(--surface-3) 90deg, transparent 90deg 180deg, var(--surface-3) 180deg 270deg, transparent 270deg)
+    0 0 / 16px 16px,
+    #ffffff;
+  overflow: hidden;
+}
+.art-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.art-doc {
+  display: inline-grid;
+  place-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.art-card figcaption { display: grid; gap: 2px; min-width: 0; }
+.art-name {
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.art-meta { color: var(--text-subtle); font-size: var(--fs-xs); }
+.art-badge {
+  justify-self: start;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-border);
+  color: var(--warn);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+.art-card .file-remove { position: absolute; top: var(--space-2); right: var(--space-2); }
+
+.artwork-warning {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warn-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+}
+.artwork-warning b { color: var(--warn); font-size: var(--fs-sm); }
+.artwork-warning span { color: var(--text-muted); font-size: var(--fs-xs); line-height: 1.5; }
+
+/* ---- Segmented controls ------------------------------------------------- */
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.seg-option { position: relative; display: inline-flex; }
+.seg-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.seg-option span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+.seg-option span small { color: var(--text-subtle); font-size: var(--fs-xs); font-weight: 500; }
+.seg-option:hover span { border-color: var(--border-strong); }
+.seg-option input:checked + span {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.seg-option input:checked + span small { color: var(--brand); opacity: 0.75; }
+.seg-option input:focus-visible + span { box-shadow: var(--ring); }
+.seg-none-hint { color: var(--text-subtle); }
+
+/* ---- Placement cards ---------------------------------------------------- */
+.pl-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.pl-card {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), box-shadow var(--t-fast);
+}
+.pl-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+.pl-card input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.pl-card .pl-art { width: 64px; pointer-events: none; }
+.pl-card .pl-art .garment-svg { display: block; width: 100%; height: auto; }
+.pl-card .pl-name {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+.pl-card .pl-face {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-subtle);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.pl-card:has(input:checked) {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+  box-shadow: inset 0 0 0 1px var(--brand-border);
+}
+.pl-card:has(input:checked) .pl-name { color: var(--brand); }
+.pl-card:has(input:checked) .pl-face { background: var(--brand-soft); color: var(--brand); }
+.pl-card:has(input:focus-visible) { box-shadow: var(--ring); }
+
+/* Marker dots on the mini diagrams. The core is brand red; the halo pulses
+   only while its card is checked (and never under reduced motion). */
+.garment-svg .g-marker {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 2;
+  opacity: 0.5;
+}
+.garment-svg .g-marker-back { stroke-dasharray: 4 4; }
+.garment-svg .g-marker-core { fill: var(--brand); stroke: #ffffff; stroke-width: 1.4; }
+.pl-card:has(input:checked) .g-marker {
+  opacity: 1;
+  animation: marker-pulse 1.8s ease-in-out infinite;
+  transform-origin: center;
+  transform-box: fill-box;
+}
+@keyframes marker-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.22); opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-card:has(input:checked) .g-marker { animation: none; }
+}
+
+/* ---- Per-placement decoration config ------------------------------------ */
+.deco-zone { display: grid; gap: var(--space-3); }
+.deco-configs { display: grid; gap: var(--space-3); }
+.deco-config {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.deco-config[hidden] { display: none; }
+.deco-config-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.dch-name {
+  color: var(--text);
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, sans-serif;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.face-badge {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--info-soft);
+  border: 1px solid var(--info-border);
+  color: var(--info);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+.deco-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+.deco-config .custom-tier-input { margin-top: var(--space-2); }
+
+/* ---- Quick colors ------------------------------------------------------- */
+.quick-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+.qc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color var(--t-fast), color var(--t-fast);
+}
+.qc-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.qc-chip:focus-visible { outline: none; box-shadow: var(--ring); }
+.qc-chip > span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+
+/* ---- Inline toggles ----------------------------------------------------- */
+.toggle-field {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.toggle-field input { width: auto; accent-color: var(--brand); }
+
+/* ---- What happens next -------------------------------------------------- */
+.next-steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: next-step;
+}
+.next-steps li {
+  position: relative;
+  display: grid;
+  gap: 1px;
+  padding-left: 44px;
+  counter-increment: next-step;
+}
+.next-steps li::before {
+  content: counter(next-step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  aspect-ratio: 1;
+  border-radius: var(--radius-pill);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, sans-serif;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+}
+.next-steps b { color: var(--text); font-size: var(--fs-sm); }
+.next-steps span { color: var(--text-subtle); font-size: var(--fs-xs); line-height: 1.5; }
+
+/* ---- Review: garment cards ---------------------------------------------- */
+.review-block-wide .rv-categories { display: grid; gap: var(--space-3); }
+.rv-category {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.rv-art { display: block; }
+.rv-art .garment-svg { display: block; width: 100%; height: auto; }
+.rv-category-body { display: grid; gap: var(--space-2); min-width: 0; }
+.rv-category-body h4 {
+  color: var(--text);
+  font-family: "Barlow Condensed", Inter, ui-sans-serif, sans-serif;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.rv-variant { display: grid; gap: 3px; padding-top: var(--space-2); border-top: 1px solid var(--border); }
+.rv-variant:first-of-type { border-top: 0; padding-top: 0; }
+.rv-variant > b { color: var(--text); font-size: var(--fs-sm); }
+.rv-variant > span { color: var(--text-muted); font-size: var(--fs-xs); }
+.rv-decos { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.rv-deco {
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-border);
+  color: var(--brand);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.rv-deco-blank {
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--text-subtle);
+}
+
+/* ---- Responsive --------------------------------------------------------- */
+@media (max-width: 900px) {
+  .deco-config-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .hero-points { gap: var(--space-4); }
+  .pl-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rv-category { grid-template-columns: 64px minmax(0, 1fr); }
+  .artwork-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
+}
+
+/* ---- Console: decoration editors --------------------------------------- */
+.decoration-editor-list { display: grid; gap: var(--space-2); padding: 0 var(--space-3); }
+.decoration-editor {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--brand-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.decoration-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.decoration-actions { padding: var(--space-2) var(--space-3) var(--space-3); }

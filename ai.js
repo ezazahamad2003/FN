@@ -76,7 +76,7 @@ const BLANK_GARMENT_ATTEMPTS = 3;
 // Caveat worth knowing: an image model does not reproduce a specific SKU. This
 // gets the CUT right; it does not guarantee catalogue-accurate detailing. Only
 // a real blank photo from the supplier does that.
-function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance = "") {
+function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance = "", face = "front") {
   const colorPhrase = garmentColor ? ` in ${garmentColor}` : "";
   const stylePhrase = brandStyle
     ? ` The garment is a ${brandStyle} — match that style's silhouette exactly: sleeve length, collar or neckline type, placket, cuffs, and overall cut.`
@@ -86,7 +86,12 @@ function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, image
   // "close to NL3600" and "some t-shirt".
   const specPhrase = spec ? ` Reproduce this style faithfully: ${spec}` : "";
   const guidancePhrase = imageGuidance ? ` Intake form mockup guidance: ${imageGuidance}` : "";
-  return `A professional studio product photograph of ${productPrompt}${colorPhrase}.${stylePhrase}${specPhrase}${guidancePhrase} The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. Photographed straight on from the front, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
+  // Back bases exist so center-back artwork lands on an actual back view —
+  // naming the face here keeps the prompt from fighting the guidance sentence.
+  const facePhrase = face === "back"
+    ? "Photographed straight on from the BACK — the rear of the garment fills the shot, no collar placket or front details visible"
+    : "Photographed straight on from the front";
+  return `A professional studio product photograph of ${productPrompt}${colorPhrase}.${stylePhrase}${specPhrase}${guidancePhrase} The garment is completely blank: no logo, no text, no lettering, no numbers, no words, no letters, no symbols, no graphics, no embroidery, no patches, no tags, no labels, no brand marks, no printed design of any kind anywhere on the garment. Every surface is plain, unbroken fabric. ${facePhrase}, laid perfectly flat and centered, filling about 80 percent of the frame. Clean pure white background, soft even studio lighting, sharp commercial product photography.`;
 }
 
 async function renderGarment(prompt) {
@@ -155,8 +160,8 @@ Set "clean" to false if ANY lettering, numbering, logo, emblem, patch, label, or
 //      artwork on it and tries again,
 //   2. mockup.compositeLogoOnGarment pastes the exact uploaded logo file, so
 //      the artwork that does appear is never model-drawn.
-async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, spec, imageGuidance }) {
-  let prompt = blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance);
+async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, spec, imageGuidance, face = "front" }) {
+  let prompt = blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance, face);
   let lastBuffer = null;
   let lastFinding = "";
 
@@ -167,7 +172,7 @@ async function generateBlankGarment({ productPrompt, garmentColor, brandStyle, s
 
     lastFinding = inspection.found;
     // Name the offending artwork in the retry so the model stops reproducing it.
-    prompt = `${blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance)} A previous attempt incorrectly included ${
+    prompt = `${blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, imageGuidance, face)} A previous attempt incorrectly included ${
       inspection.found || "text and graphics"
     } on the garment. Do not include that or anything like it. The garment must be entirely undecorated.`;
   }
@@ -279,19 +284,40 @@ function sizeChartHtml(sizeChart) {
 // 2-sentence prose comes from the model — every fact is assembled
 // deterministically from what the policy actually stated.
 async function generateProductDescription(departmentName, product) {
+  // Placement reads from the full decoration set when the intake specified
+  // several spots ("Front left chest + Center back"), falling back to the
+  // single legacy placement field.
+  const placements = (product.decorations || [])
+    .map((decoration) => decoration.placement)
+    .filter(Boolean);
+  const placementLine = placements.length ? placements.join(" + ") : product.placement;
+
+  // Supplier-page fabric bullets (fetched by blanks.js) each get their own
+  // line, exactly as the vendor lists them; the legacy single fabricDetails
+  // string stays as one line for older callers.
+  const fabricBullets = Array.isArray(product.fabricBullets) && product.fabricBullets.length
+    ? product.fabricBullets
+    : product.fabricDetails
+      ? [product.fabricDetails]
+      : [];
+
   const specs = [
-    product.fabricDetails,
+    ...fabricBullets,
     product.garmentColor ? `Garment color: ${product.garmentColor}` : "",
-    product.placement ? `Logo placement: ${product.placement}` : "",
-    product.decorationMethod ? `Decoration: ${product.decorationMethod}` : ""
+    placementLine ? `Logo placement: ${placementLine}` : "",
+    product.decorationMethod && !/^none$/i.test(product.decorationMethod) ? `Decoration: ${product.decorationMethod}` : ""
   ].filter(Boolean);
 
+  // Customer-facing facts only. productionNotes stays OUT of the prose
+  // context: it carries internal jargon (fee SKUs, "structured intake
+  // category", tier keys) that the model quoted verbatim into store listings.
   const knownFacts = [
     ["Product", product.productLabel],
     ["Garment color", product.garmentColor],
     ["Garment brand/style", product.brandStyle],
-    ["Fabric details", product.fabricDetails],
-    ["Policy notes", product.productionNotes]
+    ["Fabric details", fabricBullets.join("; ")],
+    ["Logo placement", placementLine],
+    ["Decoration method", product.decorationMethod && !/^none$/i.test(product.decorationMethod) ? product.decorationMethod : ""]
   ]
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`)
@@ -303,7 +329,7 @@ async function generateProductDescription(departmentName, product) {
     messages: [
       {
         role: "user",
-        content: `Write exactly 2 professional, proud sentences of Shopify product description prose for official ${departmentName} gear, using ONLY the facts below. Do not invent fabric weights, materials, brand names, colors, or any spec that is not listed. Return plain text only — no HTML, no quotes, no markdown.
+        content: `Write exactly 2 professional, proud sentences of Shopify product description prose for official ${departmentName} gear, using ONLY the facts below. Do not invent fabric weights, materials, brand names, colors, or any spec that is not listed. Never mention SKUs, fees, size tiers, intake forms, or internal processes. Return plain text only — no HTML, no quotes, no markdown.
 
 Facts:
 ${knownFacts}`
@@ -317,14 +343,76 @@ ${knownFacts}`
     .replace(/^"|"$/g, "")
     .trim();
 
+  const brandLine = [product.vendor, product.brandStyle]
+    .filter(Boolean)
+    .filter((value, index, list) => list.indexOf(value) === index)
+    .join(" ");
   const parts = [
     "<p><em>Logo size &amp; placement are an approximation.</em></p>",
     prose ? `<p>${escapeHtml(prose)}</p>` : "",
-    product.brandStyle ? `<p><b>${escapeHtml(product.brandStyle)}</b></p>` : "",
+    brandLine ? `<p><b>${escapeHtml(brandLine)}</b></p>` : "",
     specs.length ? `<ul>${specs.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>` : "",
     sizeChartHtml(product.sizeChart)
   ];
   return parts.filter(Boolean).join("\n");
+}
+
+/* -----------------------------------------------------------------------------
+   Supplier product-page facts.
+
+   A distributor's product page carries the two things the store listing needs
+   verbatim: the fabric spec bullets ("4.3-ounce, 100% combed ring spun cotton,
+   32 singles") and the size chart. Extracting them from the page the sourcing
+   agent already found means the Shopify description shows the REAL garment
+   data instead of model-written approximations.
+   -------------------------------------------------------------------------- */
+async function extractSupplierFacts(pageText, { brandStyle = "", productType = "" } = {}) {
+  const text = String(pageText || "").trim();
+  if (!text) return { fabric: [], sizeChart: null, fit: "" };
+
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: `Below is text extracted from a wholesale apparel product page${brandStyle ? ` for style "${brandStyle}"` : ""}${productType ? ` (a ${productType})` : ""}.
+
+CRITICAL RULE — no invention: report ONLY facts that literally appear in the text. If a field is absent, return an empty array / null / empty string for it. Never guess fabric weights, contents, or measurements.
+
+Return JSON only:
+{
+  "fabric": ["each garment spec worth a bullet on a product listing, verbatim or near-verbatim: fabric weight and content, construction (side seamed, taped shoulders, rib knit, tear-away label), closures, pockets — max 8 short bullets, no marketing prose"],
+  "sizeChart": {"headers": ["S","M","L", ...], "rows": [{"label": "Body Length", "values": ["28","29", ...]}]} — the garment MEASUREMENT table if one appears, with one value per header; null if the page has no measurement table,
+  "fit": "one short sentence about the cut/fit if stated, else \\"\\""
+}
+
+Page text:
+${text.slice(0, 16000)}`
+      }
+    ],
+    max_tokens: 900
+  });
+
+  const parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() || "{}") || {};
+  const fabric = (Array.isArray(parsed.fabric) ? parsed.fabric : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  let sizeChart = null;
+  const chart = parsed.sizeChart;
+  if (chart && Array.isArray(chart.headers) && chart.headers.length && Array.isArray(chart.rows) && chart.rows.length) {
+    const headers = chart.headers.map((h) => String(h ?? "").trim()).filter(Boolean);
+    const rows = chart.rows
+      .map((row) => ({
+        label: String(row?.label ?? "").trim(),
+        values: (Array.isArray(row?.values) ? row.values : []).map((v) => String(v ?? "").trim())
+      }))
+      .filter((row) => row.label && row.values.length);
+    if (headers.length && rows.length) sizeChart = { headers, rows };
+  }
+  return { fabric, sizeChart, fit: String(parsed.fit || "").trim() };
 }
 
 async function extractReadableText(file) {
@@ -658,6 +746,7 @@ module.exports = {
   extractReadableText,
   extractPolicyInstructions,
   generateBlankGarment,
+  extractSupplierFacts,
   generateProductDescription,
   planCustomProduct
 };

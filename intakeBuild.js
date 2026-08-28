@@ -27,7 +27,7 @@
 const sharp = require("sharp");
 const { generateBlankGarment, generateProductDescription } = require("./ai");
 const { findSupplierBlank } = require("./blanks");
-const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
+const { compositeDecorationsOnGarment, resolvePlacement } = require("./mockup");
 const { placementFace, placementGuidance } = require("./placements");
 const { intakeTags } = require("./intake");
 const {
@@ -321,83 +321,170 @@ async function runBuild(intakeId, build, options) {
     }
 
     try {
-      const placement = product.placement || resolvePlacement(product).replace(/-/g, " ");
-      const placementKey = resolvePlacement(product);
+      /* Every decorated spot on this garment. Pre-decoration products carry a
+         single flat placement; synthesize it so both shapes build identically.
+         "Both sleeves" is one decoration that composites twice, mirrored. */
+      const rawDecorations = product.decorations?.length
+        ? product.decorations
+        : [{
+            placement: product.placement,
+            tier: product.decorationSizeTier,
+            feeSku: product.decorationFeeSku,
+            logoSlugs: product.logoSlugs?.length ? product.logoSlugs : ["all"]
+          }];
+      const decorations = rawDecorations.map((decoration) => {
+        const label = decoration.placement || resolvePlacement({ ...product, placement: "", productionNotes: "" }).replace(/-/g, " ");
+        const keys = /both\s+sleeves/i.test(label)
+          ? ["left-sleeve", "right-sleeve"]
+          : [resolvePlacement({ ...product, placement: label, productionNotes: "" })];
+        return {
+          ...decoration,
+          label,
+          keys,
+          face: placementFace(label) === "back" ? "back" : "front"
+        };
+      });
+      const frontDecos = decorations.filter((decoration) => decoration.face === "front");
+      const backDecos = decorations.filter((decoration) => decoration.face === "back");
+
+      // Belts, Class B pants, and anything the department marked "None" ship
+      // undecorated - no logo resolution applies to them.
+      const shipsBlank =
+        String(product.decorationMethod || "").toLowerCase() === "none" ||
+        ["belt", "class b uniform pants"].includes(product.productType);
+
+      // Resolve every decoration's logo set BEFORE any paid search or
+      // generation: an explicit assignment that matches nothing fails the
+      // product here, for free, instead of after a generated base. It must
+      // never silently become "all".
+      if (!shipsBlank) {
+        const missingAll = [];
+        for (const decoration of decorations) {
+          const { logos, missing } = resolveLogos({ logoSlugs: decoration.logoSlugs }, compositable);
+          decoration.logos = logos;
+          missingAll.push(...missing);
+        }
+        if (missingAll.length) {
+          log(build, `${title}: assigned logo${missingAll.length === 1 ? "" : "s"} not usable: ${missingAll.join(", ")} (not uploaded, or a vector format that needs a PNG/JPG version)`);
+        }
+        const emptyDecoration = decorations.find((decoration) => !decoration.logos.length);
+        if (emptyDecoration) {
+          throw new Error(
+            `None of the logos assigned to ${emptyDecoration.label} (${emptyDecoration.logoSlugs.join(", ")}) can be composited - upload a PNG/JPG version of the artwork (or clear the assignment) and re-run.`
+          );
+        }
+      }
 
       // Vendor-first supplier lookup: the exact garment photo from the vendor
-      // the customer named, verified by vision before it is trusted.
+      // the customer named, verified by vision before it is trusted. The page
+      // it came from also supplies the listing's fabric bullets + size chart.
       const supplier = await findSupplierBlank(product, {
         onLog: (message) => log(build, `${title}: ${message}`)
       });
-
-      // Supplier photos are FRONT views (the search scores flat-front shots
-      // highest). A back placement composited onto a front photo would print
-      // the department's full-back graphic across the chest, so back-face
-      // placements always generate a back-view base instead - the supplier
-      // spec still guides the generation toward the right cut.
-      const wantsBackFace = placementFace(placement) === "back";
-      if (wantsBackFace && supplier.imageBuffer) {
-        log(build, `${title}: placement "${placement}" is on the back; skipping the supplier's front photo and generating a back view`);
+      if (supplier.facts) {
+        const bullets = [...(supplier.facts.fabric || [])];
+        if (supplier.facts.fit) bullets.push(supplier.facts.fit);
+        if (bullets.length && !product.fabricBullets?.length) product.fabricBullets = bullets.slice(0, 8);
+        if (supplier.facts.sizeChart && !product.sizeChart) product.sizeChart = supplier.facts.sizeChart;
       }
 
-      const baseBuffer =
-        (!wantsBackFace && supplier.imageBuffer) ||
-        (await generateBlankGarment({
+      // The product photo of an undecorated garment is the blank itself, and
+      // no logo option exists. Compositing a crest onto a leather belt is
+      // exactly the kind of wrong the fixed-field form exists to prevent.
+      const undecorated = shipsBlank;
+
+      /* Base photos, one per decorated face. Supplier photos are FRONT views
+         (the search scores flat-front shots highest), so the front face uses
+         the supplier's own photo when there is one; the back face is always
+         generated - a back graphic composited onto a front photo would print
+         the department's full-back artwork across the chest. */
+      const guidanceFor = (faceDecos) =>
+        [product.imageGuidance, ...faceDecos.map((decoration) => placementGuidance(decoration.label, decoration.tier))]
+          .filter(Boolean)
+          .join(" ");
+      const generateBase = (faceDecos, face) =>
+        generateBlankGarment({
           productPrompt: product.productPrompt || `a ${product.productType || "garment"}`,
           garmentColor: product.garmentColor,
           brandStyle: [product.vendor, product.brandStyle].filter(Boolean).join(" "),
           spec: supplier.spec,
-          imageGuidance: [product.imageGuidance, placementGuidance(placement, product.decorationSizeTier)]
-            .filter(Boolean)
-            .join(" ")
-        }));
+          imageGuidance: guidanceFor(faceDecos),
+          face
+        });
 
-      // Belts, Class B pants, and anything the department marked "None" ship
-      // undecorated: the product photo is the blank garment itself, and no
-      // Front Logo option exists. Compositing a crest onto a leather belt is
-      // exactly the kind of wrong the fixed-field form exists to prevent.
-      const undecorated =
-        String(product.decorationMethod || "").toLowerCase() === "none" ||
-        ["belt", "class b uniform pants"].includes(product.productType);
+      let frontBase = null;
+      let backBase = null;
+      if (undecorated || frontDecos.length || supplier.imageBuffer || !backDecos.length) {
+        frontBase = supplier.imageBuffer || (await generateBase(frontDecos, "front"));
+      }
+      if (!undecorated && backDecos.length) {
+        log(build, `${title}: generating a back view for ${backDecos.map((decoration) => decoration.label).join(", ")}`);
+        backBase = await generateBase(backDecos, "back");
+      }
 
       const logoVariants = [];
+      let logoOptionName = "Front Logo";
       if (undecorated) {
         let driveFile = null;
         if (folders) {
           try {
-            driveFile = await uploadGeneratedImage(`${slug(title)}--blank.png`, baseBuffer, folders.productImages.id);
+            driveFile = await uploadGeneratedImage(`${slug(title)}--blank.png`, frontBase, folders.productImages.id);
           } catch (error) {
             log(build, `drive upload skipped for ${title}: ${error.message}`);
           }
         }
-        logoVariants.push({ logo: null, mockupBuffer: baseBuffer, driveFile });
+        logoVariants.push({ logo: null, images: [{ face: "front", buffer: frontBase, driveFile }] });
       } else {
-        const { logos, missing } = resolveLogos(product, compositable);
-        if (missing.length) {
-          log(build, `${title}: assigned logo${missing.length === 1 ? "" : "s"} not usable: ${missing.join(", ")} (not uploaded, or a vector format that needs a PNG/JPG version)`);
-        }
-        if (!logos.length) {
-          throw new Error(
-            `None of the assigned logos (${missing.join(", ")}) can be composited - upload a PNG/JPG version of the artwork (or clear the assignment) and re-run.`
-          );
-        }
-        for (const logo of logos) {
-          const mockupBuffer = await compositeLogoOnGarment(baseBuffer, logo.buffer, placementKey);
-          let driveFile = null;
-          if (folders) {
+        // ONE decoration can offer a logo CHOICE (it becomes the product's
+        // logo option in Shopify); every other spot is fixed to its first
+        // logo, so two open-ended spots never explode combinatorially.
+        const choiceIndex = decorations.findIndex((decoration) => decoration.logos.length > 1);
+        decorations.forEach((decoration, index) => {
+          if (index !== choiceIndex && decoration.logos.length > 1) {
+            log(build, `${title}: ${decoration.label} lists ${decoration.logos.length} logos but ${decorations[choiceIndex].label} already carries the logo choice; using ${decoration.logos[0].filenameBase}`);
+          }
+        });
+        if (choiceIndex >= 0 && decorations[choiceIndex].face === "back") logoOptionName = "Back Logo";
+        const choiceLogos = choiceIndex >= 0 ? decorations[choiceIndex].logos : [null];
+
+        for (const choice of choiceLogos) {
+          const logoFor = (decoration) =>
+            decorations.indexOf(decoration) === choiceIndex && choice ? choice : decoration.logos[0];
+          const faceItems = (faceDecos) =>
+            faceDecos.flatMap((decoration) =>
+              decoration.keys.map((placementKey) => ({ logoBuffer: logoFor(decoration).buffer, placementKey }))
+            );
+
+          const images = [];
+          if (frontBase) {
+            const items = faceItems(frontDecos);
+            images.push({ face: "front", buffer: items.length ? await compositeDecorationsOnGarment(frontBase, items) : frontBase });
+          }
+          if (backBase) {
+            images.push({ face: "back", buffer: await compositeDecorationsOnGarment(backBase, faceItems(backDecos)) });
+          }
+
+          const named = choice || logoFor(decorations[0]);
+          for (const image of images) {
+            if (!folders) continue;
             try {
-              driveFile = await uploadGeneratedImage(`${slug(title)}--${logo.slug}.png`, mockupBuffer, folders.productImages.id);
+              image.driveFile = await uploadGeneratedImage(
+                `${slug(title)}--${named.slug}--${image.face}.png`,
+                image.buffer,
+                folders.productImages.id
+              );
             } catch (error) {
-              log(build, `drive upload skipped for ${title}/${logo.filenameBase}: ${error.message}`);
+              log(build, `drive upload skipped for ${title}/${named.filenameBase} (${image.face}): ${error.message}`);
             }
           }
-          logoVariants.push({ logo, mockupBuffer, driveFile });
+          logoVariants.push({ logo: choiceIndex >= 0 ? choice : named, images });
         }
       }
 
+      const placementSummary = undecorated ? "" : decorations.map((decoration) => decoration.label).filter(Boolean).join(" + ");
       const descriptionHtml = await generateProductDescription(departmentName, product).catch((error) => {
         log(build, `${title}: description generation failed (${error.message}); using fallback copy`);
-        return `<p>${title} for ${departmentName}. Decoration: ${product.decorationMethod || "as specified"}, ${placement}.</p>`;
+        return `<p>${title} for ${departmentName}. Decoration: ${product.decorationMethod || "as specified"}, ${placementSummary || "as specified"}.</p>`;
       });
 
       const sizes = product.sizes?.length ? product.sizes : DEFAULT_SIZES;
@@ -409,9 +496,22 @@ async function runBuild(intakeId, build, options) {
               logoVariants: [lv]
             }));
 
+      const blankSource = supplier.imageBuffer
+        ? backBase
+          ? "supplier + generated back"
+          : "supplier"
+        : "generated";
+
       for (const plan of plans) {
         if (existingTitles.has(plan.title.toLowerCase())) {
           log(build, `skip existing split product: ${plan.title}`);
+          // Same carry-forward as the whole-product skip: a split product
+          // built on a previous run must stay visible in the panel.
+          const prior = priorProducts.get(plan.title.toLowerCase());
+          if (prior) {
+            built.push({ ...prior, skipped: true });
+            build.products = built;
+          }
           continue;
         }
         const created = await createProductWithVariants({
@@ -424,12 +524,13 @@ async function runBuild(intakeId, build, options) {
             departmentName,
             ...intakeTags(intake),
             "customer-intake",
-            product.decorationFeeSku || "",
-            product.decorationSizeTier ? `decoration-${product.decorationSizeTier}` : ""
-          ].filter(Boolean),
+            ...decorations.map((decoration) => decoration.feeSku || ""),
+            ...decorations.map((decoration) => (decoration.tier ? `decoration-${decoration.tier}` : ""))
+          ].filter((tag, index, list) => tag && list.indexOf(tag) === index),
           logoValues: plan.logoVariants.filter((lv) => lv.logo).map((lv) => lv.logo.filenameBase),
           sizes,
-          status: "DRAFT"
+          status: "DRAFT",
+          logoOptionName
         });
 
         // The product EXISTS in Shopify from this moment. Record it before the
@@ -444,30 +545,42 @@ async function runBuild(intakeId, build, options) {
           status: "DRAFT",
           variantCount: created.variantCount,
           logoCount: plan.logoVariants.filter((lv) => lv.logo).length,
-          blankSource: supplier.imageBuffer ? "supplier" : "generated",
+          placements: placementSummary,
+          blankSource,
           blankSourceUrl: supplier.sourceUrl || null,
           vendor: product.vendor || "",
-          driveImageUrl: plan.logoVariants[0]?.driveFile?.webViewLink || null
+          driveImageUrl: plan.logoVariants[0]?.images?.[0]?.driveFile?.webViewLink || null
         };
         built.push(builtEntry);
         build.products = built;
         await saveBuild(intakeId, build).catch((error) => log(build, `progress flush failed (${error.message}); continuing`));
 
-        const idsByLogo = variantIdsByLogo(created.variants, created.useLogoOption);
+        // Collection membership BEFORE images: a failed image upload then
+        // leaves a visible product missing pictures (obvious, fixable in
+        // admin) instead of a complete-looking product orphaned outside the
+        // store's collection.
+        await addProductToCollection(created.productId, collection.id);
+        const idsByLogo = variantIdsByLogo(created.variants, created.useLogoOption, created.logoOptionName);
         await uploadProductImages(
           created.productGid,
-          plan.logoVariants.map((lv) => ({
-            filename: `${slug(plan.title)}-${lv.logo ? lv.logo.slug : "blank"}${lv.logo ? "-mockup" : ""}.png`,
-            buffer: lv.mockupBuffer,
-            alt: lv.logo ? `${plan.title} — ${lv.logo.filenameBase}` : plan.title,
-            variantIds: idsByLogo.get(created.useLogoOption && lv.logo ? lv.logo.filenameBase : "__all__") || []
-          }))
+          plan.logoVariants.flatMap((lv) =>
+            lv.images.map((image) => ({
+              filename: `${slug(plan.title)}-${lv.logo ? lv.logo.slug : "blank"}-${image.face}${lv.logo ? "-mockup" : ""}.png`,
+              buffer: image.buffer,
+              alt: lv.logo ? `${plan.title} — ${lv.logo.filenameBase} (${image.face} view)` : plan.title,
+              variantIds: idsByLogo.get(created.useLogoOption && lv.logo ? lv.logo.filenameBase : "__all__") || []
+            }))
+          )
         );
-        await addProductToCollection(created.productId, collection.id);
       }
 
       const logoCount = logoVariants.filter((lv) => lv.logo).length;
-      stepDone(step, `${supplier.imageBuffer ? "supplier photo" : "generated base"} · ${undecorated ? "undecorated" : `${logoCount} logo${logoCount === 1 ? "" : "s"}`} · DRAFT`);
+      stepDone(
+        step,
+        `${blankSource === "generated" ? "generated base" : "supplier photo"}${frontBase && backBase ? " · front + back views" : backBase ? " · back view" : ""} · ${
+          undecorated ? "undecorated" : `${placementSummary || "default placement"} · ${logoCount} logo${logoCount === 1 ? "" : "s"}`
+        } · DRAFT`
+      );
     } catch (error) {
       // One garment failing must not sink the other eleven. The step records
       // the failure; the summary marks the build partial.

@@ -45,12 +45,59 @@ function normalizeNameRank(value) {
   return value === true || value === "yes" ? "yes" : value === false || value === "no" ? "no" : "";
 }
 
+const MAX_DECORATIONS_PER_VARIANT = 4;
+const MAX_VARIANTS_PER_CATEGORY = 6;
+
+/* One decorated spot on a garment: where artwork sits, how big it is, and
+   which uploaded logo file(s) go there. A variant carries one or more of
+   these, so "crest on the front left chest AND the full department mark
+   across the back" is two decorations of one garment, not a note. */
+function normalizeDecoration(input = {}, index = 0) {
+  const source = input || {};
+  return {
+    id: clean(source.id) || `d${index + 1}`,
+    placement: clean(source.placement),
+    sizeTier: clean(source.sizeTier),
+    customSizeTier: clean(source.customSizeTier),
+    // Exact uploaded file names the customer picked for this spot. Empty
+    // means "no specific assignment" - every uploaded logo is offered.
+    logoSlugs: Array.isArray(source.logoSlugs) ? source.logoSlugs.map(clean).filter(Boolean).slice(0, 20) : []
+  };
+}
+
+function decorationHasContent(decoration) {
+  return Boolean(decoration.placement || decoration.sizeTier || decoration.customSizeTier || decoration.logoSlugs.length);
+}
+
 /* One version of a garment: its own vendor, color, decoration, and logo
    assignment. A category holds one or more of these, so "navy Next Level tee
    with the Station 7 crest AND a red Gildan tee with the EMS badge" is two
    variants of the same category instead of a note nobody parses. */
 function normalizeVariant(input = {}, index = 0) {
   const source = input || {};
+
+  let decorations = (Array.isArray(source.decorations) ? source.decorations : [])
+    .filter((item) => item && typeof item === "object")
+    .map((item, position) => normalizeDecoration(item, position))
+    .filter(decorationHasContent)
+    .slice(0, MAX_DECORATIONS_PER_VARIANT);
+  // Pre-decoration variants (and any client still sending the flat fields)
+  // carry a single placement/tier/logo set at the variant level; it becomes
+  // decoration 1, so old records keep building and old edits keep saving.
+  if (!decorations.length) {
+    const legacy = normalizeDecoration(
+      {
+        placement: source.placement,
+        sizeTier: source.sizeTier,
+        customSizeTier: source.customSizeTier,
+        logoSlugs: source.logoSlugs
+      },
+      0
+    );
+    if (decorationHasContent(legacy)) decorations = [legacy];
+  }
+  const firstDecoration = decorations[0] || normalizeDecoration({}, 0);
+
   return {
     id: clean(source.id) || `v${index + 1}`,
     vendor: clean(source.vendor),
@@ -58,17 +105,18 @@ function normalizeVariant(input = {}, index = 0) {
     colors: clean(source.colors),
     style: clean(source.style),
     decorationMethod: clean(source.decorationMethod),
-    sizeTier: clean(source.sizeTier),
-    customSizeTier: clean(source.customSizeTier),
-    placement: clean(source.placement),
-    // Exact uploaded file names the customer picked for this garment. Empty
-    // means "no specific assignment" - every uploaded logo is offered.
-    logoSlugs: Array.isArray(source.logoSlugs) ? source.logoSlugs.map(clean).filter(Boolean).slice(0, 20) : [],
+    // Flat fields mirror decoration 1 so pre-decoration records round-trip
+    // and every legacy consumer keeps reading the same shape.
+    sizeTier: firstDecoration.sizeTier,
+    customSizeTier: firstDecoration.customSizeTier,
+    placement: firstDecoration.placement,
+    logoSlugs: firstDecoration.logoSlugs,
     logoNotes: clean(source.logoNotes),
     nameRank: normalizeNameRank(source.nameRank),
     sizeRange: clean(source.sizeRange),
     otherSizes: clean(source.otherSizes),
-    notes: clean(source.notes)
+    notes: clean(source.notes),
+    decorations
   };
 }
 
@@ -82,8 +130,12 @@ function normalizeCategory(input = {}) {
   const definition = CUSTOMER_INTAKE_CATEGORIES.find((item) => item.key === source.key) || {};
   const include = Boolean(source.include);
 
+  // Capped server-side too: the submit endpoint is public, and every variant
+  // is a paid supplier search + image generation + Shopify product. The form
+  // enforces the same limit; a crafted payload must not get to bypass it.
   let variants = (Array.isArray(source.variants) ? source.variants : [])
     .filter((item) => item && typeof item === "object")
+    .slice(0, MAX_VARIANTS_PER_CATEGORY)
     .map((item, index) => normalizeVariant(item, index));
   // Pre-variant records (and any client still sending flat fields) become
   // version 1, so old submissions keep building and old edits keep saving.
@@ -179,7 +231,17 @@ function recordWithComputedFields(record, driveFile = {}) {
       const label = variants.length > 1 ? `${definition.title} (version ${index + 1})` : definition.title;
       if (!variant.colors) missing.push(label + ": colors");
       if (definition.decorated && !variant.decorationMethod) missing.push(label + ": decoration method");
-      if (definition.decorated && definition.placements?.length && !variant.placement) missing.push(label + ": placement");
+      // "None" means the garment ships blank, so no placement is needed.
+      const undecorated = /^none$/i.test(variant.decorationMethod || "");
+      if (definition.decorated && definition.placements?.length && !undecorated) {
+        const decorations = variant.decorations?.length ? variant.decorations : [];
+        if (!decorations.length) missing.push(label + ": placement");
+        decorations.forEach((decoration, position) => {
+          if (!decoration.placement) {
+            missing.push(label + (decorations.length > 1 ? `: placement (decoration ${position + 1})` : ": placement"));
+          }
+        });
+      }
       if (!variant.sizeRange) missing.push(label + ": size range");
     });
   }
@@ -235,17 +297,50 @@ function logoSlugsForVariant(category, variant) {
   return ["all"];
 }
 
+/* A decoration's logo set: its own explicit picks first, then (for decoration
+   1 only) the variant-level legacy fallbacks, then "all". */
+function decorationLogoSlugs(category, variant, decoration, position) {
+  if (decoration.logoSlugs?.length) return decoration.logoSlugs;
+  if (position === 0) return logoSlugsForVariant(category, variant);
+  return ["all"];
+}
+
 function productFromVariant(category, variant, versionIndex, versionCount) {
   const definition = categoryDefinition(category.key);
   const meta = categoryMeta(category.key);
   const brandStyle = [variant.styleNumber, variant.style].filter(Boolean).join(" ");
-  const tier = normalizeTierLabel(variant.sizeTier, variant.customSizeTier);
-  const decorationFeeSku = feeSkuFor({ placement: variant.placement, productType: meta.type, tier });
-  const logoSlugs = logoSlugsForVariant(category, variant);
+
+  // Every decorated spot on this garment, tier + fee SKU resolved per spot.
+  // Pre-decoration records synthesize decoration 1 from the flat fields.
+  const rawDecorations = variant.decorations?.length
+    ? variant.decorations
+    : [normalizeDecoration(variant, 0)].filter(decorationHasContent);
+  const decorations = rawDecorations.map((decoration, position) => {
+    const tier = normalizeTierLabel(decoration.sizeTier, decoration.customSizeTier);
+    return {
+      placement: decoration.placement,
+      tier,
+      feeSku: feeSkuFor({ placement: decoration.placement, productType: meta.type, tier }),
+      logoSlugs: decorationLogoSlugs(category, variant, decoration, position)
+    };
+  });
+
+  const first = decorations[0] || { placement: "", tier: "", feeSku: "", logoSlugs: logoSlugsForVariant(category, variant) };
+  const logoSlugs = first.logoSlugs;
+  const assignmentStated = decorations.some((decoration) => decoration.logoSlugs[0] !== "all");
+  const decorationLines = decorations.map((decoration, position) =>
+    [
+      decorations.length > 1 ? `Decoration ${position + 1}: ${decoration.placement || "placement unspecified"}` : "",
+      decoration.tier ? `size tier ${decoration.tier}` : "",
+      decoration.feeSku ? `fee SKU ${decoration.feeSku}` : ""
+    ].filter(Boolean).join(", ")
+  ).filter(Boolean);
+
   const notes = [
     `Structured intake category: ${definition.title}${versionCount > 1 ? ` (version ${versionIndex + 1} of ${versionCount})` : ""}.`,
-    tier ? `Decoration size tier: ${tier}.` : "",
-    decorationFeeSku ? `Decoration fee SKU hint: ${decorationFeeSku}.` : "",
+    first.tier ? `Decoration size tier: ${first.tier}.` : "",
+    first.feeSku ? `Decoration fee SKU hint: ${first.feeSku}.` : "",
+    decorationLines.length ? `${decorationLines.join(". ")}.` : "",
     variant.nameRank === "yes" ? "Name/rank personalization requested on right chest." : "",
     variant.nameRank === "no" ? "No name/rank right-chest personalization requested." : "",
     variant.notes ? `Customer note: ${variant.notes}` : "",
@@ -260,10 +355,13 @@ function productFromVariant(category, variant, versionIndex, versionCount) {
     brandStyle,
     vendor: variant.vendor,
     fabricDetails: "",
-    placement: variant.placement,
+    // Flat decoration fields mirror decoration 1 for every legacy consumer;
+    // the full set rides in decorations[].
+    placement: first.placement,
+    decorations,
     decorationMethod: /^None$/i.test(variant.decorationMethod) ? "none" : variant.decorationMethod,
-    decorationSizeTier: tier,
-    decorationFeeSku,
+    decorationSizeTier: first.tier,
+    decorationFeeSku: first.feeSku,
     // Custom sizes only count when "Other" is the selection: the form keeps a
     // hidden otherSizes input's value when the customer switches back to a
     // preset range, and an ungated pass-through would build the product from
@@ -272,14 +370,19 @@ function productFromVariant(category, variant, versionIndex, versionCount) {
     sizeChart: null,
     productionNotes: notes.join(" "),
     logoSlugs,
-    logoAssignmentStated: logoSlugs[0] !== "all",
-    assignmentNotes: logoSlugs[0] === "all"
-      ? "Structured intake selected the department logo/default logo set."
-      : `Structured intake logo entry: ${logoSlugs.join(", ")}`,
+    logoAssignmentStated: assignmentStated,
+    assignmentNotes: assignmentStated
+      ? `Structured intake logo entry: ${decorations.map((decoration) => decoration.logoSlugs.join(", ")).join(" | ")}`
+      : "Structured intake selected the department logo/default logo set.",
     intakeSource: true,
     imageGuidance: [
-      variant.placement ? `Mockup placement selected in intake: ${variant.placement}.` : "",
-      tier ? `Leave clean, unobstructed garment surface for ${tier} decoration.` : ""
+      decorations.length
+        ? `Mockup placement${decorations.length > 1 ? "s" : ""} selected in intake: ${decorations
+            .map((decoration) => decoration.placement)
+            .filter(Boolean)
+            .join(", ")}.`
+        : "",
+      first.tier ? `Leave clean, unobstructed garment surface for ${first.tier} decoration.` : ""
     ].filter(Boolean).join(" ")
   };
 }
@@ -410,15 +513,33 @@ function intakeDocumentHtml(recordInput) {
     }
     const variants = category.variants?.length ? category.variants : [category];
     const versionBlocks = variants.map((variant, index) => {
+      const decorations = (variant.decorations || []).filter((decoration) => decoration && (decoration.placement || decoration.sizeTier || (decoration.logoSlugs || []).length));
+      const undecorated = /^none$/i.test(variant.decorationMethod || "");
+      const decorationRows = undecorated
+        ? [docRow("Decoration", "None — ships blank")]
+        : decorations.length
+          ? decorations.flatMap((decoration, position) => {
+              const label = decorations.length > 1 ? `Decoration ${position + 1}` : "Decoration";
+              const tier = decoration.sizeTier === "Custom" ? `Custom — ${decoration.customSizeTier}` : decoration.sizeTier;
+              return [
+                docRow(`${label} — placement`, decoration.placement),
+                docRow(`${label} — size tier`, tier),
+                docRow(`${label} — artwork`, (decoration.logoSlugs || []).join(", ") || "All uploaded logos offered")
+              ];
+            })
+          : [
+              docRow("Decoration size tier", variant.sizeTier === "Custom" ? `Custom — ${variant.customSizeTier}` : variant.sizeTier),
+              definition.placements?.length ? docRow("Placement", variant.placement) : "",
+              docRow("Logo assignment", (variant.logoSlugs || []).join(", ") || variant.logoNotes || "Department logo set (all uploaded logos)")
+            ];
       const rows = [
         docRow("Vendor / brand", variant.vendor),
         docRow("Style number", variant.styleNumber),
         docRow("Color(s)", variant.colors),
         variant.style ? docRow("Style notes", variant.style) : "",
         definition.decorated ? docRow("Decoration method", variant.decorationMethod) : "",
-        definition.decorated ? docRow("Decoration size tier", variant.sizeTier === "Custom" ? `Custom — ${variant.customSizeTier}` : variant.sizeTier) : "",
-        definition.decorated && definition.placements?.length ? docRow("Placement", variant.placement) : "",
-        definition.decorated ? docRow("Logo assignment", (variant.logoSlugs || []).join(", ") || variant.logoNotes || "Department logo set (all uploaded logos)") : "",
+        ...(definition.decorated ? decorationRows : []),
+        definition.decorated && variant.logoNotes && decorations.length ? docRow("Logo notes (legacy)", variant.logoNotes) : "",
         definition.decorated ? docRow("Name / rank right chest", variant.nameRank === "yes" ? "Yes" : variant.nameRank === "no" ? "No" : "—") : "",
         docRow("Size range", variant.sizeRange === "Other" ? variant.otherSizes : variant.sizeRange),
         variant.notes ? docRow("Notes", variant.notes) : ""

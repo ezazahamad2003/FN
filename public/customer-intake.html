@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FN Simple Uniforms · Store Setup</title>
     <link rel="icon" type="image/png" href="/logo/image.png">
-    <meta name="description" content="Set up your department's uniform store with FN Simple Uniforms — pick garments, upload artwork, choose decoration placement.">
+    <meta name="description" content="Set up your department's uniform store with FN Simple Uniforms — pick garments, upload artwork, choose exactly where every logo goes.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
@@ -49,7 +49,12 @@
           <p class="eyebrow">Store build request</p>
           <h1>Outfit your department.<br>We build the store.</h1>
           <span class="safety-stripe" aria-hidden="true"></span>
-          <p>Pick your garments, name your vendors, upload your artwork. The moment you submit, our build agent sources each product photo from your vendor's catalog, places your logos to production spec, and assembles the store for your approval. Most departments finish in about ten minutes.</p>
+          <p>Pick your garments, upload your artwork, and point to exactly where every logo goes — front, back, sleeves, all of it. The moment you send the request, our build agent sources each garment photo from your vendor's catalog, places your artwork to production spec, and assembles the store for your approval.</p>
+          <ul class="hero-points" aria-label="How this works">
+            <li><b>10 min</b><span>is all most departments need</span></li>
+            <li><b>Draft first</b><span>nothing goes live without FN review</span></li>
+            <li><b>Autosaved</b><span>close the tab, pick up where you left off</span></li>
+          </ul>
         </div>
       </section>
 
@@ -69,7 +74,7 @@
             <div>
               <p class="eyebrow">Step 1 of 4</p>
               <h2>Department information</h2>
-              <p class="muted">This titles your store and sets the product code used on every SKU.</p>
+              <p class="muted">This titles your store and sets the product code stamped on every SKU.</p>
             </div>
           </div>
 
@@ -79,15 +84,15 @@
               <small class="hint">The full public name — this becomes your store title.</small>
             </label>
             <label class="field">Department code <em class="req">Required</em>
-              <input name="departmentCode" required maxlength="6" placeholder="SFD" style="text-transform:uppercase" autocomplete="off">
-              <small class="hint">3–4 letters used on SKUs and product tags (e.g. VAC, FRF, BNC). We'll confirm it fits our convention.</small>
+              <input name="departmentCode" required maxlength="6" placeholder="SFD" autocomplete="off" class="code-input">
+              <small class="hint" id="codeHint">3–4 letters for SKUs and product tags (e.g. VAC, FRF, BNC). We'll confirm it fits our convention.</small>
             </label>
             <label class="field">Your name <em class="req">Required</em>
               <input name="contactName" required placeholder="Jane Smith" autocomplete="name">
             </label>
             <label class="field">Email <em class="req">Required</em>
               <input name="contactEmail" required type="email" placeholder="jane@department.gov" autocomplete="email">
-              <small class="hint">Where we send the store preview for approval.</small>
+              <small class="hint">Where the store preview lands for your approval.</small>
             </label>
             <label class="field">Phone
               <input name="contactPhone" placeholder="555-555-5555" autocomplete="tel">
@@ -99,7 +104,7 @@
           </div>
 
           <label class="field">Anything we should know before setup?
-            <textarea name="notes" rows="3" placeholder="Union rules, uniform policy notes, who approves the store, catalog limits…"></textarea>
+            <textarea name="storeNotes" rows="3" placeholder="Union rules, uniform policy notes, who approves the store, catalog limits…"></textarea>
           </label>
 
           <div class="wizard-nav">
@@ -113,9 +118,10 @@
           <div class="card-head">
             <div>
               <p class="eyebrow">Step 2 of 4</p>
-              <h2>Upload your logo files</h2>
-              <p class="muted">Upload every mark you want available — department seal, station logos, rank insignia, division badges.</p>
+              <h2>Upload your artwork</h2>
+              <p class="muted">Every mark you want available — department seal, station logos, rank insignia, division badges. In Step 3 you'll point each one at a garment.</p>
             </div>
+            <span class="rv-count" id="logoCount">0 files</span>
           </div>
 
           <div class="spec-callout">
@@ -129,17 +135,25 @@
             </div>
             <div>
               <b>Not sure?</b>
-              <small>Upload the best file you have — we'll flag anything that needs recreating.</small>
+              <small>Upload the best files you have — we flag anything that needs recreating.</small>
             </div>
           </div>
 
           <div class="dropzone" id="logoDrop" data-has-files="false" tabindex="0" role="button" aria-label="Upload logo files">
             <input id="customerLogos" name="logos" type="file" accept="image/*,.pdf,.ai,.eps,.svg" multiple hidden>
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v13"/></svg>
+            <svg class="dz-glyph" viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v13"/></svg>
             <b>Drop logo files here, or click to browse</b>
             <small>AI, EPS, PDF, PNG, JPG, SVG — up to 20 files</small>
           </div>
-          <div class="chips" id="customerLogoList"></div>
+
+          <!-- Vector-only uploads can't be placed on product previews; say so
+               here, on the step that caused it, not in a failed build later. -->
+          <div class="artwork-warning" id="rasterWarning" hidden>
+            <b>Add a PNG or JPG export of your artwork.</b>
+            <span>Vector and print files (AI, EPS, PDF) are exactly what production needs — but the product previews in your store are built from image files. Upload a PNG or JPG version alongside them and both jobs are covered.</span>
+          </div>
+
+          <div class="artwork-grid" id="customerLogoList"></div>
           <p class="field-error" id="logoError" hidden></p>
 
           <div class="wizard-nav">
@@ -156,8 +170,8 @@
             <div class="card-head">
               <div>
                 <p class="eyebrow">Reference</p>
-                <h2>Where your logo will sit</h2>
-                <p class="muted">These are our production placement standards. Click any diagram to enlarge it, then pick the matching placement on each garment below.</p>
+                <h2>Our placement standards</h2>
+                <p class="muted">Every placement you pick below follows these production measurements. Click a diagram to enlarge it.</p>
               </div>
             </div>
 
@@ -200,7 +214,7 @@
             </div>
 
             <div class="tier-table" role="table" aria-label="Decoration size tiers">
-              <div role="row" class="tt-head"><span role="columnheader">Size tier</span><span role="columnheader">Typical use</span><span role="columnheader">Approx. width</span></div>
+              <div role="row" class="tt-head"><span role="columnheader">Artwork size</span><span role="columnheader">Typical use</span><span role="columnheader">Approx. width</span></div>
               <div role="row"><span role="cell"><b>Small</b></span><span role="cell">Left/right chest, sleeve</span><span role="cell">~4″</span></div>
               <div role="row"><span role="cell"><b>Standard</b></span><span role="cell">Center chest, cap front</span><span role="cell">~6″</span></div>
               <div role="row"><span role="cell"><b>Large / Full Back</b></span><span role="cell">Center back, full front</span><span role="cell">~8–10″</span></div>
@@ -212,7 +226,7 @@
               <div>
                 <p class="eyebrow">Step 3 of 4</p>
                 <h2>Choose your garments</h2>
-                <p class="muted">Turn on every category you want in the store. Each one opens its own options — add more versions of a garment for different colors, vendors, or logos.</p>
+                <p class="muted">Turn on every category you want in the store. Add more versions of a garment for different colors, vendors, or artwork — and put a logo on more than one spot of the same garment.</p>
               </div>
               <span class="rv-count" id="categoryCount">0 selected</span>
             </div>
@@ -243,7 +257,11 @@
             <div>
               <p class="eyebrow">Submit</p>
               <h2>Send this package to FN</h2>
-              <p class="muted">We'll create your store collection immediately, then our team reviews products, mockups, pricing, and sizing before anything goes live. You'll get an email at the address above when it's ready to approve.</p>
+              <ol class="next-steps" aria-label="What happens after you submit">
+                <li><b>Build starts now</b><span>Our agent sources each garment photo and places your artwork to spec.</span></li>
+                <li><b>FN reviews everything</b><span>Products, mockups, pricing, and sizing — all checked before anything goes live.</span></li>
+                <li><b>You approve by email</b><span>The store preview lands in your inbox, ready to sign off.</span></li>
+              </ol>
             </div>
             <div class="wizard-nav">
               <button class="btn btn-ghost" type="button" data-back>Back</button>

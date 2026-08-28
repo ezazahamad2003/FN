@@ -227,35 +227,49 @@ async function garmentBox(baseBuffer, baseMeta) {
   return fullFrame;
 }
 
-async function compositeLogoOnGarment(baseBuffer, logoBuffer, placementKey) {
-  const spec = PLACEMENTS[placementKey] || PLACEMENTS["left-chest"];
+/**
+ * Composite one or more decorations onto a single garment photo in one pass.
+ * `decorations` is [{ logoBuffer, placementKey }] — a crest on the left chest
+ * AND a full mark across the back of a back-view base are two entries, each
+ * prepared against the same garment bounding box so proportions stay
+ * consistent across every spot.
+ */
+async function compositeDecorationsOnGarment(baseBuffer, decorations) {
   const baseMeta = await sharp(baseBuffer).metadata();
   const box = await garmentBox(baseBuffer, baseMeta);
 
-  const { data: logo, info } = await prepareLogo(
-    logoBuffer,
-    Math.max(1, Math.round(spec.w * box.width)),
-    Math.max(1, Math.round(spec.h * box.height))
-  );
+  const layers = [];
+  for (const decoration of decorations) {
+    const spec = PLACEMENTS[decoration.placementKey] || PLACEMENTS["left-chest"];
+    const { data: logo, info } = await prepareLogo(
+      decoration.logoBuffer,
+      Math.max(1, Math.round(spec.w * box.width)),
+      Math.max(1, Math.round(spec.h * box.height))
+    );
 
-  // Clamp to the garment box so an extreme placement can never hang the
-  // artwork off the garment and onto the backdrop.
-  const left = Math.min(
-    Math.max(Math.round(box.left + spec.cx * box.width - info.width / 2), box.left),
-    box.left + box.width - info.width
-  );
-  const top = Math.min(
-    Math.max(Math.round(box.top + spec.cy * box.height - info.height / 2), box.top),
-    box.top + box.height - info.height
-  );
+    // Clamp to the garment box so an extreme placement can never hang the
+    // artwork off the garment and onto the backdrop.
+    const left = Math.min(
+      Math.max(Math.round(box.left + spec.cx * box.width - info.width / 2), box.left),
+      box.left + box.width - info.width
+    );
+    const top = Math.min(
+      Math.max(Math.round(box.top + spec.cy * box.height - info.height / 2), box.top),
+      box.top + box.height - info.height
+    );
+    layers.push({ input: logo, left, top });
+  }
 
-  return sharp(baseBuffer)
-    .composite([{ input: logo, left, top }])
-    .png()
-    .toBuffer();
+  if (!layers.length) return sharp(baseBuffer).png().toBuffer();
+  return sharp(baseBuffer).composite(layers).png().toBuffer();
+}
+
+async function compositeLogoOnGarment(baseBuffer, logoBuffer, placementKey) {
+  return compositeDecorationsOnGarment(baseBuffer, [{ logoBuffer, placementKey }]);
 }
 
 module.exports = {
+  compositeDecorationsOnGarment,
   compositeLogoOnGarment,
   resolvePlacement
 };

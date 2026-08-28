@@ -6,3 +6,4 @@ server.err.log
 # Local tooling and test artifacts
 .claude/settings.local.json
 test-run/
+public/test-assets/

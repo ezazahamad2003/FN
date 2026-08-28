@@ -1289,7 +1289,35 @@ function intakeLogoPicker(record, selectedSlugs) {
   return `<div class="logo-pick">${chips || '<span class="logo-pick-empty">No logo files stored on this request.</span>'}</div>`;
 }
 
+/* One decorated spot of a variant: placement + artwork size + its logo set.
+   Rendered as its own removable row so a garment can carry several. */
+function intakeDecorationEditor(record, decoration, index, count, placements) {
+  return `
+    <div class="decoration-editor" data-decoration-index="${index}">
+      <div class="decoration-head">
+        <span>Decoration ${index + 1}${count > 1 ? ` of ${count}` : ""}</span>
+        <button type="button" class="variant-remove" data-remove-intake-decoration ${count === 1 ? "hidden" : ""} aria-label="Remove decoration ${index + 1}">&times;</button>
+      </div>
+      <div class="category-edit-grid">
+        <label><span>Placement</span><select name="decoPlacement">${intakeOption(placements, decoration.placement)}</select></label>
+        <label><span>Size tier</span><select name="decoSizeTier">${intakeOption(INTAKE_TIERS, decoration.sizeTier)}</select></label>
+        <label><span>Custom tier size</span><input name="decoCustomSizeTier" value="${escapeHtml(decoration.customSizeTier || "")}"></label>
+      </div>
+      <div class="ce-logos">
+        <span class="ce-logos-label">Logos on this spot <small>none selected = every uploaded logo offered here</small></span>
+        ${intakeLogoPicker(record, decoration.logoSlugs)}
+      </div>
+    </div>`;
+}
+
 function intakeVariantEditor(record, variant, index, count, placements) {
+  // Records normalized before 2026-08-28 carry the flat placement fields only;
+  // render them as decoration 1 exactly the way the server synthesizes them.
+  const decorations = Array.isArray(variant.decorations) && variant.decorations.length
+    ? variant.decorations
+    : (variant.placement || variant.sizeTier || variant.customSizeTier || (variant.logoSlugs || []).length)
+      ? [{ placement: variant.placement, sizeTier: variant.sizeTier, customSizeTier: variant.customSizeTier, logoSlugs: variant.logoSlugs }]
+      : [{ placement: "", sizeTier: "", customSizeTier: "", logoSlugs: [] }];
   return `
     <fieldset class="variant-editor" data-variant-id="${escapeHtml(variant.id || "v" + (index + 1))}">
       <div class="variant-head">
@@ -1302,9 +1330,6 @@ function intakeVariantEditor(record, variant, index, count, placements) {
         <label><span>Color(s)</span><input name="colors" value="${escapeHtml(variant.colors || "")}"></label>
         <label><span>Style notes</span><input name="style" value="${escapeHtml(variant.style || "")}"></label>
         <label><span>Decoration method</span><select name="decorationMethod">${intakeOption(INTAKE_METHODS, variant.decorationMethod)}</select></label>
-        <label><span>Size tier</span><select name="sizeTier">${intakeOption(INTAKE_TIERS, variant.sizeTier)}</select></label>
-        <label><span>Custom tier size</span><input name="customSizeTier" value="${escapeHtml(variant.customSizeTier || "")}"></label>
-        <label><span>Placement</span><select name="placement">${intakeOption(placements, variant.placement)}</select></label>
         <label><span>Name/rank right chest</span><select name="nameRank">
           <option value="" ${!variant.nameRank ? "selected" : ""}>—</option>
           <option value="yes" ${variant.nameRank === "yes" ? "selected" : ""}>Yes</option>
@@ -1315,9 +1340,11 @@ function intakeVariantEditor(record, variant, index, count, placements) {
         <label><span>Version notes</span><input name="notes" value="${escapeHtml(variant.notes || "")}"></label>
         <label><span>Logo notes${variant.logoNotes ? "" : " (legacy)"}</span><input name="logoNotes" value="${escapeHtml(variant.logoNotes || "")}" placeholder="Free-text assignment from older intakes"></label>
       </div>
-      <div class="ce-logos">
-        <span class="ce-logos-label">Logos on this version <small>none selected = every uploaded logo${variant.logoNotes ? ", unless the logo notes name one" : ""}</small></span>
-        ${intakeLogoPicker(record, variant.logoSlugs)}
+      <div class="decoration-editor-list" data-placements="${escapeHtml(JSON.stringify(placements))}">
+        ${decorations.map((decoration, decorationIndex) => intakeDecorationEditor(record, decoration, decorationIndex, decorations.length, placements)).join("")}
+      </div>
+      <div class="variant-actions decoration-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-add-intake-decoration>+ Add decoration spot</button>
       </div>
     </fieldset>`;
 }
@@ -1380,6 +1407,16 @@ function collectEditedIntake(record) {
     const variants = [...node.querySelectorAll(".variant-editor")].map((block, index) => {
       const read = (name) => block.querySelector(`[name='${name}']`)?.value.trim() ?? "";
       const sizeRange = read("sizeRange");
+      const decorations = [...block.querySelectorAll(".decoration-editor")].map((decorationNode) => {
+        const readDecoration = (name) => decorationNode.querySelector(`[name='${name}']`)?.value.trim() ?? "";
+        return {
+          placement: readDecoration("decoPlacement"),
+          sizeTier: readDecoration("decoSizeTier"),
+          customSizeTier: readDecoration("decoCustomSizeTier"),
+          logoSlugs: [...decorationNode.querySelectorAll("[name='logoPick']:checked")].map((input) => input.value)
+        };
+      });
+      const first = decorations[0] || {};
       return {
         id: block.dataset.variantId || `v${index + 1}`,
         vendor: read("vendor"),
@@ -1387,10 +1424,13 @@ function collectEditedIntake(record) {
         colors: read("colors"),
         style: read("style"),
         decorationMethod: read("decorationMethod"),
-        sizeTier: read("sizeTier"),
-        customSizeTier: read("customSizeTier"),
-        placement: read("placement"),
-        logoSlugs: [...block.querySelectorAll("[name='logoPick']:checked")].map((input) => input.value),
+        decorations,
+        // Flat mirrors of decoration 1, matching the server's normalization -
+        // legacy consumers keep reading the same shape.
+        sizeTier: first.sizeTier || "",
+        customSizeTier: first.customSizeTier || "",
+        placement: first.placement || "",
+        logoSlugs: first.logoSlugs || [],
         // logoNotes carries legacy free-text assignments; dropping it here
         // silently destroyed them on the next save (the historic silent-drop
         // bug class this file warns about).
@@ -1421,7 +1461,6 @@ async function saveCustomerIntake(record, status = "in-review") {
   // collection pointer - nulling it would un-protect the store from cleanup.
   delete edited.build;
   delete edited.shopifyCollection;
-  delete edited.structuredText;
   delete edited.summary;
   delete edited.driveFile;
   const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}`, {
@@ -1688,6 +1727,20 @@ function renumberIntakeVariants(list) {
   });
 }
 
+function renumberIntakeDecorations(list) {
+  const blocks = [...list.querySelectorAll(".decoration-editor")];
+  blocks.forEach((block, index) => {
+    block.dataset.decorationIndex = String(index);
+    const title = block.querySelector(".decoration-head span");
+    if (title) title.textContent = `Decoration ${index + 1}${blocks.length > 1 ? ` of ${blocks.length}` : ""}`;
+    const remove = block.querySelector("[data-remove-intake-decoration]");
+    if (remove) {
+      remove.hidden = blocks.length === 1;
+      remove.setAttribute("aria-label", `Remove decoration ${index + 1}`);
+    }
+  });
+}
+
 function renderStoreDetail(record) {
   if (!storeDetailBody) return;
   storeDocCache = null;
@@ -1792,6 +1845,32 @@ function renderStoreDetail(record) {
       // The focused button just left the DOM; without this, keyboard focus
       // falls to <body> and the operator re-tabs from the top of the page.
       details.querySelector("[data-add-intake-variant]")?.focus();
+    }
+
+    const addDecoration = event.target.closest("[data-add-intake-decoration]");
+    if (addDecoration) {
+      const variantEditor = addDecoration.closest(".variant-editor");
+      const list = variantEditor.querySelector(".decoration-editor-list");
+      let placements = [];
+      try {
+        placements = JSON.parse(list.dataset.placements || "[]");
+      } catch {
+        placements = [];
+      }
+      const count = list.querySelectorAll(".decoration-editor").length;
+      list.insertAdjacentHTML(
+        "beforeend",
+        intakeDecorationEditor(record, { placement: "", sizeTier: "", customSizeTier: "", logoSlugs: [] }, count, count + 1, placements)
+      );
+      renumberIntakeDecorations(list);
+    }
+    const removeDecoration = event.target.closest("[data-remove-intake-decoration]");
+    if (removeDecoration) {
+      const variantEditor = removeDecoration.closest(".variant-editor");
+      const list = removeDecoration.closest(".decoration-editor-list");
+      removeDecoration.closest(".decoration-editor").remove();
+      renumberIntakeDecorations(list);
+      variantEditor.querySelector("[data-add-intake-decoration]")?.focus();
     }
   });
 

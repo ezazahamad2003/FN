@@ -465,10 +465,17 @@ app.post(
           internalNotes: warning || record.internalNotes || ""
         });
       } catch (collectionError) {
-        record = await updateCustomerIntake(record.id, {
-          status: "collection-error",
-          internalNotes: "Collection was not created automatically: " + collectionError.message
-        });
+        // The record is already persisted; if even the status update fails the
+        // response must still be a 201 — a 400 here would make the customer
+        // resubmit a request that exists, creating a duplicate.
+        try {
+          record = await updateCustomerIntake(record.id, {
+            status: "collection-error",
+            internalNotes: "Collection was not created automatically: " + collectionError.message
+          });
+        } catch (statusError) {
+          console.error("Could not record the collection error:", statusError.message);
+        }
       }
       // Submit IS the handoff: the store starts building the moment the form
       // lands. Fire-and-forget - progress is written into the Drive record and
