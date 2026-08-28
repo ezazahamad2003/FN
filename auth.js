@@ -146,7 +146,7 @@ function disconnectGoogle() {
 function requireEnv(keys, service) {
   const missing = keys.filter((key) => !process.env[key]);
   if (missing.length) {
-    throw new Error(`${service} is missing required configuration: ${missing.join(", ")}. Check the Render environment variables or local .env file.`);
+    throw new Error(`${service} is missing required configuration: ${missing.join(", ")}. Check the Azure Container App environment variables or local .env file.`);
   }
 }
 

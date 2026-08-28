@@ -96,8 +96,9 @@ app.use(express.static(path.join(__dirname, "public")));
  *   Phase 1  POST /onboard  → Drive assets + AI analysis + generated images,
  *            ends with a `review` SSE event (nothing touches Shopify).
  *   Phase 2  POST /publish  → pushes the reviewed run to Shopify.
- * Pending runs are held in memory with a TTL. On Render the filesystem and
- * process are ephemeral — a restart drops pending runs, so approve promptly.
+ * Pending runs are held in memory with a TTL. In the Azure container the
+ * filesystem and process are ephemeral — a restart drops pending runs, so
+ * approve promptly.
  *
  * After a publish the run stays behind (buffers dropped) as a cleanup
  * manifest, so POST /cleanup can undo the whole run — delete its Shopify

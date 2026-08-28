@@ -68,8 +68,8 @@ single revoked or expired token never takes Drive down.
 - `GOOGLE_CLIENT_ID_2` / `GOOGLE_CLIENT_SECRET_2` are only needed if the second
   account authorized a *different* OAuth app; otherwise it reuses the primary app.
 
-For durability on Render, set these as **dashboard environment variables** (not via
-the in-app Connect buttons), since Render's filesystem is ephemeral.
+For durability in production, set these as **Container App environment variables**
+(not via the in-app Connect buttons), since the container filesystem is ephemeral.
 
 ## The console
 
@@ -180,7 +180,7 @@ for 24 hours, while the server keeps the run manifest in memory). It:
 - moves the department's Drive folder to trash (recoverable from Drive's trash
   for ~30 days).
 
-If the option has expired (or the server restarted, e.g. a Render deploy),
+If the option has expired (or the server restarted, e.g. an Azure deploy),
 delete the products/collection in Shopify admin and the folder in Drive
 manually.
 
@@ -277,7 +277,7 @@ GDRIVE_PARENT_FOLDER_ID=1NotimWFnxitY67QLt20is3IwifNXfgnp
 ```
 
 > When changing this, remember to update it in **both** the local `.env` and the
-> Render dashboard environment variables.
+> Container App's environment variables in Azure.
 
 ## Product Pricing & Vendor
 
@@ -300,16 +300,30 @@ The lookup adds roughly 15–25 seconds and a few cents per distinct style on th
 first run; results are cached per style+colour for the life of the process, so
 re-running after a review-gate rejection costs nothing extra.
 
-## Running on Render (ephemeral filesystem)
+## Running on Azure (ephemeral filesystem)
 
-Render's filesystem is wiped on every deploy and restart, and free instances
-spin down when idle. That is why things "disappear" on Render:
+Production runs as the **`fn-platform` Azure Container App** (resource group
+`FN`, region westus3). Deploy by building the image into the registry and
+pointing the app at it:
 
-- **Set every credential as a dashboard environment variable** (`SHOPIFY_*`,
-  `GOOGLE_*`, `GDRIVE_PARENT_FOLDER_ID`, `OPENAI_API_KEY`). The in-app Connect
-  buttons write to `.env`, which does not survive a restart on Render.
+```bash
+az acr build --registry fnacr0ded0e58 --image fn-platform:<git-sha> .
+```
+
+```bash
+az containerapp update -n fn-platform -g FN --image fnacr0ded0e58.azurecr.io/fn-platform:<git-sha>
+```
+
+The container filesystem is wiped on every deploy and restart. That is why
+things "disappear" in production:
+
+- **Set every credential as a Container App environment variable** (`SHOPIFY_*`,
+  `GOOGLE_*`, `GDRIVE_PARENT_FOLDER_ID`, `OPENAI_API_KEY`, `AZURE_OPENAI_*`).
+  The in-app Connect buttons write to `.env`, which does not survive a restart
+  in a container.
 - **Approve or discard a run promptly.** Pending review runs are held in server
   memory for 60 minutes; a deploy or restart drops them. Drive assets are never
   lost — re-running with "Use existing" reuses the folder.
 - Generated images, manuals, and email drafts are always saved to Google Drive
-  and Shopify, never to the server disk, so nothing durable lives on Render.
+  and Shopify, never to the server disk, so nothing durable lives in the
+  container.
