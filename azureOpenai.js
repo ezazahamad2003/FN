@@ -331,16 +331,10 @@ async function azureTextToSpeech({ text, voice, speed = 1.04, format = "mp3" }) 
 }
 
 module.exports = {
-  azureAudioConfigured,
-  azureImageConfigured,
-  azureOpenAIConfigured,
-  azureSpeechConfigured,
   azureTextToSpeech,
   azureTranscribeAudio,
   chatCompletion,
   genAIStatus,
   generateImage,
-  imageGenConfigured,
-  openAIConfigured,
   reason
 };

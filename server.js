@@ -51,7 +51,6 @@ const {
   intakeDocumentHtml,
   intakeFromCustomerRecord,
   listCustomerIntakes,
-  structuredTextFromCustomerIntake,
   updateCustomerIntake
 } = require("./customerIntakes");
 const { azureTextToSpeech, azureTranscribeAudio, generateImage } = require("./azureOpenai");
@@ -595,15 +594,14 @@ app.patch("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
    Onboarding agent handoff.
 
    A submitted customer form is already the same fixed-field schema the PDF
-   store build form produces, so it feeds the existing pipeline directly: render
-   the record to structured text, parse it with the same parser used for an
-   uploaded form, then run the reasoning agent over it.
+   store build form produces, so products are built straight from the record
+   (intakeFromCustomerRecord) - one per variant, no text round-trip - and the
+   reasoning agent runs over them.
 
    This deliberately stops at a PLAN. It reasons about what to build, what the
    department left ambiguous, and how each garment should be decorated - but it
-   does not create products or spend image credits. An operator reviews the plan
-   in the New Stores queue and starts the build, which is the review gate the
-   store build process is supposed to have.
+   does not create products or spend image credits. The review gate is that
+   builds create DRAFT products; an operator flips them live in Shopify admin.
    -------------------------------------------------------------------------- */
 app.post("/api/customer-intakes/:id/plan", requireAdminToken, async (req, res) => {
   try {

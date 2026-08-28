@@ -486,11 +486,6 @@ mutation productDelete($input: ProductDeleteInput!) {
   }
 }`;
 
-const COLLECTION_COUNT_QUERY = `
-query collectionProductsCount($id: ID!) {
-  collection(id: $id) { id productsCount { count } }
-}`;
-
 // Deleting an already-deleted resource is treated as success so cleanup can be
 // retried safely.
 async function deleteProduct(productGid) {
@@ -508,11 +503,6 @@ async function deleteCollection(collectionId) {
   }
 }
 
-async function countProductsInCollection(collectionId) {
-  const data = await graphql(COLLECTION_COUNT_QUERY, { id: `gid://shopify/Collection/${collectionId}` });
-  return Number(data.collection?.productsCount?.count || 0);
-}
-
 function adminCollectionUrl(collectionId) {
   return `https://${process.env.SHOPIFY_STORE}/admin/collections/${collectionId}`;
 }
@@ -527,13 +517,10 @@ module.exports = {
   addProductToCollection,
   adminCollectionUrl,
   adminProductUrl,
-  countProductsInCollection,
   createProductWithVariants,
   deleteCollection,
   deleteProduct,
-  ensureManualCollection,
   ensureManualCollectionWithImage,
-  getAccessToken,
   gid,
   graphql,
   legacyIdOf,

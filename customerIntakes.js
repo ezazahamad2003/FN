@@ -595,10 +595,6 @@ async function updateCustomerIntake(fileId, patch = {}) {
 }
 
 module.exports = {
-  CUSTOMER_INTAKE_CATEGORIES,
-  DECORATION_METHODS,
-  SIZE_RANGES,
-  SIZE_TIERS,
   createCustomerIntake,
   getCustomerIntake,
   intakeDocumentHtml,

@@ -504,7 +504,6 @@ async function findSupplierBlank(product, { onLog } = {}) {
 
 module.exports = {
   findSupplierBlank,
-  supplierBlanksEnabled,
   // exported for tests
   scoreImageUrl,
   imageCandidatesFromPage,

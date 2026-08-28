@@ -274,13 +274,10 @@ module.exports = {
   exchangeGoogleCode,
   exchangeShopifyCode,
   googleAccounts,
-  googleClient,
   googleConnected,
   googleDriveAuth,
   googleInstallUrl,
   hasRequiredTokens,
   openBrowser,
-  readEnvFile,
-  shopifyInstallUrl,
-  writeEnv
+  shopifyInstallUrl
 };

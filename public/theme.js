@@ -5,9 +5,10 @@
    disabled (or a failed script load) still renders a correct light UI. Dark is
    opt-in via [data-theme="dark"] on <html>.
 
-   The *applying* half of this runs inline in each page's <head> (see the
-   FN_THEME_BOOT snippet) so the class lands before first paint and there is no
-   flash. This file only wires up the visible control.
+   The *applying* half of this runs as the inline <script> at the top of each
+   page's <head> (index.html / setup.html / customer-intake.html) so the
+   attribute lands before first paint and there is no flash. This file only
+   wires up the visible control.
    -------------------------------------------------------------------------- */
 (function () {
   const KEY = "fnTheme";

@@ -550,8 +550,4 @@ async function startIntakeBuild(intakeId, options = {}) {
   return { started: true, build };
 }
 
-function buildInProgress(intakeId) {
-  return activeBuilds.has(intakeId);
-}
-
-module.exports = { buildInProgress, startIntakeBuild };
+module.exports = { startIntakeBuild };

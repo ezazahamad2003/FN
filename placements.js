@@ -182,17 +182,8 @@ function placementFace(placement) {
   return lookupPlacement(placement)?.face || "front";
 }
 
-/** Default size tier when the department did not pick one. */
-function defaultTierFor(placement) {
-  return lookupPlacement(placement)?.defaultTier || "Standard";
-}
-
 module.exports = {
-  PLACEMENTS,
   REFERENCE_IMAGES,
-  SIZE_TIERS,
-  defaultTierFor,
-  lookupPlacement,
   placementFace,
   placementGuidance
 };

@@ -345,7 +345,5 @@ module.exports = {
   getCollectionWithProducts,
   getProduct,
   listCollections,
-  setProductPrice,
-  toTags,
   updateProduct
 };

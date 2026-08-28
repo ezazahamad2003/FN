@@ -29,10 +29,11 @@
    timeline + progress bar, renders file previews, renders the review gate,
    and handles the folder conflict with an accessible modal.
 
-   Navigation is hash-routed across three views — #/departments (the default
-   landing view), #/departments/:id, and #/onboarding. Onboarding is one option
-   in the nav rather than the whole app, because day to day the store already
-   exists and the common task is browsing and editing it.
+   Navigation is hash-routed across six views — #/dashboard (the default
+   landing view), #/new-stores, #/new-stores/:id, #/departments,
+   #/departments/:id, and #/onboarding. Onboarding is one option in the nav
+   rather than the whole app, because day to day the store already exists and
+   the common task is browsing and editing it.
    ========================================================================== */
 
 const TOTAL_STEPS = 10; // 7 analyze/generate + 3 publish (review gate between)
@@ -1887,8 +1888,6 @@ const voiceState = el("voiceState");
 const voicePrompt = el("voicePrompt");
 const voiceUserTranscript = el("voiceUserTranscript");
 const voiceAssistantReply = el("voiceAssistantReply");
-const voiceRepeat = el("voiceRepeat");
-const voiceStop = el("voiceStop");
 const voicePlayback = el("voicePlayback");
 const platformStatusList = el("platformStatusList");
 const agentModelPill = el("agentModelPill");
@@ -1907,7 +1906,6 @@ let quietSince = 0;
 let recordStartedAt = 0;
 let discardRecording = false;
 let lastAssistantReply = "";
-let lastAssistantAudio = null;
 
 const VOICE_SILENCE_MS = 560;
 const VOICE_MIN_TURN_MS = 420;
@@ -1986,14 +1984,13 @@ function bestAudioMimeType() {
   return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
 }
 
-function stopPlayback(resume = false) {
+function stopPlayback() {
   if (voicePlayback) {
     voicePlayback.pause();
     voicePlayback.removeAttribute("src");
     voicePlayback.load();
   }
   if (window.speechSynthesis) window.speechSynthesis.cancel();
-  if (resume && voiceSessionActive && !turnInFlight) setVoiceMode("listening", "Listening", "Mic is on. Pause after a question to send it.");
 }
 
 function resumeVoiceSession() {
@@ -2006,7 +2003,6 @@ function resumeVoiceSession() {
 
 function speakAnswer(text) {
   lastAssistantReply = text || "";
-  lastAssistantAudio = null;
   if (!lastAssistantReply) {
     resumeVoiceSession();
     return;
@@ -2015,7 +2011,7 @@ function speakAnswer(text) {
     setVoiceMode(voiceSessionActive ? "listening" : "idle", voiceSessionActive ? "Listening" : "Mic off", "Speech playback is unavailable. The answer is shown below.");
     return;
   }
-  stopPlayback(false);
+  stopPlayback();
   const utterance = new SpeechSynthesisUtterance(lastAssistantReply.replace(/\s+/g, " "));
   utterance.rate = 1.02;
   utterance.pitch = 1;
@@ -2027,9 +2023,8 @@ function speakAnswer(text) {
 
 function playAssistantReply(text, audio) {
   lastAssistantReply = text || "";
-  lastAssistantAudio = audio || null;
   if (!lastAssistantReply) return resumeVoiceSession();
-  stopPlayback(false);
+  stopPlayback();
   if (audio?.base64 && voicePlayback) {
     voicePlayback.src = "data:" + (audio.mimeType || "audio/mpeg") + ";base64," + audio.base64;
     voicePlayback.onended = resumeVoiceSession;
@@ -2049,7 +2044,7 @@ function pushAgentHistory(role, content) {
 async function askDashboardAgent(content) {
   const question = String(content || "").trim();
   if (!question) return;
-  stopPlayback(false);
+  stopPlayback();
 
   if (voiceUserTranscript) voiceUserTranscript.textContent = question;
   if (voiceAssistantReply) voiceAssistantReply.textContent = "Thinking...";
@@ -2169,7 +2164,7 @@ function startVadLoop() {
     const now = performance.now();
 
     if (heardSpeech && !turnInFlight) {
-      if (state === "speaking") stopPlayback(false);
+      if (state === "speaking") stopPlayback();
       beginRecording();
     }
 
@@ -2220,7 +2215,7 @@ function stopVoiceAgent() {
   if (vadFrame) cancelAnimationFrame(vadFrame);
   vadFrame = null;
   finishRecording(true);
-  stopPlayback(false);
+  stopPlayback();
   if (micStream) micStream.getTracks().forEach((track) => track.stop());
   micStream = null;
   analyser = null;
@@ -2237,7 +2232,7 @@ function startVoiceAgent() {
     return;
   }
   if (voiceAgent?.dataset.state === "speaking") {
-    stopPlayback(false);
+    stopPlayback();
     setVoiceMode("idle", "Mic off", "Voice stopped. Click once when you want the live agent again.");
     return;
   }
@@ -2641,7 +2636,7 @@ function renderDrawer(product) {
           <label for="epPrice">Price <span class="opt">(all variants)</span></label>
           <div class="input-prefix">
             <span aria-hidden="true">$</span>
-            <input id="epPrice" name="price" type="number" min="0" step="0.01" value="${escapeHtml(normalizePrice(product.minPrice))}" aria-describedby="epPriceError">
+            <input id="epPrice" name="price" type="number" min="0" step="0.01" value="${escapeHtml(normalizePrice(product.minPrice))}" aria-describedby="epPriceHint epPriceError">
           </div>
           <p class="hint" id="epPriceHint">Applies to all ${product.variantCount} variants.</p>
           <p class="hint field-error" id="epPriceError" hidden></p>
@@ -3019,8 +3014,6 @@ newProductModal.addEventListener("click", (e) => {
 newProductForm.addEventListener("submit", submitNewProduct);
 wireDropzone("npLogos", npLogoInput, renderNpThumbs, isImage);
 if (agentVoiceButton) agentVoiceButton.addEventListener("click", startVoiceAgent);
-if (voiceRepeat) voiceRepeat.addEventListener("click", () => speakAnswer(lastAssistantReply));
-if (voiceStop) voiceStop.addEventListener("click", stopVoiceAgent);
 document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
   button.addEventListener("click", () => askDashboardAgent(button.dataset.agentPrompt));
 });

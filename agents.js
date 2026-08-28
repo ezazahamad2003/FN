@@ -133,7 +133,6 @@ Do not claim to have modified Shopify, Drive, Azure, files, deployments, or envi
 }
 
 module.exports = {
-  agentHarness,
   answerDashboardAgent,
   platformStatus
 };

@@ -1,13 +1,16 @@
 /* =============================================================================
    FN Onboarding — design system
    -----------------------------------------------------------------------------
-   One thing per screen:
-     • index.html  → run an onboarding for a new department, then watch progress.
-     • setup.html  → connect / disconnect Shopify + Google Drive.
+   One purpose per page:
+     • index.html           → the operator console (dashboard, New Stores queue,
+                              departments catalog, onboarding runs).
+     • customer-intake.html → the customer-facing store request wizard.
+     • setup.html           → connect / disconnect Shopify + Google Drive.
 
    UX notes & tradeoffs:
      • Light theme is the default; dark is available via the header toggle and
-       is remembered per browser (falls back to the OS preference on first visit).
+       is remembered per browser (first visit is always light — the OS
+       preference is deliberately ignored).
      • Color coding is a first-class signal, not decoration:
          brand (red)   = the one primary action (fire-service theme)
          info  (blue)  = a step is running / in progress
@@ -306,19 +309,6 @@ h3 { font-size: var(--fs-base); line-height: 1.35; }
   align-items: center;
   gap: var(--space-3);
   min-width: 0;
-}
-
-.brand-mark {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 44px; height: 44px;
-  border-radius: var(--radius-md);
-  background: linear-gradient(145deg, var(--brand), #b8281d);
-  color: var(--brand-ink);
-  font-weight: 900;
-  letter-spacing: 0.02em;
-  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
 .brand-logo {
@@ -1124,17 +1114,13 @@ input[aria-invalid="true"],
 .modal h2 { margin-bottom: var(--space-1); }
 .modal p { color: var(--text-muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .modal-actions { display: flex; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; margin-top: var(--space-5); }
-.modal-close {
-  position: absolute;
-  margin-left: auto;
-}
-
 /* =============================================================================
    Catalog — departments, products, editor drawer
    -----------------------------------------------------------------------------
-   Departments is the landing view: the store already exists, so browsing it is
-   the everyday task and onboarding a brand-new department is the occasional
-   one. Both live behind the same nav, using the tokens above — nothing here
+   The Dashboard is the landing view; Departments is the everyday
+   browse-and-edit surface — the store already exists, so browsing it is the
+   common task and onboarding a brand-new department is the occasional one.
+   Both live behind the same nav, using the tokens above — nothing here
    introduces a new colour, radius, or spacing value.
    ========================================================================== */
 
@@ -1977,35 +1963,6 @@ input[aria-invalid="true"],
   font-size: var(--fs-lg);
 }
 
-.customer-steps {
-  display: grid;
-  gap: var(--space-2);
-}
-
-.customer-steps span,
-.placement-grid span,
-.store-logo-strip span {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text-muted);
-}
-
-.customer-steps b {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  aspect-ratio: 1;
-  border-radius: var(--radius-pill);
-  background: var(--info-soft);
-  color: var(--info);
-}
-
 .customer-form {
   display: grid;
   gap: var(--space-4);
@@ -2017,18 +1974,7 @@ input[aria-invalid="true"],
   gap: var(--space-4);
 }
 
-.customer-logo-upload {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--field);
-}
-
-.customer-logo-upload p,
-.customer-result,
-.success-note {
+.customer-result {
   color: var(--text-muted);
 }
 
@@ -2050,39 +1996,19 @@ input[aria-invalid="true"],
   color: var(--danger);
 }
 
-.placement-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.placement-grid span {
-  display: grid;
-  align-content: start;
-  min-height: 96px;
-}
-
-.placement-grid small {
-  color: var(--text-subtle);
-  font-size: var(--fs-xs);
-}
-
-.customer-categories,
-.store-category-grid {
+.customer-categories {
   display: grid;
   gap: var(--space-3);
 }
 
-.customer-category,
-.store-category-editor {
+.customer-category {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   overflow: hidden;
 }
 
-.customer-category header,
-.store-category-editor header {
+.customer-category header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2090,8 +2016,7 @@ input[aria-invalid="true"],
   padding: var(--space-3) var(--space-4);
 }
 
-.toggle-line,
-.store-category-editor header label {
+.toggle-line {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -2104,8 +2029,7 @@ input[aria-invalid="true"],
   font-size: var(--fs-xs);
 }
 
-.category-fields,
-.store-category-editor > div {
+.category-fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
@@ -2113,9 +2037,7 @@ input[aria-invalid="true"],
   border-top: 1px solid var(--border);
 }
 
-.category-fields label,
-.store-review-form label,
-.store-category-editor label {
+.category-fields label {
   display: grid;
   gap: var(--space-2);
   color: var(--text);
@@ -2123,83 +2045,16 @@ input[aria-invalid="true"],
   font-weight: 700;
 }
 
-.new-stores-layout {
-  display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
-  gap: var(--space-5);
-  align-items: start;
-}
-
-.store-request-list {
-  display: grid;
-  gap: var(--space-3);
-}
-
-.store-request-card {
-  display: grid;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.store-request-card:hover,
-.store-request-card:focus-visible {
-  border-color: var(--info-border);
-  background: var(--surface-2);
-}
-
-.store-request-card small {
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
-}
-
-.compact-actions {
-  justify-content: flex-start;
-  margin-bottom: var(--space-4);
-}
-
-.compact-gap {
-  margin-bottom: var(--space-4);
-}
-
-.store-review-form {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.store-logo-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.store-logo-strip span {
-  min-height: 32px;
-  padding: var(--space-2) var(--space-3);
-}
-
 @media (max-width: 1080px) {
-  .customer-hero,
-  .new-stores-layout { grid-template-columns: 1fr; }
-  .placement-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .category-fields,
-  .store-category-editor > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .customer-hero { grid-template-columns: 1fr; }
+  .category-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
   .customer-shell { width: min(100% - 20px, 1180px); }
   .customer-grid.two,
-  .placement-grid,
-  .category-fields,
-  .store-category-editor > div { grid-template-columns: 1fr; }
-  .customer-category header,
-  .store-category-editor header { align-items: flex-start; flex-direction: column; }
+  .category-fields { grid-template-columns: 1fr; }
+  .customer-category header { align-items: flex-start; flex-direction: column; }
 }
 
 /* =============================================================================
@@ -2663,15 +2518,7 @@ input[aria-invalid="true"],
 .customer-category .toggle-line input[type="checkbox"]:checked::after { transform: translateX(18px); }
 .customer-category .toggle-line input[type="checkbox"]:focus-visible { box-shadow: var(--ring); }
 
-.vendor-row {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: var(--space-3);
-  grid-column: 1 / -1;
-}
-
 @media (max-width: 620px) {
-  .vendor-row { grid-template-columns: 1fr; }
   .safety-stripe { width: 104px; height: 12px; }
 }
 
@@ -2736,60 +2583,13 @@ input[aria-invalid="true"],
 }
 
 /* =============================================================================
-   New Stores queue - review panel
+   New Stores queue - store editor
    -----------------------------------------------------------------------------
-   The operator surface for customer store requests. Layout: request list on
-   the left, the selected request's editor + build progress on the right. These
-   classes were previously rendered with no styling at all.
+   The operator surface for customer store requests. The queue itself is a card
+   grid (.store-card-grid, one card per store); opening a card routes to the
+   full-page store detail (#/new-stores/:id), which uses the editor styles
+   below.
    ========================================================================== */
-.store-queue-grid {
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-}
-
-.store-request-list {
-  display: grid;
-  gap: var(--space-2);
-  position: sticky;
-  top: var(--space-4);
-}
-
-.store-request-card[data-active="true"] {
-  border-color: var(--brand-border);
-  box-shadow: inset 3px 0 0 var(--brand);
-}
-
-.store-request-card em {
-  justify-self: start;
-  padding: 2px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-3);
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-  font-style: normal;
-  font-weight: 700;
-  text-transform: capitalize;
-}
-
-.store-review-panel {
-  display: grid;
-  gap: var(--space-4);
-  padding: var(--space-5);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-
-.store-review-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-}
-.store-review-head p { color: var(--text-muted); font-size: var(--fs-sm); }
 .store-review-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 
 .store-edit-grid {
@@ -2872,8 +2672,6 @@ input[aria-invalid="true"],
 }
 
 @media (max-width: 980px) {
-  .store-queue-grid { grid-template-columns: 1fr; }
-  .store-request-list { position: static; }
   .category-edit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
