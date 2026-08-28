@@ -3612,3 +3612,12 @@ a.float-card:focus-visible { outline: none; box-shadow: var(--ring); }
   letter-spacing: 0.04em;
 }
 .decoration-actions { padding: var(--space-2) var(--space-3) var(--space-3); }
+
+/* ---- Danger action (store deletion) ------------------------------------- */
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--on-accent);
+}
+.btn-danger:hover { filter: brightness(0.92); }
+.btn-danger:disabled { opacity: 0.55; cursor: default; }

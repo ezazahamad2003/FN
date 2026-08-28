@@ -1774,6 +1774,7 @@ function renderStoreDetail(record) {
           <button class="btn btn-primary btn-sm" type="button" data-build-intake ${building ? "disabled" : ""}>
             ${building ? "Building…" : record.build ? "Re-run build" : "Build store now"}
           </button>
+          <button class="btn btn-danger btn-sm" type="button" data-delete-intake ${building ? "disabled" : ""}>Delete store</button>
         </div>
       </header>
       <section class="card card-pad store-products-panel" id="storeProductsPanel" hidden></section>
@@ -1871,6 +1872,48 @@ function renderStoreDetail(record) {
       removeDecoration.closest(".decoration-editor").remove();
       renumberIntakeDecorations(list);
       variantEditor.querySelector("[data-add-intake-decoration]")?.focus();
+    }
+  });
+
+  panel.querySelector("[data-delete-intake]")?.addEventListener("click", async (event) => {
+    const name = record.store.departmentName || "this store";
+    const productCount = (record.build?.products || []).length;
+    // Two explicit gates before anything leaves the browser: an itemized
+    // confirm, then the department name typed back verbatim.
+    const first = window.confirm(
+      `Delete the "${name}" store COMPLETELY?\n\nThis permanently removes:\n` +
+      `  • the Shopify collection and every product in it${productCount ? ` (${productCount} recorded)` : ""}\n` +
+      `  • the Google Drive folder (moved to Drive trash)\n` +
+      `  • this store request and its build history\n\nThere is no undo from this console.`
+    );
+    if (!first) return;
+    const typed = window.prompt(`Final check — type the department name exactly to delete it:\n\n${name}`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== name.toLowerCase()) {
+      window.alert("The name did not match. Nothing was deleted.");
+      return;
+    }
+
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Deleting…";
+    try {
+      const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmName: typed.trim() })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || "Could not delete the store.");
+      const problems = (payload.errors || []).length ? `\n\nCompleted with warnings:\n${payload.errors.join("\n")}` : "";
+      window.alert(
+        `"${name}" deleted: ${payload.deletedProducts.length} product${payload.deletedProducts.length === 1 ? "" : "s"}, ` +
+        `collection ${payload.collectionDeleted ? "removed" : "not found"}, Drive folder ${payload.driveFolderTrashed ? "trashed" : "not found"}.${problems}`
+      );
+      window.location.hash = "#/new-stores";
+    } catch (error) {
+      window.alert(error.message);
+      btn.disabled = false;
+      btn.textContent = "Delete store";
     }
   });
 

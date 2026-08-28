@@ -251,6 +251,49 @@ async function generateImage(options) {
   return openAIGenerateImage(options);
 }
 
+/* -----------------------------------------------------------------------------
+   Image EDITS (gpt-image-1): the decorated-product renderer.
+
+   Unlike generation, an edit takes the REAL inputs - the supplier's garment
+   photo and the department's actual logo files - and returns the same photo
+   with the artwork rendered as if genuinely printed/embroidered on the
+   fabric. input_fidelity "high" is what keeps logo text and small marks
+   faithful. Runs on direct OpenAI: the Azure resource has no image
+   deployment (gpt-image-1 is not offered in its region).
+   -------------------------------------------------------------------------- */
+async function editImage({ images, prompt, size = "1024x1024", quality = "high" }) {
+  if (!openAIConfigured()) {
+    throw new Error("OPENAI_API_KEY is required for image edits (gpt-image-1).");
+  }
+  if (!globalThis.fetch || !globalThis.FormData || !globalThis.Blob) {
+    throw new Error("Node 18 fetch, FormData, and Blob are required for image edits.");
+  }
+  const form = new FormData();
+  form.append("model", process.env.OPENAI_IMAGE_MODEL || "gpt-image-1");
+  images.forEach((image, index) => {
+    form.append("image[]", new Blob([image.buffer], { type: image.mimeType || "image/png" }), image.name || `image-${index}.png`);
+  });
+  form.append("prompt", prompt);
+  form.append("n", "1");
+  form.append("size", size);
+  form.append("quality", quality);
+  form.append("input_fidelity", "high");
+
+  const res = await globalThis.fetch("https://api.openai.com/v1/images/edits", {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    body: form
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = json.error?.message || JSON.stringify(json).slice(0, 400) || "unknown error";
+    throw new Error(`OpenAI image edit failed (${res.status}): ${detail}`);
+  }
+  const image = json.data?.[0];
+  if (!image?.b64_json) throw new Error("Image edit returned no image data.");
+  return Buffer.from(image.b64_json, "base64");
+}
+
 async function azureTranscribeAudio({ buffer, mimeType = "audio/webm", filename = "voice.webm", language = "en" }) {
   if (!azureAudioConfigured()) {
     throw new Error("Azure OpenAI voice input is not configured. Set AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT or AZURE_OPENAI_VOICE_DEPLOYMENT.");
@@ -319,6 +362,7 @@ async function azureTextToSpeech({ text, voice, speed = 1.04, format = "mp3" }) 
 }
 
 module.exports = {
+  editImage,
   azureTextToSpeech,
   azureTranscribeAudio,
   chatCompletion,

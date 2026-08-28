@@ -1,5 +1,5 @@
 const { PDFParse } = require("pdf-parse");
-const { generateImage, reason } = require("./azureOpenai");
+const { editImage, generateImage, reason } = require("./azureOpenai");
 
 // Provider-agnostic stand-in for the OpenAI SDK client this file used to build
 // directly.
@@ -355,6 +355,182 @@ ${knownFacts}`
     sizeChartHtml(product.sizeChart)
   ];
   return parts.filter(Boolean).join("\n");
+}
+
+/* -----------------------------------------------------------------------------
+   Decorated product renders.
+
+   Pasting a flat PNG onto a photo at fixed coordinates reads as a sticker -
+   wrong perspective, no fabric texture, and on unusual silhouettes the
+   artwork could land off the garment entirely. The primary renderer is now an
+   IMAGE EDIT: gpt-image-1 receives the real garment photo plus the actual
+   logo files and returns the same photo with the artwork genuinely printed
+   on the fabric, at the placement and size the intake specified.
+
+   The model is not trusted blind. Every render is verified by vision against
+   the ORIGINAL inputs - artwork faithful, placement right, size sane,
+   garment unchanged, nothing invented - and retried with the failure reasons
+   before the caller falls back to the deterministic composite.
+   -------------------------------------------------------------------------- */
+
+const DECORATED_RENDER_ATTEMPTS = 2;
+
+function decorationInstruction(decoration, imageIndex, method) {
+  const methodPhrase = /embroider/i.test(method || "")
+    ? "embroidered with visible thread texture and slightly raised stitching"
+    : /patch/i.test(method || "")
+      ? "applied as a sewn-on patch with a merrowed edge"
+      : "printed flat into the fabric";
+  return `Apply the artwork from image ${imageIndex} ${methodPhrase}, positioned ${decoration.guidance || `at the ${decoration.placementLabel || "left chest"}`}. Size: ${decoration.widthPhrase || "about 4 inches wide"}.`;
+}
+
+async function verifyDecoratedGarment(candidateBuffer, baseBuffer, decorations, { face = "front", sourceFace = "front" } = {}) {
+  const openai = client();
+  const uniqueLogos = [];
+  const seen = new Set();
+  for (const decoration of decorations) {
+    if (!seen.has(decoration.logoName)) {
+      seen.add(decoration.logoName);
+      uniqueLogos.push(decoration);
+    }
+  }
+  const expectations = decorations
+    .map((decoration, index) => `${index + 1}. "${decoration.logoName}" at ${decoration.placementLabel || "left chest"} (${decoration.widthPhrase || "small"})`)
+    .join("\n");
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Image 1 is a CANDIDATE product photo for a uniform store. Image 2 is the original blank garment photo it must match${face !== sourceFace ? ` (image 2 shows the ${sourceFace} of the garment; the candidate should show the SAME garment from the ${face})` : ""}. The remaining image(s) are the original artwork file(s).
+
+The candidate should show the ${face} of the same garment with this decoration:
+${expectations}
+
+Return JSON only:
+{
+  "garmentMatches": true|false,   // same garment, same color, same style as image 2 (ignore mirroring/small crop differences${face !== sourceFace ? `; the candidate legitimately shows the ${face} of it` : ""})
+  "artworkFaithful": true|false,  // every applied artwork reproduces its original file accurately: same shapes, colors, and layout, and every piece of text spelled EXACTLY as the original. Lettering that reads as different, garbled, or rearranged characters is ALWAYS unfaithful — soft focus is acceptable, wrong letters never are
+  "artworkProblems": "what differs from the original artwork, if anything",
+  "placementCorrect": true|false, // each artwork sits at its stated position
+  "placementSeen": "where the artwork actually sits",
+  "sizeReasonable": true|false,   // artwork size roughly matches the stated width for this garment
+  "looksPrinted": true|false,     // artwork looks genuinely applied to the fabric (follows surface, plausible lighting), not a flat sticker pasted on top
+  "extraArtwork": true|false,     // any text, logo, or graphic that is NOT part of the requested decoration
+  "onGarment": true|false         // all artwork fully on the garment fabric, nothing hanging into the background
+}`
+          },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${candidateBuffer.toString("base64")}` } },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${baseBuffer.toString("base64")}` } },
+          ...uniqueLogos.map((decoration) => ({
+            type: "image_url",
+            image_url: { url: `data:${decoration.logoMime || "image/png"};base64,${decoration.logoBuffer.toString("base64")}` }
+          }))
+        ]
+      }
+    ],
+    max_tokens: 400
+  });
+
+  let parsed = {};
+  try {
+    parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() || "{}") || {};
+  } catch {
+    // An unreadable verdict must not ship an unverified render; treat as fail.
+    return { usable: false, reasons: ["verification response was unreadable"] };
+  }
+  const reasons = [];
+  if (parsed.garmentMatches !== true) reasons.push("the garment changed from the original photo");
+  if (parsed.artworkFaithful !== true) reasons.push(`artwork not faithful (${parsed.artworkProblems || "differs from the original file"})`);
+  if (parsed.placementCorrect !== true) reasons.push(`wrong placement (sits at ${parsed.placementSeen || "an unknown position"})`);
+  if (parsed.sizeReasonable !== true) reasons.push("artwork size is off");
+  if (parsed.extraArtwork === true) reasons.push("extra artwork or text was invented");
+  if (parsed.onGarment !== true) reasons.push("artwork hangs off the garment");
+  return { usable: reasons.length === 0, reasons, looksPrinted: parsed.looksPrinted === true };
+}
+
+/**
+ * Render the garment photo with its decorations actually applied.
+ * `decorations`: [{ logoBuffer, logoMime, logoName, placementLabel, guidance, widthPhrase }].
+ *
+ * Two modes:
+ *   • apply (no draftBuffer): the model places the artwork itself — used for
+ *     cross-face renders (turn the supplier's front photo around and decorate
+ *     the back), where nothing exists to pre-composite onto.
+ *   • integrate (draftBuffer given): the exact artwork was already composited
+ *     pixel-perfectly at the right spot and size; the model only re-renders
+ *     it INTO the fabric. This is the primary path — the model draws small
+ *     logo text badly from scratch, but integrating existing pixels keeps
+ *     content ours and realism its job.
+ *
+ * Returns the verified render, or null when every attempt failed verification
+ * (the caller then falls back to the deterministic composite draft).
+ */
+async function renderDecoratedGarment({ baseBuffer, draftBuffer = null, decorations, face = "front", sourceFace = "front", decorationMethod = "", onLog }) {
+  const log = (message) => onLog && onLog(message);
+  const uniqueLogos = [];
+  const indexByName = new Map();
+  for (const decoration of decorations) {
+    if (!indexByName.has(decoration.logoName)) {
+      indexByName.set(decoration.logoName, uniqueLogos.length + 2); // image 1 is the garment
+      uniqueLogos.push(decoration);
+    }
+  }
+
+  const methodPhrase = /embroider/i.test(decorationMethod) ? "embroidery" : "garment printing";
+  let basePrompt;
+  if (draftBuffer) {
+    basePrompt = `Image 1 is a product photo where the artwork has already been placed at exactly the right position and size, but it currently sits on top like a flat sticker. Re-render this exact photo so every piece of artwork looks genuinely applied to the fabric as real ${methodPhrase}: it follows the fabric's surface, weave, and folds, picks up the photo's lighting and shading, and its edges meld naturally with the garment. Keep every artwork's position, size, and design EXACTLY as shown — the remaining image(s) are the original artwork files for reference; never redraw, respell, move, or resize the artwork. Change nothing else: same garment, same color, same framing, same background, no added text or graphics.`;
+  } else {
+    const instructions = decorations
+      .map((decoration) => decorationInstruction(decoration, indexByName.get(decoration.logoName), decorationMethod))
+      .join(" ");
+    // A back placement usually starts from the supplier's FRONT photo: the
+    // model turns the exact garment around, which keeps front and back
+    // mockups looking like the same product in a way a text-prompted
+    // generation never did.
+    const viewPhrase = face !== sourceFace
+      ? `Image 1 is a professional product photo of a blank garment shown from the ${sourceFace}. First show this SAME garment photographed from the ${face} - identical color, fabric, cut, framing, lighting, and background, laid out the same way${face === "back" ? ", with no collar placket, buttons, zipper, or other front-only details visible" : ""}.`
+      : `Image 1 is a professional product photo of a blank garment, shown from the ${face}.`;
+    basePrompt = `${viewPhrase} ${instructions} Reproduce each artwork EXACTLY as in its file: identical shapes, colors, proportions, and text, sharp and legible. The decoration must look genuinely part of the garment - it follows the fabric surface and folds and picks up the photo's lighting, with the subtle texture of real ${methodPhrase}. Change NOTHING else: same garment, same color, same framing, same background, no added text or graphics anywhere else.`;
+  }
+
+  let prompt = basePrompt;
+  for (let attempt = 1; attempt <= DECORATED_RENDER_ATTEMPTS; attempt++) {
+    let candidate;
+    try {
+      candidate = await editImage({
+        images: [
+          { buffer: draftBuffer || baseBuffer, mimeType: "image/png", name: "garment.png" },
+          ...uniqueLogos.map((decoration, index) => ({
+            buffer: decoration.logoBuffer,
+            mimeType: decoration.logoMime || "image/png",
+            name: decoration.logoName || `logo-${index}.png`
+          }))
+        ],
+        prompt
+      });
+    } catch (error) {
+      log(`decorated render attempt ${attempt} failed (${error.message})`);
+      continue;
+    }
+    const verdict = await verifyDecoratedGarment(candidate, baseBuffer, decorations, { face, sourceFace }).catch((error) => {
+      log(`render verification errored (${error.message}); treating as unverified`);
+      return { usable: false, reasons: ["verification unavailable"] };
+    });
+    if (verdict.usable) {
+      log(`decorated render accepted on attempt ${attempt}`);
+      return candidate;
+    }
+    log(`decorated render attempt ${attempt} rejected: ${verdict.reasons.join("; ")}`);
+    prompt = `${basePrompt} A previous attempt was rejected because: ${verdict.reasons.join("; ")}. Correct exactly these problems.`;
+  }
+  return null;
 }
 
 /* -----------------------------------------------------------------------------
@@ -748,5 +924,6 @@ module.exports = {
   generateBlankGarment,
   extractSupplierFacts,
   generateProductDescription,
+  renderDecoratedGarment,
   planCustomProduct
 };

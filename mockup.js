@@ -37,22 +37,30 @@ const PLACEMENTS = {
   // Sleeves on a flat-lay front view: wearer's left is the viewer's right.
   "left-sleeve": { cx: 0.875, cy: 0.245, w: 0.085, h: 0.09 },
   "right-sleeve": { cx: 0.125, cy: 0.245, w: 0.085, h: 0.09 },
+  // Long-sleeve garments lay their arms DOWN the sides, so the sleeve target
+  // sits mid-forearm - the short-sleeve coordinates hit the shoulder seam or
+  // the backdrop on these cuts.
+  "left-sleeve-long": { cx: 0.885, cy: 0.44, w: 0.08, h: 0.09 },
+  "right-sleeve-long": { cx: 0.115, cy: 0.44, w: 0.08, h: 0.09 },
   // Caps: centered on the front panel, above the brim.
   "front-panel": { cx: 0.5, cy: 0.44, w: 0.34, h: 0.22 },
   // Cap side decoration sits over the wearer's left temple panel.
   "cap-side": { cx: 0.74, cy: 0.5, w: 0.16, h: 0.14 },
   // Beanies: decoration sits on the turned-up cuff, near the bottom edge.
   "beanie-cuff": { cx: 0.5, cy: 0.74, w: 0.3, h: 0.14 },
-  // Legwear: on the thigh, well clear of the crotch seam (~0.3 down a flat
-  // lay). The old left-chest default put this at 0.34 — right on the crotch.
-  "left-thigh": { cx: 0.7, cy: 0.46, w: 0.16, h: 0.08 },
-  "right-thigh": { cx: 0.3, cy: 0.46, w: 0.16, h: 0.08 }
+  // Legwear: OUTER thigh, well clear of the crotch seam. On a flat lay the
+  // outer face of each leg sits near the garment's edge, not at 0.3/0.7 —
+  // those coordinates drifted the artwork toward the inseam.
+  "left-thigh": { cx: 0.78, cy: 0.4, w: 0.15, h: 0.08 },
+  "right-thigh": { cx: 0.22, cy: 0.4, w: 0.15, h: 0.08 }
 };
 
 // "knit hat" and "watch cap" contain hat/cap, so beanies must be tested first.
 const BEANIE_TYPES = /\b(beanie|toque|knit\s*(hat|cap)|watch\s*cap|skull\s*cap)\b/i;
 const CAP_TYPES = /\b(hat|cap|visor)\b/i;
 const LEG_TYPES = /\b(pants?|trousers?|sweatpants?|joggers?|shorts?|bottoms?)\b/i;
+// Cuts whose sleeves hang down the sides of a flat lay instead of out.
+const LONG_SLEEVE_TYPES = /\b(long\s*sleeve|hoodie|hooded|sweatshirt|crewneck|jacket|job\s*shirt|coat)\b/i;
 
 // Map free-text policy wording onto a placement key. Defaults to left chest,
 // the industry-standard uniform placement, when the policy does not say.
@@ -74,8 +82,9 @@ function resolvePlacement(product) {
   // fall-through still landed it on the left chest — the single most common
   // fire-tee decoration, silently misplaced.
   if (/((center|centre|middle|full|upper|top)[\s-]?back|\bback\b)/.test(text)) return "center-back";
-  if (/(left[\s-]?sleeve|both[\s-]?sleeves)/.test(text)) return "left-sleeve";
-  if (/right[\s-]?sleeve/.test(text)) return "right-sleeve";
+  const longSleeved = LONG_SLEEVE_TYPES.test(garment);
+  if (/(left[\s-]?sleeve|both[\s-]?sleeves)/.test(text)) return longSleeved ? "left-sleeve-long" : "left-sleeve";
+  if (/right[\s-]?sleeve/.test(text)) return longSleeved ? "right-sleeve-long" : "right-sleeve";
 
   if (/(full[\s-]?front|full[\s-]?chest|across the (front|chest)|large front)/.test(text)) return "full-front";
   if (/(center|centre|middle)[\s-]?(chest|front)/.test(text)) return "center-chest";
@@ -201,24 +210,42 @@ async function prepareLogo(logoBuffer, maxWidth, maxHeight) {
     .toBuffer({ resolveWithObject: true });
 }
 
-// Locate the garment within the render by trimming the studio-white backdrop.
+// Locate the garment within the render by trimming the studio backdrop.
 // Placement is then expressed against this box, so a garment shot at 60% of the
 // frame gets the same proportional logo as one shot at 90%.
+//
+// The backdrop is NOT always white - supplier photos ship on light greys and
+// off-whites, and assuming #ffffff made the trim fail, the box fall back to
+// the whole frame, and the artwork land beside the garment. Sample the
+// actual corner color first and trim against that.
 async function garmentBox(baseBuffer, baseMeta) {
   const fullFrame = { left: 0, top: 0, width: baseMeta.width, height: baseMeta.height };
   try {
-    const { info } = await sharp(baseBuffer)
-      .trim({ background: "#ffffff", threshold: 12 })
+    const { data, info } = await sharp(baseBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const sample = (x, y) => {
+      const i = (y * info.width + x) * info.channels;
+      return [data[i], data[i + 1], data[i + 2]];
+    };
+    const corners = [
+      sample(2, 2),
+      sample(info.width - 3, 2),
+      sample(2, info.height - 3),
+      sample(info.width - 3, info.height - 3)
+    ];
+    const background = corners[0].map((_, channel) =>
+      Math.round(corners.reduce((sum, corner) => sum + corner[channel], 0) / corners.length)
+    );
+    const trimmed = await sharp(baseBuffer)
+      .trim({ background: { r: background[0], g: background[1], b: background[2] }, threshold: 18 })
       .toBuffer({ resolveWithObject: true });
-    // A trim that keeps almost nothing means the backdrop wasn't white (or the
-    // render is unusable); fall back to the frame rather than placing the logo
-    // against a bogus box.
-    if (info.width >= baseMeta.width * 0.2 && info.height >= baseMeta.height * 0.2) {
+    // A trim that keeps almost nothing means the render is unusable; fall
+    // back to the frame rather than placing the logo against a bogus box.
+    if (trimmed.info.width >= baseMeta.width * 0.2 && trimmed.info.height >= baseMeta.height * 0.2) {
       return {
-        left: Math.max(0, -(info.trimOffsetLeft || 0)),
-        top: Math.max(0, -(info.trimOffsetTop || 0)),
-        width: info.width,
-        height: info.height
+        left: Math.max(0, -(trimmed.info.trimOffsetLeft || 0)),
+        top: Math.max(0, -(trimmed.info.trimOffsetTop || 0)),
+        width: trimmed.info.width,
+        height: trimmed.info.height
       };
     }
   } catch (error) {

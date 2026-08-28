@@ -53,7 +53,7 @@ const {
   updateCustomerIntake
 } = require("./customerIntakes");
 const { azureTextToSpeech, azureTranscribeAudio, generateImage } = require("./azureOpenai");
-const { startIntakeBuild } = require("./intakeBuild");
+const { isBuildActive, startIntakeBuild } = require("./intakeBuild");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -64,6 +64,7 @@ const {
   deleteCollection,
   deleteProduct,
   ensureManualCollectionWithImage,
+  gid,
   shopifyConnected,
   startTokenAutoRefresh,
   uploadProductImages,
@@ -578,6 +579,89 @@ app.get("/api/customer-intakes/:id/drive", requireAdminToken, async (req, res) =
       folder: { id: root.id, name: root.name, url: root.webViewLink || `https://drive.google.com/drive/folders/${root.id}` },
       groups
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/* -----------------------------------------------------------------------------
+   Delete a customer store COMPLETELY: every product, the Shopify collection,
+   the department's Drive folder, and the intake record itself. This is the
+   one deliberately destructive path in the intake pipeline, so it demands
+   the exact department name typed back (the console asks twice before even
+   sending the request) and refuses while a build is running.
+   -------------------------------------------------------------------------- */
+app.delete("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
+  try {
+    const record = await getCustomerIntake(req.params.id);
+    const departmentName = record.store.departmentName || "";
+
+    if (isBuildActive(req.params.id)) {
+      return res.status(409).json({ error: "A build for this store is running right now. Wait for it to finish, then delete." });
+    }
+    const confirmName = String(req.body?.confirmName || "").trim();
+    if (!confirmName || confirmName.toLowerCase() !== departmentName.toLowerCase()) {
+      return res.status(400).json({ error: `Deletion not confirmed: send confirmName matching "${departmentName}".` });
+    }
+
+    const summary = { departmentName, deletedProducts: [], collectionDeleted: false, driveFolderTrashed: false, recordTrashed: false, errors: [] };
+
+    // Products: everything in the collection plus everything the build
+    // recorded (a product whose collection-add failed is only in the record).
+    const productIds = new Set();
+    for (const product of record.build?.products || []) {
+      if (product?.productId) productIds.add(String(product.productId));
+    }
+    if (record.shopifyCollection?.id) {
+      try {
+        const collection = await getCollectionWithProducts(record.shopifyCollection.id);
+        for (const product of collection.products || []) {
+          if (product?.id) productIds.add(String(product.id));
+        }
+      } catch (error) {
+        summary.errors.push(`Could not list collection products: ${error.message}`);
+      }
+    }
+    for (const productId of productIds) {
+      try {
+        await deleteProduct(gid("Product", productId));
+        summary.deletedProducts.push(productId);
+      } catch (error) {
+        summary.errors.push(`Product ${productId}: ${error.message}`);
+      }
+    }
+
+    if (record.shopifyCollection?.id) {
+      try {
+        await deleteCollection(record.shopifyCollection.id);
+        summary.collectionDeleted = true;
+      } catch (error) {
+        summary.errors.push(`Collection: ${error.message}`);
+      }
+    }
+
+    // Drive: the department's asset folder (trash, recoverable for 30 days),
+    // then the intake record file itself.
+    try {
+      const folder = departmentName && process.env.GDRIVE_PARENT_FOLDER_ID
+        ? await findFolder(departmentName, process.env.GDRIVE_PARENT_FOLDER_ID)
+        : null;
+      if (folder) {
+        await trashFile(folder.id);
+        summary.driveFolderTrashed = true;
+      }
+    } catch (error) {
+      summary.errors.push(`Drive folder: ${error.message}`);
+    }
+    try {
+      await trashFile(record.id);
+      summary.recordTrashed = true;
+    } catch (error) {
+      summary.errors.push(`Intake record: ${error.message}`);
+    }
+
+    console.log(`[intake-delete] ${departmentName}: ${summary.deletedProducts.length} products, collection ${summary.collectionDeleted}, drive ${summary.driveFolderTrashed}, record ${summary.recordTrashed}${summary.errors.length ? `, errors: ${summary.errors.join(" | ")}` : ""}`);
+    res.json(summary);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
