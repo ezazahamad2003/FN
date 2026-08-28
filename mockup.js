@@ -254,16 +254,148 @@ async function garmentBox(baseBuffer, baseMeta) {
   return fullFrame;
 }
 
+/* Fold the fabric's own light back into the artwork so a composite reads as
+   printed rather than pasted: the region under the logo is sampled as a
+   blurred luminance map and modulated onto the logo's colors, so garment
+   folds, seams, and shading show through the print exactly where they run. */
+async function fabricBlend(baseBuffer, logoPng, info, left, top) {
+  try {
+    // prepareLogo hands back PNG bytes; work on raw RGBA.
+    const decoded = await sharp(logoPng).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    const region = await sharp(baseBuffer)
+      .extract({ left, top, width: decoded.info.width, height: decoded.info.height })
+      .greyscale()
+      .blur(1.4)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const lum = region.data;
+    const lumChannels = region.info.channels; // greyscale → 1
+    const count = decoded.info.width * decoded.info.height;
+    let sum = 0;
+    for (let p = 0; p < count; p++) sum += lum[p * lumChannels];
+    const mean = Math.max(1, sum / count);
+
+    const out = decoded.data;
+    for (let p = 0; p < count; p++) {
+      const i = p * 4;
+      if (out[i + 3] === 0) continue;
+      // Mostly flat ink with a gentle fabric response, clamped so folds shade
+      // the print subtly without muddying the artwork's colors.
+      const factor = Math.min(1.12, Math.max(0.72, 0.8 + 0.2 * (lum[p * lumChannels] / mean)));
+      out[i] = Math.min(255, Math.round(out[i] * factor));
+      out[i + 1] = Math.min(255, Math.round(out[i + 1] * factor));
+      out[i + 2] = Math.min(255, Math.round(out[i + 2] * factor));
+    }
+    // A whisper of blur takes the razor edge off so the print sits IN the
+    // fabric; small enough that lettering stays crisp.
+    return sharp(out, { raw: { width: decoded.info.width, height: decoded.info.height, channels: 4 } })
+      .blur(0.4)
+      .png()
+      .toBuffer();
+  } catch {
+    // Blending is polish, never a requirement.
+    return logoPng;
+  }
+}
+
+/* ── Fabric snap ─────────────────────────────────────────────────────────────
+   No matter how a placement was computed — measured geometry, static
+   coordinates, a leaning garment — the FINAL box must sit on cloth. Sample
+   the backdrop color from the corners once, then slide any box that overlaps
+   the backdrop toward the garment's center until it lands ≥90% on fabric. */
+
+async function fabricMap(baseBuffer) {
+  const { data, info } = await sharp(baseBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const sample = (x, y) => {
+    const i = (y * info.width + x) * info.channels;
+    return [data[i], data[i + 1], data[i + 2]];
+  };
+  const corners = [sample(2, 2), sample(info.width - 3, 2), sample(2, info.height - 3), sample(info.width - 3, info.height - 3)];
+  const background = corners[0].map((_, channel) => corners.reduce((sum, corner) => sum + corner[channel], 0) / corners.length);
+  return { data, info, background };
+}
+
+function backdropFraction(map, left, top, width, height) {
+  const { data, info, background } = map;
+  let backdrop = 0;
+  let total = 0;
+  const x0 = Math.max(0, Math.round(left));
+  const y0 = Math.max(0, Math.round(top));
+  const x1 = Math.min(info.width, Math.round(left + width));
+  const y1 = Math.min(info.height, Math.round(top + height));
+  for (let y = y0; y < y1; y += 2) {
+    for (let x = x0; x < x1; x += 2) {
+      const i = (y * info.width + x) * info.channels;
+      const distance =
+        Math.abs(data[i] - background[0]) + Math.abs(data[i + 1] - background[1]) + Math.abs(data[i + 2] - background[2]);
+      if (distance < 36) backdrop++;
+      total++;
+    }
+  }
+  return total === 0 ? 1 : backdrop / total;
+}
+
+function snapToFabric(map, box, left, top, width, height) {
+  if (backdropFraction(map, left, top, width, height) <= 0.1) return { left, top };
+  // Slide toward the garment's center in small steps; take the first clean
+  // position, or the cleanest seen if none fully clears.
+  const centerX = box.left + box.width / 2 - width / 2;
+  const centerY = box.top + box.height / 2 - height / 2;
+  let best = { left, top, fraction: backdropFraction(map, left, top, width, height) };
+  for (let step = 1; step <= 14; step++) {
+    const t = (step / 14) * 0.6;
+    const candidateLeft = Math.round(left + (centerX - left) * t);
+    const candidateTop = Math.round(top + (centerY - top) * t * 0.4); // mostly horizontal
+    const fraction = backdropFraction(map, candidateLeft, candidateTop, width, height);
+    if (fraction <= 0.1) return { left: candidateLeft, top: candidateTop };
+    if (fraction < best.fraction) best = { left: candidateLeft, top: candidateTop, fraction };
+  }
+  return { left: best.left, top: best.top };
+}
+
+/**
+ * Composite decorations at MEASURED positions. `placements` is
+ * [{ logoBuffer, box: {left,top,width,height}, maxWidth, maxHeight, anchorTop }]
+ * in absolute pixels — boxes come from vision-measured garment geometry
+ * (productImages.js), so the artwork lands where a decorator would actually
+ * put it, at its true physical size, centered in its spot (large graphics
+ * hang from the top of theirs).
+ */
+async function compositeDecorationsAt(baseBuffer, placements) {
+  const baseMeta = await sharp(baseBuffer).metadata();
+  const map = await fabricMap(baseBuffer);
+  const garment = await garmentBox(baseBuffer, baseMeta);
+  const layers = [];
+  for (const placement of placements) {
+    const { data: logo, info } = await prepareLogo(
+      placement.logoBuffer,
+      Math.max(1, Math.round(placement.maxWidth)),
+      Math.max(1, Math.round(placement.maxHeight))
+    );
+    const box = placement.box;
+    let left = Math.min(
+      Math.max(Math.round(box.left + (box.width - info.width) / 2), 0),
+      baseMeta.width - info.width
+    );
+    const topRaw = placement.anchorTop ? box.top : box.top + (box.height - info.height) / 2;
+    let top = Math.min(Math.max(Math.round(topRaw), 0), baseMeta.height - info.height);
+    ({ left, top } = snapToFabric(map, garment, left, top, info.width, info.height));
+    const blended = await fabricBlend(baseBuffer, logo, info, left, top);
+    layers.push({ input: blended, left, top });
+  }
+  if (!layers.length) return sharp(baseBuffer).png().toBuffer();
+  return sharp(baseBuffer).composite(layers).png().toBuffer();
+}
+
 /**
  * Composite one or more decorations onto a single garment photo in one pass.
- * `decorations` is [{ logoBuffer, placementKey }] — a crest on the left chest
- * AND a full mark across the back of a back-view base are two entries, each
- * prepared against the same garment bounding box so proportions stay
- * consistent across every spot.
+ * `decorations` is [{ logoBuffer, placementKey }] — the static-coordinate
+ * fallback for when garment geometry could not be measured.
  */
 async function compositeDecorationsOnGarment(baseBuffer, decorations) {
   const baseMeta = await sharp(baseBuffer).metadata();
   const box = await garmentBox(baseBuffer, baseMeta);
+  const map = await fabricMap(baseBuffer);
 
   const layers = [];
   for (const decoration of decorations) {
@@ -276,15 +408,17 @@ async function compositeDecorationsOnGarment(baseBuffer, decorations) {
 
     // Clamp to the garment box so an extreme placement can never hang the
     // artwork off the garment and onto the backdrop.
-    const left = Math.min(
+    let left = Math.min(
       Math.max(Math.round(box.left + spec.cx * box.width - info.width / 2), box.left),
       box.left + box.width - info.width
     );
-    const top = Math.min(
+    let top = Math.min(
       Math.max(Math.round(box.top + spec.cy * box.height - info.height / 2), box.top),
       box.top + box.height - info.height
     );
-    layers.push({ input: logo, left, top });
+    ({ left, top } = snapToFabric(map, box, left, top, info.width, info.height));
+    const blended = await fabricBlend(baseBuffer, logo, info, left, top);
+    layers.push({ input: blended, left, top });
   }
 
   if (!layers.length) return sharp(baseBuffer).png().toBuffer();
@@ -296,7 +430,9 @@ async function compositeLogoOnGarment(baseBuffer, logoBuffer, placementKey) {
 }
 
 module.exports = {
+  compositeDecorationsAt,
   compositeDecorationsOnGarment,
   compositeLogoOnGarment,
+  garmentBox,
   resolvePlacement
 };

@@ -25,9 +25,10 @@
    -------------------------------------------------------------------------- */
 
 const sharp = require("sharp");
-const { generateBlankGarment, generateProductDescription, renderDecoratedGarment } = require("./ai");
+const { generateBlankGarment, generateProductDescription } = require("./ai");
 const { findSupplierBlank } = require("./blanks");
-const { compositeDecorationsOnGarment, resolvePlacement } = require("./mockup");
+const { resolvePlacement } = require("./mockup");
+const { renderFaceImage } = require("./productImages");
 const { placementFace, placementGuidance } = require("./placements");
 const { intakeTags } = require("./intake");
 const {
@@ -76,30 +77,6 @@ function logoKey(value) {
   return String(value || "").toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, "");
 }
 
-/* Small artwork (≲5 inches) ships as the EXACT positioned composite: at that
-   scale the pixel-faithful paste reads as a crisp printed crest, while an
-   image model consistently garbles the fine lettering it has to redraw. The
-   model render is reserved for standard/large artwork, where its fabric
-   realism wins and big lettering survives. */
-function tierIsSmall(tier) {
-  const value = String(tier || "");
-  if (!value || value === "small") return true;
-  if (value.startsWith("custom")) {
-    const inches = parseFloat((value.match(/(\d+(?:\.\d+)?)/) || [])[1]);
-    return Number.isFinite(inches) ? inches <= 5 : false;
-  }
-  return false;
-}
-
-/* Tier key → the size wording the decorated-render prompt anchors scale to.
-   Fractions of garment width matter more to an image model than inches. */
-function tierWidthPhrase(tier) {
-  const value = String(tier || "");
-  if (value.startsWith("custom")) return value.replace(/^custom:\s*/i, "").trim() || "about 4 inches wide";
-  if (value === "large") return "about 8-10 inches (20-25 cm) wide — a large graphic spanning most of the printable area";
-  if (value === "standard") return "about 6 inches (15 cm) wide — center-chest / cap-front scale, roughly a third of the garment's width";
-  return "about 4 inches (10 cm) wide — a small chest, sleeve, or leg crest, roughly one-fifth of the garment's width";
-}
 
 function decodeLogos(record) {
   const runs = [];
@@ -488,89 +465,43 @@ async function runBuild(intakeId, build, options) {
         for (const choice of choiceLogos) {
           const logoFor = (decoration) =>
             decorations.indexOf(decoration) === choiceIndex && choice ? choice : decoration.logos[0];
-          const faceItems = (faceDecos) =>
-            faceDecos.flatMap((decoration) =>
-              decoration.keys.map((placementKey) => ({ logoBuffer: logoFor(decoration).buffer, placementKey }))
-            );
-          const renderDecosFor = (faceDecos) =>
-            faceDecos.map((decoration) => {
-              const logo = logoFor(decoration);
-              return {
-                logoBuffer: logo.buffer,
-                logoMime: logo.mimetype,
-                logoName: logo.originalName,
-                placementLabel: decoration.label,
-                guidance: placementGuidance(decoration.label, decoration.tier),
-                widthPhrase: tierWidthPhrase(decoration.tier)
-              };
-            });
+          const faceDecorations = (faceDecos) =>
+            faceDecos.map((decoration) => ({
+              logo: logoFor(decoration),
+              label: decoration.label,
+              keys: decoration.keys,
+              tier: decoration.tier,
+              guidance: placementGuidance(decoration.label, decoration.tier)
+            }));
           const renderLog = (message) => log(build, `${title}: ${message}`);
 
-          /* Decorated views. Same-face: composite the EXACT artwork at the
-             exact spot first (pixel-faithful, never misspells), then the
-             model re-renders it INTO the fabric; verification compares the
-             result against the original photo and artwork. Cross-face (back
-             from a front photo): the model turns the garment around and
-             applies the artwork, with the composite-on-generated-blank as
-             the fallback chain. A render that never verifies ships as the
-             positioned composite draft - correct, just less pretty. */
+          /* Decorated views come from the shared producer (productImages.js):
+             vision-measured placement + fabric-blended composites for small
+             artwork, verified model renders for standard/large, with the
+             measured composite as the guaranteed fallback. */
           const images = [];
           if (frontDecos.length && frontBase) {
-            const draft = await compositeDecorationsOnGarment(frontBase, faceItems(frontDecos));
-            let buffer = draft;
-            if (frontDecos.every((decoration) => tierIsSmall(decoration.tier))) {
-              log(build, `${title}: small front artwork ships as the exact positioned composite`);
-            } else {
-              const rendered = await renderDecoratedGarment({
-                baseBuffer: frontBase,
-                draftBuffer: draft,
-                decorations: renderDecosFor(frontDecos),
-                face: "front",
-                sourceFace: "front",
-                decorationMethod: product.decorationMethod,
-                onLog: renderLog
-              });
-              if (rendered) buffer = rendered;
-              else log(build, `${title}: front render did not verify; shipping the positioned composite`);
-            }
-            images.push({ face: "front", buffer });
+            const produced = await renderFaceImage({
+              baseBuffer: frontBase,
+              sourceFace: "front",
+              face: "front",
+              decorations: faceDecorations(frontDecos),
+              method: product.decorationMethod,
+              onLog: renderLog
+            });
+            images.push({ face: "front", buffer: produced.buffer });
           }
           if (backDecos.length) {
-            let buffer = null;
-            if (backDecos.every((decoration) => tierIsSmall(decoration.tier))) {
-              const blank = await ensureBackBlank();
-              buffer = await compositeDecorationsOnGarment(blank, faceItems(backDecos));
-              log(build, `${title}: small back artwork ships as the exact positioned composite`);
-            } else {
-              if (frontBase) {
-                buffer = await renderDecoratedGarment({
-                  baseBuffer: frontBase,
-                  decorations: renderDecosFor(backDecos),
-                  face: "back",
-                  sourceFace: "front",
-                  decorationMethod: product.decorationMethod,
-                  onLog: renderLog
-                });
-              }
-              if (!buffer) {
-                const blank = await ensureBackBlank();
-                const draft = await compositeDecorationsOnGarment(blank, faceItems(backDecos));
-                buffer = await renderDecoratedGarment({
-                  baseBuffer: blank,
-                  draftBuffer: draft,
-                  decorations: renderDecosFor(backDecos),
-                  face: "back",
-                  sourceFace: "back",
-                  decorationMethod: product.decorationMethod,
-                  onLog: renderLog
-                });
-                if (!buffer) {
-                  log(build, `${title}: back render did not verify; shipping the positioned composite`);
-                  buffer = draft;
-                }
-              }
-            }
-            images.push({ face: "back", buffer });
+            const produced = await renderFaceImage({
+              baseBuffer: frontBase || (await ensureBackBlank()),
+              sourceFace: frontBase ? "front" : "back",
+              face: "back",
+              decorations: faceDecorations(backDecos),
+              method: product.decorationMethod,
+              getBackBlank: ensureBackBlank,
+              onLog: renderLog
+            });
+            images.push({ face: "back", buffer: produced.buffer });
           }
           // Back-only products with a supplier photo keep the blank front as
           // a free, real secondary view.

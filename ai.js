@@ -375,6 +375,96 @@ ${knownFacts}`
 
 const DECORATED_RENDER_ATTEMPTS = 2;
 
+/* -----------------------------------------------------------------------------
+   Garment geometry.
+
+   Fixed fractional coordinates cannot know whether a shirt's sleeves hang
+   down or stick out, where a cap's front panel starts, or how wide the
+   garment physically is - which is exactly how patches ended up on shoulder
+   seams and back graphics grew past their tier. So the base photo is
+   MEASURED once: vision returns the patch-ready rectangle for each needed
+   spot plus the garment's real-world width, and placement/sizing become
+   arithmetic (4-inch crest on a 24-inch hoodie = 1/6 of its width).
+   -------------------------------------------------------------------------- */
+
+const SPOT_DESCRIPTIONS = {
+  "left-chest": "the wearer's LEFT chest (viewer's right side of the photo), where a small uniform crest sits — below the shoulder, above any pocket, clear of plackets and zippers",
+  "right-chest": "the wearer's RIGHT chest (viewer's left side of the photo), same rules as the other chest spot",
+  "center-chest": "centered on the chest, clear of collar and placket",
+  "full-front": "the large central print area of the front torso",
+  "center-back": "the upper-back print area: horizontally centered, starting a couple of inches below the collar/hood seam and covering the shoulder-blade region",
+  "left-sleeve": "the OUTER FACE of the wearer's LEFT sleeve (viewer's right), centered on the upper-arm section of the sleeve about 3-4 inches BELOW the shoulder seam — the box must sit fully inside the sleeve outline and must not touch or cross the shoulder seam or the garment body",
+  "right-sleeve": "the OUTER FACE of the wearer's RIGHT sleeve (viewer's left), centered on the upper-arm section of the sleeve about 3-4 inches BELOW the shoulder seam — the box must sit fully inside the sleeve outline and must not touch or cross the shoulder seam or the garment body",
+  "front-panel": "the front panel of the cap, centered above the brim",
+  "cap-side": "the side panel of the cap over the wearer's left temple",
+  "beanie-cuff": "the turned-up cuff of the beanie, front center",
+  "left-thigh": "the OUTER thigh of the wearer's LEFT leg (viewer's right leg), clear of pockets and the inseam",
+  "right-thigh": "the OUTER thigh of the wearer's RIGHT leg (viewer's left leg), clear of pockets and the inseam"
+};
+// Long-sleeve alias keys measure the same spot as their base key.
+SPOT_DESCRIPTIONS["left-sleeve-long"] = SPOT_DESCRIPTIONS["left-sleeve"];
+SPOT_DESCRIPTIONS["right-sleeve-long"] = SPOT_DESCRIPTIONS["right-sleeve"];
+
+/**
+ * Measure a garment photo: overall garment box, physical width estimate, and
+ * a patch-ready rectangle per requested spot key. All boxes are fractions of
+ * the IMAGE (x, y = top-left corner). Returns null on any failure — callers
+ * fall back to the static coordinate table.
+ */
+async function analyzeGarmentGeometry(baseBuffer, spotKeys = []) {
+  const keys = [...new Set(spotKeys)].filter((key) => SPOT_DESCRIPTIONS[key]);
+  const spotLines = keys.map((key) => `  "${key}": ${SPOT_DESCRIPTIONS[key]}`).join("\n");
+  const openai = client();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `This is a product photo of a garment. Measure it precisely.
+
+Return JSON only:
+{
+  "garment": {"x": 0-1, "y": 0-1, "w": 0-1, "h": 0-1},   // tight bounding box of the garment itself, as fractions of the whole image
+  "garmentWidthInches": number,                            // physical width of the garment as laid out, in inches (adult tee ~20-22, hoodie ~23-25, cap ~8-9, pants leg spread varies)
+  "spots": {
+${spotLines ? spotLines.replace(/^/gm, "  ") : ""}
+  }
+}
+
+Each spot value is {"x","y","w","h"} — the rectangle (fractions of the whole image) where a garment decorator would actually apply artwork at that location, sized like the real print/patch area. Every spot rectangle MUST lie entirely inside the garment rectangle, on fabric — never on the background. Use null for a spot that is not visible in this photo. Be precise about left/right: "wearer's left" is the VIEWER'S RIGHT in a front-facing photo.`
+          },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${baseBuffer.toString("base64")}` } }
+        ]
+      }
+    ],
+    max_tokens: 600
+  });
+
+  try {
+    const parsed = parseJsonObject(response.choices[0]?.message?.content?.trim() || "{}") || {};
+    const box = (value) =>
+      value && [value.x, value.y, value.w, value.h].every((n) => Number.isFinite(n) && n >= 0 && n <= 1) && value.w > 0.005 && value.h > 0.005
+        ? { x: value.x, y: value.y, w: value.w, h: value.h }
+        : null;
+    const garment = box(parsed.garment);
+    if (!garment) return null;
+    const spots = {};
+    for (const key of keys) spots[key] = box(parsed.spots?.[key]);
+    const width = Number(parsed.garmentWidthInches);
+    return {
+      garment,
+      garmentWidthInches: Number.isFinite(width) && width > 3 && width < 80 ? width : null,
+      spots
+    };
+  } catch {
+    return null;
+  }
+}
+
 function decorationInstruction(decoration, imageIndex, method) {
   const methodPhrase = /embroider/i.test(method || "")
     ? "embroidered with visible thread texture and slightly raised stitching"
@@ -419,7 +509,8 @@ Return JSON only:
   "artworkProblems": "what differs from the original artwork, if anything",
   "placementCorrect": true|false, // each artwork sits at its stated position
   "placementSeen": "where the artwork actually sits",
-  "sizeReasonable": true|false,   // artwork size roughly matches the stated width for this garment
+  "sizeSeenPercent": number,      // measure it: the artwork's width as a percentage of the garment's full width in the candidate photo
+  "sizeReasonable": true|false,   // sizeSeenPercent is within about a third of each artwork's stated percentage of garment width — an 8-10 inch back graphic is ~35-40% of a hoodie's width, NEVER half the garment or more
   "looksPrinted": true|false,     // artwork looks genuinely applied to the fabric (follows surface, plausible lighting), not a flat sticker pasted on top
   "extraArtwork": true|false,     // any text, logo, or graphic that is NOT part of the requested decoration
   "onGarment": true|false         // all artwork fully on the garment fabric, nothing hanging into the background
@@ -448,7 +539,9 @@ Return JSON only:
   if (parsed.garmentMatches !== true) reasons.push("the garment changed from the original photo");
   if (parsed.artworkFaithful !== true) reasons.push(`artwork not faithful (${parsed.artworkProblems || "differs from the original file"})`);
   if (parsed.placementCorrect !== true) reasons.push(`wrong placement (sits at ${parsed.placementSeen || "an unknown position"})`);
-  if (parsed.sizeReasonable !== true) reasons.push("artwork size is off");
+  if (parsed.sizeReasonable !== true) {
+    reasons.push(`artwork size is off${Number.isFinite(parsed.sizeSeenPercent) ? ` (measured ~${Math.round(parsed.sizeSeenPercent)}% of garment width; match the stated size)` : ""}`);
+  }
   if (parsed.extraArtwork === true) reasons.push("extra artwork or text was invented");
   if (parsed.onGarment !== true) reasons.push("artwork hangs off the garment");
   return { usable: reasons.length === 0, reasons, looksPrinted: parsed.looksPrinted === true };
@@ -922,6 +1015,7 @@ module.exports = {
   extractReadableText,
   extractPolicyInstructions,
   generateBlankGarment,
+  analyzeGarmentGeometry,
   extractSupplierFacts,
   generateProductDescription,
   renderDecoratedGarment,
