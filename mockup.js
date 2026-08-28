@@ -52,7 +52,11 @@ const PLACEMENTS = {
   // outer face of each leg sits near the garment's edge, not at 0.3/0.7 —
   // those coordinates drifted the artwork toward the inseam.
   "left-thigh": { cx: 0.78, cy: 0.4, w: 0.15, h: 0.08 },
-  "right-thigh": { cx: 0.22, cy: 0.4, w: 0.15, h: 0.08 }
+  "right-thigh": { cx: 0.22, cy: 0.4, w: 0.15, h: 0.08 },
+  // Shorts wear their mark low, near the hem — the house convention on every
+  // existing store (Champion / Sport-Tek shorts references).
+  "left-leg-hem": { cx: 0.74, cy: 0.72, w: 0.13, h: 0.1 },
+  "right-leg-hem": { cx: 0.26, cy: 0.72, w: 0.13, h: 0.1 }
 };
 
 // "knit hat" and "watch cap" contain hat/cap, so beanies must be tested first.
@@ -73,9 +77,12 @@ function resolvePlacement(product) {
 
   if (BEANIE_TYPES.test(garment)) return "beanie-cuff";
   if (CAP_TYPES.test(garment)) return /\bside\b/.test(text) ? "cap-side" : "front-panel";
-  // Legwear has no chest, so chest wording can never apply to it.
+  // Legwear has no chest, so chest wording can never apply to it. Shorts
+  // take the mark near the hem (house convention); pants on the thigh.
   if (LEG_TYPES.test(garment)) {
-    return /right[\s-]?(thigh|leg|hip)/.test(text) ? "right-thigh" : "left-thigh";
+    const right = /right[\s-]?(thigh|leg|hip)/.test(text);
+    if (/\bshorts?\b/i.test(garment)) return right ? "right-leg-hem" : "left-leg-hem";
+    return right ? "right-thigh" : "left-thigh";
   }
 
   // Back before chest: "center back" contains no chest wording, but the old
@@ -219,7 +226,16 @@ async function prepareLogo(logoBuffer, maxWidth, maxHeight) {
 // the whole frame, and the artwork land beside the garment. Sample the
 // actual corner color first and trim against that.
 async function garmentBox(baseBuffer, baseMeta) {
-  const fullFrame = { left: 0, top: 0, width: baseMeta.width, height: baseMeta.height };
+  // When the trim can't find the garment (white on white), assume the studio
+  // convention every base in this pipeline follows: garment centered,
+  // filling ~80% of the frame. The raw full frame put "30% down the garment"
+  // at collar height because of the backdrop margin above the shoulders.
+  const fullFrame = {
+    left: Math.round(baseMeta.width * 0.1),
+    top: Math.round(baseMeta.height * 0.06),
+    width: Math.round(baseMeta.width * 0.8),
+    height: Math.round(baseMeta.height * 0.88)
+  };
   try {
     const { data, info } = await sharp(baseBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
     const sample = (x, y) => {
@@ -335,7 +351,17 @@ function backdropFraction(map, left, top, width, height) {
   return total === 0 ? 1 : backdrop / total;
 }
 
+/* A white garment on a white backdrop defeats every backdrop-color test —
+   the center of the frame (which the garment always occupies) reads as
+   backdrop. When that happens the pixel heuristics must stand down: snapping
+   or rejecting spots based on them moved artwork onto collars. */
+function isLowContrast(map) {
+  const { info } = map;
+  return backdropFraction(map, info.width * 0.3, info.height * 0.3, info.width * 0.4, info.height * 0.4) > 0.5;
+}
+
 function snapToFabric(map, box, left, top, width, height) {
+  if (isLowContrast(map)) return { left, top };
   if (backdropFraction(map, left, top, width, height) <= 0.1) return { left, top };
   // Search outward for the NEAREST clean position — dragging toward the
   // garment center pulled leg artwork to the inseam; the closest patch of

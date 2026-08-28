@@ -399,7 +399,9 @@ const SPOT_DESCRIPTIONS = {
   "cap-side": "the side panel of the cap over the wearer's left temple",
   "beanie-cuff": "the turned-up cuff of the beanie, front center",
   "left-thigh": "the OUTER thigh of the wearer's LEFT leg (viewer's right leg), clear of pockets and the inseam",
-  "right-thigh": "the OUTER thigh of the wearer's RIGHT leg (viewer's left leg), clear of pockets and the inseam"
+  "right-thigh": "the OUTER thigh of the wearer's RIGHT leg (viewer's left leg), clear of pockets and the inseam",
+  "left-leg-hem": "the lower front of the wearer's LEFT leg (viewer's right leg), an inch or two above the hem opening, where shorts carry their mark",
+  "right-leg-hem": "the lower front of the wearer's RIGHT leg (viewer's left leg), an inch or two above the hem opening, where shorts carry their mark"
 };
 // Long-sleeve alias keys measure the same spot as their base key.
 SPOT_DESCRIPTIONS["left-sleeve-long"] = SPOT_DESCRIPTIONS["left-sleeve"];
@@ -502,6 +504,8 @@ async function verifyDecoratedGarment(candidateBuffer, baseBuffer, decorations, 
 The candidate should show the ${face} of the same garment with this decoration:
 ${expectations}
 
+Judge artwork fidelity by DESIGN and exact text - the intended finish (screen print, embroidery stitch texture, or a sewn patch) legitimately changes surface texture and softens edges; that is correct, not unfaithful.
+
 Return JSON only:
 {
   "garmentMatches": true|false,   // same garment, same color, same style as image 2 (ignore mirroring/small crop differences${face !== sourceFace ? `; the candidate legitimately shows the ${face} of it` : ""})
@@ -511,6 +515,7 @@ Return JSON only:
   "placementSeen": "where the artwork actually sits",
   "sizeSeenPercent": number,      // measure it: the artwork's width as a percentage of the garment's full width in the candidate photo
   "sizeReasonable": true|false,   // sizeSeenPercent is within about a third of each artwork's stated percentage of garment width — an 8-10 inch back graphic is ~35-40% of a hoodie's width, NEVER half the garment or more
+  "artworkLevel": true|false,     // the artwork sits straight and level on the garment — reject any visible rotation, tilt, or skew beyond the garment's own natural drape
   "looksPrinted": true|false,     // artwork looks genuinely applied to the fabric (follows surface, plausible lighting), not a flat sticker pasted on top
   "extraArtwork": true|false,     // any text, logo, or graphic that is NOT part of the requested decoration
   "onGarment": true|false         // all artwork fully on the garment fabric, nothing hanging into the background
@@ -542,6 +547,7 @@ Return JSON only:
   if (parsed.sizeReasonable !== true) {
     reasons.push(`artwork size is off${Number.isFinite(parsed.sizeSeenPercent) ? ` (measured ~${Math.round(parsed.sizeSeenPercent)}% of garment width; match the stated size)` : ""}`);
   }
+  if (parsed.artworkLevel === false) reasons.push("artwork is rotated or skewed - it must sit straight and level");
   if (parsed.extraArtwork === true) reasons.push("extra artwork or text was invented");
   if (parsed.onGarment !== true) reasons.push("artwork hangs off the garment");
   return { usable: reasons.length === 0, reasons, looksPrinted: parsed.looksPrinted === true };
@@ -638,7 +644,7 @@ async function renderDecoratedGarment({ baseBuffer, draftBuffer = null, decorati
    into the photo. Hyper-real integration AND correct lettering.
    -------------------------------------------------------------------------- */
 
-async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo) {
+async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo, decorationMethod = "") {
   const openai = client();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -651,12 +657,15 @@ async function verifyArtworkPatch(candidateBuffer, draftBuffer, logo) {
             type: "text",
             text: `Image 1 is a CANDIDATE close-up of artwork applied to a garment. Image 2 is the same close-up BEFORE processing (the artwork correctly positioned but flat). Image 3 is the original artwork file.
 
+The artwork was INTENTIONALLY applied as ${/embroider/i.test(decorationMethod) ? "EMBROIDERY: stitch texture, thread sheen, satin-stitch borders, and slightly softened or thickened edges are CORRECT and expected — judge the DESIGN (layout, shapes, colors as their thread equivalents) and the exact text, not the flat-vector finish" : /patch/i.test(decorationMethod) ? "a SEWN PATCH: a merrowed border, slight thickness, and fabric texture are CORRECT and expected — judge the design and exact text, not the flat-vector finish" : "SCREEN PRINT: subtle fabric texture through the ink is correct; shapes and colors should otherwise match the file closely"}.
+
 Return JSON only:
 {
-  "artworkFaithful": true|false,  // the candidate's artwork matches image 3 exactly: same shapes, colors, layout, and every piece of text spelled EXACTLY the same. Different, garbled, or rearranged letters are ALWAYS unfaithful
-  "artworkProblems": "what differs from the original artwork, if anything",
-  "samePlacement": true|false,    // the artwork sits at the same position and size as in image 2 (small drift is fine)
-  "looksApplied": true|false,     // it reads as genuinely printed/embroidered ON the fabric - follows the surface, plausible lighting - not a flat sticker
+  "artworkFaithful": true|false,  // the candidate's artwork reproduces image 3's DESIGN: same layout, same shapes (allowing the finish above), matching colors, and every piece of text spelled EXACTLY the same. Different, garbled, or rearranged letters are ALWAYS unfaithful
+  "artworkProblems": "what differs from the original artwork's design, if anything",
+  "samePlacement": true|false,    // the artwork sits at the same position and roughly the same size as in image 2 — reject if its center moved more than about 12% of the image or its size changed more than about 25%
+  "artworkLevel": true|false,     // the artwork sits straight and level, matching image 2 — reject any added rotation, tilt, or skew
+  "looksApplied": true|false,     // it reads as genuinely applied ON the fabric - follows the surface, plausible lighting - not a flat sticker
   "fabricIntact": true|false,     // the surrounding fabric, seams, and background match image 2 - nothing else changed
   "extraArtwork": true|false      // any text or graphic that is not part of the artwork
 }`
@@ -675,6 +684,7 @@ Return JSON only:
     const reasons = [];
     if (parsed.artworkFaithful !== true) reasons.push(`artwork not faithful (${parsed.artworkProblems || "differs from the original"})`);
     if (parsed.samePlacement !== true) reasons.push("artwork moved or resized");
+    if (parsed.artworkLevel === false) reasons.push("artwork was rotated or skewed");
     if (parsed.fabricIntact !== true) reasons.push("surrounding fabric changed");
     if (parsed.extraArtwork === true) reasons.push("extra artwork or text appeared");
     return { usable: reasons.length === 0, reasons };
@@ -689,6 +699,32 @@ Return JSON only:
  * artwork already composited at the right spot. Returns the integrated patch
  * or null when no attempt verified.
  */
+/* Deterministic guard: if the model's changes reach the crop's border ring,
+   the artwork escaped its box (blown up, shifted, or repainted background) —
+   the paste-back would show it cropped mid-letter. No vision judgment
+   involved; pure pixel comparison against the original crop. */
+async function patchBorderIntact(originalCrop, candidateCrop) {
+  const sharp = require("sharp");
+  const [a, b] = await Promise.all([
+    sharp(originalCrop).resize(256, 256).greyscale().raw().toBuffer(),
+    sharp(candidateCrop).resize(256, 256).greyscale().raw().toBuffer()
+  ]);
+  const size = 256;
+  const ring = Math.round(size * 0.06);
+  let changed = 0;
+  let total = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const inRing = x < ring || y < ring || x >= size - ring || y >= size - ring;
+      if (!inRing) continue;
+      const i = y * size + x;
+      if (Math.abs(a[i] - b[i]) > 30) changed++;
+      total++;
+    }
+  }
+  return total === 0 || changed / total <= 0.12;
+}
+
 async function integrateArtworkPatch({ patchBuffer, logo, decorationMethod = "", onLog }) {
   const log = (message) => onLog && onLog(message);
   const methodPhrase = /embroider/i.test(decorationMethod)
@@ -713,7 +749,12 @@ async function integrateArtworkPatch({ patchBuffer, logo, decorationMethod = "",
       log(`patch render attempt ${attempt} failed (${error.message})`);
       continue;
     }
-    const verdict = await verifyArtworkPatch(candidate, patchBuffer, logo).catch(() => ({ usable: false, reasons: ["verification unavailable"] }));
+    if (!(await patchBorderIntact(patchBuffer, candidate).catch(() => true))) {
+      log(`patch render attempt ${attempt} rejected: changes reached the region border (artwork enlarged or shifted)`);
+      prompt = `${basePrompt} A previous attempt enlarged the artwork or painted to the edge of the image. Keep the artwork at EXACTLY its original position and size, and leave the outer area of the image completely untouched.`;
+      continue;
+    }
+    const verdict = await verifyArtworkPatch(candidate, patchBuffer, logo, decorationMethod).catch(() => ({ usable: false, reasons: ["verification unavailable"] }));
     if (verdict.usable) {
       log(`patch render accepted on attempt ${attempt}`);
       return candidate;

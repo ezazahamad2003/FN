@@ -171,7 +171,8 @@ async function runCase(item) {
     decorations,
     method: item.method,
     getBackBlank: () => getBase(baseType, baseColor, "back"),
-    onLog
+    onLog,
+    cache: {}
   });
 
   const file = path.join(OUT, `${item.id}.png`);

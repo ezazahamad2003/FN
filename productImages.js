@@ -79,18 +79,24 @@ async function spotOnFabric(baseBuffer, spot) {
   const width = Math.min(info.width - left, Math.max(1, Math.round(spot.w * info.width)));
   const height = Math.min(info.height - top, Math.max(1, Math.round(spot.h * info.height)));
 
-  let backdrop = 0;
-  let total = 0;
-  for (let y = top; y < top + height; y += 2) {
-    for (let x = left; x < left + width; x += 2) {
-      const i = (y * info.width + x) * info.channels;
-      const distance =
-        Math.abs(data[i] - background[0]) + Math.abs(data[i + 1] - background[1]) + Math.abs(data[i + 2] - background[2]);
-      if (distance < 36) backdrop++;
-      total++;
+  const fraction = (x0, y0, w0, h0) => {
+    let backdrop = 0;
+    let total = 0;
+    for (let y = Math.max(0, Math.round(y0)); y < Math.min(info.height, Math.round(y0 + h0)); y += 2) {
+      for (let x = Math.max(0, Math.round(x0)); x < Math.min(info.width, Math.round(x0 + w0)); x += 2) {
+        const i = (y * info.width + x) * info.channels;
+        const distance =
+          Math.abs(data[i] - background[0]) + Math.abs(data[i + 1] - background[1]) + Math.abs(data[i + 2] - background[2]);
+        if (distance < 36) backdrop++;
+        total++;
+      }
     }
-  }
-  return total === 0 || backdrop / total <= 0.25;
+    return total === 0 ? 1 : backdrop / total;
+  };
+  // White garment on a white backdrop: the frame's center reads as backdrop,
+  // so the pixel test is meaningless — trust the measured geometry instead.
+  if (fraction(info.width * 0.3, info.height * 0.3, info.width * 0.4, info.height * 0.4) > 0.5) return true;
+  return fraction(left, top, width, height) <= 0.25;
 }
 
 /* Vision refines position and scale, but the production-standard coordinate
@@ -117,7 +123,14 @@ function boundSpot(geometry, key, spot) {
   };
 }
 
-async function measureGeometry(baseBuffer, decorations, onLog) {
+async function measureGeometry(baseBuffer, decorations, onLog, cache, cacheKey) {
+  if (cache && cacheKey && cacheKey in cache) return cache[cacheKey];
+  const result = await measureGeometryUncached(baseBuffer, decorations, onLog);
+  if (cache && cacheKey) cache[cacheKey] = result;
+  return result;
+}
+
+async function measureGeometryUncached(baseBuffer, decorations, onLog) {
   const log = (message) => onLog && onLog(message);
   const spotKeys = decorations.flatMap((decoration) => decoration.keys || []);
   try {
@@ -175,10 +188,11 @@ async function measuredComposite({ baseBuffer, decorations, geometry, onLog }) {
         width: spot.w * meta.width,
         height: spot.h * meta.height
       };
-      // True physical width, floored so artwork never dwarfs its print area
-      // and capped so it never touches the area's edges.
+      // True physical width, capped so it never touches the print area's
+      // edges. No box-relative floor: flooring against a generously measured
+      // spot box is exactly how chest crests grew past their tier.
       const physical = (tierInches(decoration.tier) / widthInches) * garmentWidthPx;
-      const artWidth = Math.min(Math.max(physical, box.width * 0.5), box.width * 0.82);
+      const artWidth = Math.max(36, Math.min(physical, box.width * 0.82));
       placements.push({
         logoBuffer: decoration.logo.buffer,
         box,
@@ -280,7 +294,12 @@ function renderDecorationsFor(decorations, garmentWidthInches) {
 async function integrateFace({ baseBuffer, draft, placed, decorations, geometry, face, method, onLog }) {
   const log = (message) => onLog && onLog(message);
   const meta = await sharp(draft).metadata();
-  const hasBig = placed.some((entry) => entry.width >= meta.width * WHOLE_IMAGE_FRACTION);
+  // Large-tier artwork always renders whole-image: a 9-inch graphic at full
+  // canvas survives fine, and the zoom-patch crop gives the model room to
+  // blow wide artwork past its box.
+  const hasBig =
+    decorations.some((decoration) => !tierIsSmall(decoration.tier) && tierInches(decoration.tier) >= 8) ||
+    placed.some((entry) => entry.width >= meta.width * WHOLE_IMAGE_FRACTION);
 
   if (hasBig) {
     const rendered = await renderDecoratedGarment({
@@ -327,9 +346,9 @@ async function integrateFace({ baseBuffer, draft, placed, decorations, geometry,
  * Returns { buffer, path } — "render" | "render-partial" |
  * "render-fallback-composite" ("composite" never ships by design any more).
  */
-async function renderFaceImage({ baseBuffer, sourceFace = "front", face = "front", decorations, method = "", getBackBlank, onLog }) {
+async function renderFaceImage({ baseBuffer, sourceFace = "front", face = "front", decorations, method = "", getBackBlank, onLog, cache = null }) {
   if (face === sourceFace) {
-    const geometry = await measureGeometry(baseBuffer, decorations, onLog);
+    const geometry = await measureGeometry(baseBuffer, decorations, onLog, cache, `geo:${face}`);
     const { buffer: draft, placed } = await measuredComposite({ baseBuffer, decorations, geometry, onLog });
     return integrateFace({ baseBuffer, draft, placed, decorations, geometry, face, method, onLog });
   }
@@ -352,7 +371,7 @@ async function renderFaceImage({ baseBuffer, sourceFace = "front", face = "front
   }
 
   const blank = await getBackBlank();
-  const geometry = await measureGeometry(blank, decorations, onLog);
+  const geometry = await measureGeometry(blank, decorations, onLog, cache, `geo:${face}`);
   const { buffer: draft, placed } = await measuredComposite({ baseBuffer: blank, decorations, geometry, onLog });
   return integrateFace({ baseBuffer: blank, draft, placed, decorations, geometry, face, method, onLog });
 }

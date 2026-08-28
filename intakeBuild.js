@@ -461,6 +461,9 @@ async function runBuild(intakeId, build, options) {
         });
         if (choiceIndex >= 0 && decorations[choiceIndex].face === "back") logoOptionName = "Back Logo";
         const choiceLogos = choiceIndex >= 0 ? decorations[choiceIndex].logos : [null];
+        // One geometry cache per PRODUCT: every logo option of the same
+        // garment must measure identically, or sizes drift between variants.
+        const imageCache = {};
 
         for (const choice of choiceLogos) {
           const logoFor = (decoration) =>
@@ -487,7 +490,8 @@ async function runBuild(intakeId, build, options) {
               face: "front",
               decorations: faceDecorations(frontDecos),
               method: product.decorationMethod,
-              onLog: renderLog
+              onLog: renderLog,
+              cache: imageCache
             });
             images.push({ face: "front", buffer: produced.buffer });
           }
@@ -499,7 +503,8 @@ async function runBuild(intakeId, build, options) {
               decorations: faceDecorations(backDecos),
               method: product.decorationMethod,
               getBackBlank: ensureBackBlank,
-              onLog: renderLog
+              onLog: renderLog,
+              cache: imageCache
             });
             images.push({ face: "back", buffer: produced.buffer });
           }
