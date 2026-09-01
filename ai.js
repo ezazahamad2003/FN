@@ -1,5 +1,5 @@
 const { PDFParse } = require("pdf-parse");
-const { editImage, generateImage, reason } = require("./azureOpenai");
+const { generateImage, reason } = require("./azureOpenai");
 
 // Provider-agnostic stand-in for the OpenAI SDK client this file used to build
 // directly.
