@@ -567,9 +567,40 @@ function intakeDocumentHtml(recordInput) {
     "<h2>Artwork</h2>",
     `<p>${record.logos.length ? record.logos.map((logo) => escapeHtml(logo.name)).join(" · ") : "No logo files stored."}</p>`,
     categoryBlocks,
-    skipped.length ? `<h2>Not requested</h2><p>${skipped.map((category) => escapeHtml(category.title)).join(" · ")}</p>` : ""
+    skipped.length ? `<h2>Not requested</h2><p>${skipped.map((category) => escapeHtml(category.title)).join(" · ")}</p>` : "",
+    blankSourceBlock(record)
   ].filter(Boolean).join("\n");
 }
+
+/*
+ * Where each blank came from, for the people who have to ORDER the garments.
+ * A "supplier photo" row links the exact vendor page the photograph was taken
+ * from, so the style and colourway can be checked and purchased without
+ * searching for it again. A "generated" row is a warning as much as a note:
+ * that product's picture is a lookalike, not the real style.
+ */
+function blankSourceBlock(record) {
+  const products = (record.build || {}).products || [];
+  if (!products.length) return "";
+  const rows = products
+    .map((product) => {
+      const fromSupplier = String(product.blankSource || "").startsWith("supplier");
+      const origin = fromSupplier ? "Supplier photo" : "Generated lookalike";
+      const link = product.blankSourceUrl
+        ? `<a href="${escapeHtml(product.blankSourceUrl)}">${escapeHtml(product.blankSourceUrl)}</a>`
+        : "—";
+      return `<tr><td>${escapeHtml(product.title || "")}</td><td>${escapeHtml(product.vendor || "")}</td><td>${origin}</td><td>${link}</td></tr>`;
+    })
+    .join("");
+  return (
+    "<h2>Blank garment sources</h2>" +
+    "<p>Where each product's plain-garment photo came from, for checking and ordering.</p>" +
+    "<table><tr><th>Product</th><th>Vendor</th><th>Blank</th><th>Source page</th></tr>" +
+    rows +
+    "</table>"
+  );
+}
+
 
 async function intakeFolder() {
   const parentId = process.env.GDRIVE_PARENT_FOLDER_ID;

@@ -517,11 +517,18 @@ function renderReview(data) {
       ]
         .filter(Boolean)
         .join("");
-      const blankLine = p.blankNote
-        ? `<p class="rv-logos">${escapeHtml(p.blankNote)}${
-            p.blankSourceUrl ? ` <a href="${escapeHtml(p.blankSourceUrl)}" target="_blank" rel="noopener">source</a>` : ""
-          }</p>`
-        : "";
+      /* The source link is what the ordering team clicks to buy the blank, so
+         it renders whenever there IS one. It used to hang off blankNote, which
+         only the review gate sets - built stores stored the URL and then never
+         showed it. */
+      const blankLine =
+        p.blankNote || p.blankSourceUrl
+          ? `<p class="rv-logos">${escapeHtml(p.blankNote || "")}${
+              p.blankSourceUrl
+                ? `${p.blankNote ? " " : ""}<a href="${escapeHtml(p.blankSourceUrl)}" target="_blank" rel="noopener">order this blank ↗</a>`
+                : ""
+            }</p>`
+          : "";
       const images = p.images
         .map(
           (img) => `

@@ -385,41 +385,6 @@ function snapToFabric(map, box, left, top, width, height) {
   return { left: best.left, top: best.top };
 }
 
-/**
- * Composite decorations at MEASURED positions. `placements` is
- * [{ logoBuffer, box: {left,top,width,height}, maxWidth, maxHeight, anchorTop }]
- * in absolute pixels — boxes come from vision-measured garment geometry
- * (productImages.js), so the artwork lands where a decorator would actually
- * put it, at its true physical size, centered in its spot (large graphics
- * hang from the top of theirs).
- */
-async function compositeDecorationsAt(baseBuffer, placements) {
-  const baseMeta = await sharp(baseBuffer).metadata();
-  const map = await fabricMap(baseBuffer);
-  const garment = await garmentBox(baseBuffer, baseMeta);
-  const layers = [];
-  const placed = [];
-  for (const placement of placements) {
-    const { data: logo, info } = await prepareLogo(
-      placement.logoBuffer,
-      Math.max(1, Math.round(placement.maxWidth)),
-      Math.max(1, Math.round(placement.maxHeight))
-    );
-    const box = placement.box;
-    let left = Math.min(
-      Math.max(Math.round(box.left + (box.width - info.width) / 2), 0),
-      baseMeta.width - info.width
-    );
-    const topRaw = placement.anchorTop ? box.top : box.top + (box.height - info.height) / 2;
-    let top = Math.min(Math.max(Math.round(topRaw), 0), baseMeta.height - info.height);
-    ({ left, top } = snapToFabric(map, garment, left, top, info.width, info.height));
-    const blended = await fabricBlend(baseBuffer, logo, info, left, top);
-    layers.push({ input: blended, left, top });
-    placed.push({ left, top, width: info.width, height: info.height });
-  }
-  const buffer = layers.length ? await sharp(baseBuffer).composite(layers).png().toBuffer() : await sharp(baseBuffer).png().toBuffer();
-  return { buffer, placed };
-}
 
 /**
  * Composite one or more decorations onto a single garment photo in one pass.
@@ -467,10 +432,6 @@ async function compositeLogoOnGarment(baseBuffer, logoBuffer, placementKey) {
 }
 
 module.exports = {
-  STATIC_PLACEMENTS: PLACEMENTS,
-  compositeDecorationsAt,
-  compositeDecorationsOnGarment,
   compositeLogoOnGarment,
-  garmentBox,
   resolvePlacement
 };

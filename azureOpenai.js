@@ -69,6 +69,12 @@ function imageDeployment() {
   return process.env.AZURE_OPENAI_IMAGE_DEPLOYMENT || "";
 }
 
+// The image routes live on preview API versions; both generations and edits
+// are pinned to the same one so a swap only has to change a single variable.
+function imageApiVersion() {
+  return process.env.AZURE_OPENAI_IMAGE_API_VERSION || "2025-04-01-preview";
+}
+
 function azureImageConfigured() {
   return Boolean(imageEndpoint() && imageApiKey() && imageDeployment());
 }
@@ -192,15 +198,22 @@ async function reason({ messages, temperature = 0.2, maxTokens = 900, jsonObject
 }
 
 async function azureGenerateImage({ prompt, size = "1024x1024", quality = "medium" }) {
-  const apiVersion = process.env.AZURE_OPENAI_IMAGE_API_VERSION || process.env.AZURE_OPENAI_API_VERSION || "2025-04-01-preview";
-  const url = `${imageEndpoint()}/openai/deployments/${encodeURIComponent(imageDeployment())}/images/generations?api-version=${encodeURIComponent(apiVersion)}`;
+  const url = `${imageEndpoint()}/openai/deployments/${encodeURIComponent(imageDeployment())}/images/generations?api-version=${encodeURIComponent(imageApiVersion())}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", "api-key": imageApiKey() },
-    body: JSON.stringify({ prompt, n: 1, size, quality, output_format: "png" })
-  });
-  const json = await res.json().catch(() => ({}));
+  let res;
+  let json;
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "api-key": imageApiKey() },
+      body: JSON.stringify({ prompt, n: 1, size, quality, output_format: "png" })
+    });
+    json = await res.json().catch(() => ({}));
+    if (res.status !== 429 || attempt >= RATE_LIMIT_RETRIES) break;
+    const wait = retryAfterMs(res, attempt);
+    console.warn(`Azure image generation rate-limited; retrying in ${Math.round(wait / 1000)}s`);
+    await sleep(wait);
+  }
   if (!res.ok) {
     const detail = json.error?.message || JSON.stringify(json).slice(0, 500) || "unknown error";
     throw new Error(`Azure OpenAI image generation failed (${res.status}): ${detail}`);
@@ -252,32 +265,57 @@ async function generateImage(options) {
 }
 
 /* -----------------------------------------------------------------------------
-   Image EDITS (gpt-image-1): the decorated-product renderer.
+   Rate limiting.
+
+   A 429 is a "come back shortly", not a failure. Falling through to direct
+   OpenAI on one - which is what used to happen - silently moves paid work off
+   the Azure deployment the moment a batch gets busy, which is the opposite of
+   what a bulk run wants. Azure states how long to wait; we wait and retry, and
+   only give up (and let the caller fall back) after several attempts.
+   -------------------------------------------------------------------------- */
+const RATE_LIMIT_RETRIES = 5;
+const TRANSPORT_RETRIES = 3;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function retryAfterMs(res, attempt) {
+  const header = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(header) && header > 0) return Math.min(header, 90) * 1000;
+  return Math.min(8000 * 2 ** attempt, 60000); // 8s, 16s, 32s, 60s, 60s
+}
+
+/* -----------------------------------------------------------------------------
+   Image EDITS: the decorated-product renderer.
 
    Unlike generation, an edit takes the REAL inputs - the supplier's garment
    photo and the department's actual logo files - and returns the same photo
    with the artwork rendered as if genuinely printed/embroidered on the
    fabric. input_fidelity "high" is what keeps logo text and small marks
-   faithful. Runs on direct OpenAI: the Azure resource has no image
-   deployment (gpt-image-1 is not offered in its region).
+   faithful on the models that still take it.
+
+   Azure first (same tenancy and billing as the rest of the deploy), direct
+   OpenAI as a fallback so a missing image deployment does not take a run down.
+   The two providers speak the same multipart dialect; only the URL, the auth
+   header, and where the model name goes differ.
    -------------------------------------------------------------------------- */
-// Parameters newer models reject are learned once per model and skipped
-// afterwards (gpt-image-2 dropped input_fidelity — high fidelity is native).
+// Parameters a model rejects are learned once per provider+model and skipped
+// afterwards. Keyed per provider because the same model name can differ across
+// them: direct-OpenAI gpt-image-2 refuses input_fidelity (high fidelity is
+// native there) while Azure's gpt-image-2 still accepts it.
 const unsupportedEditParams = new Map();
 
-async function editImage({ images, prompt, size = "1024x1024", quality = "high" }) {
-  if (!openAIConfigured()) {
-    throw new Error("OPENAI_API_KEY is required for image edits.");
-  }
-  if (!globalThis.fetch || !globalThis.FormData || !globalThis.Blob) {
-    throw new Error("Node 18 fetch, FormData, and Blob are required for image edits.");
-  }
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
-  const skip = unsupportedEditParams.get(model) || new Set();
+async function postImageEdit({ url, headers, model, cacheKey, images, prompt, size, quality }) {
+  const skip = unsupportedEditParams.get(cacheKey) || new Set();
+  // Counted separately from parameter learning: waiting out a rate limit must
+  // not consume the attempts reserved for discovering a refused parameter.
+  let rateLimited = 0;
+  let transportRetries = 0;
 
   for (let attempt = 0; attempt < 4; attempt++) {
     const form = new FormData();
-    form.append("model", model);
+    // Azure carries the model in the deployment path, so it only goes in the
+    // body when the caller supplies one.
+    if (model) form.append("model", model);
     images.forEach((image, index) => {
       form.append("image[]", new Blob([image.buffer], { type: image.mimeType || "image/png" }), image.name || `image-${index}.png`);
     });
@@ -287,27 +325,102 @@ async function editImage({ images, prompt, size = "1024x1024", quality = "high" 
       if (!skip.has(key)) form.append(key, value);
     }
 
-    const res = await globalThis.fetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: form
-    });
+    /* A dropped socket is not a verdict. Long multipart uploads that run for
+       two minutes get reset by networks and proxies, and undici surfaces every
+       one of them as a bare "fetch failed" with no status. Treated as failure,
+       a single blip ships an UNDECORATED garment to a customer, so transport
+       errors are retried like rate limits are. */
+    let res;
+    try {
+      res = await globalThis.fetch(url, { method: "POST", headers, body: form });
+    } catch (transport) {
+      if (transportRetries >= TRANSPORT_RETRIES) {
+        const cause = transport.cause?.code || transport.cause?.message || "";
+        throw new Error(`Image edit transport failure after ${TRANSPORT_RETRIES} retries: ${transport.message}${cause ? ` (${cause})` : ""}`);
+      }
+      const wait = Math.min(4000 * 2 ** transportRetries, 30000);
+      transportRetries++;
+      console.warn(`Image edit connection failed (${transport.message}); retrying in ${Math.round(wait / 1000)}s (${transportRetries}/${TRANSPORT_RETRIES})`);
+      await sleep(wait);
+      attempt--; // this round never reached the model
+      continue;
+    }
     const json = await res.json().catch(() => ({}));
+
+    if (res.status === 429 && rateLimited < RATE_LIMIT_RETRIES) {
+      const wait = retryAfterMs(res, rateLimited);
+      rateLimited++;
+      console.warn(`Image edit rate-limited; retrying in ${Math.round(wait / 1000)}s (${rateLimited}/${RATE_LIMIT_RETRIES})`);
+      await sleep(wait);
+      attempt--; // this round never tested the parameter set
+      continue;
+    }
+
     if (!res.ok) {
       const detail = json.error?.message || JSON.stringify(json).slice(0, 400) || "unknown error";
-      const unsupported = detail.match(/does not support the '([a-z_]+)' parameter/i);
-      if (unsupported) {
+      const unsupported =
+        detail.match(/does not support the '([a-z_]+)' parameter/i) ||
+        detail.match(/[Uu]nknown parameter: '([a-z_]+)'/) ||
+        detail.match(/[Uu]nsupported parameter: '([a-z_]+)'/) ||
+        detail.match(/Invalid parameter: '([a-z_]+)'/);
+      // Only retry on a parameter we were actually still sending, otherwise a
+      // model that always names the same field would burn every attempt.
+      if (unsupported && !skip.has(unsupported[1])) {
         skip.add(unsupported[1]);
-        unsupportedEditParams.set(model, skip);
+        unsupportedEditParams.set(cacheKey, skip);
         continue;
       }
-      throw new Error(`OpenAI image edit failed (${res.status}): ${detail}`);
+      throw new Error(`Image edit failed (${res.status}): ${detail}`);
     }
     const image = json.data?.[0];
     if (!image?.b64_json) throw new Error("Image edit returned no image data.");
     return Buffer.from(image.b64_json, "base64");
   }
-  throw new Error("OpenAI image edit failed: could not find a parameter set the model accepts.");
+  throw new Error("Image edit failed: could not find a parameter set the model accepts.");
+}
+
+async function azureEditImage(options) {
+  const deployment = imageDeployment();
+  return postImageEdit({
+    ...options,
+    url: `${imageEndpoint()}/openai/deployments/${encodeURIComponent(deployment)}/images/edits?api-version=${encodeURIComponent(imageApiVersion())}`,
+    headers: { "api-key": imageApiKey() },
+    model: "",
+    cacheKey: `azure:${deployment}`
+  });
+}
+
+async function openAIEditImage(options) {
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  return postImageEdit({
+    ...options,
+    url: "https://api.openai.com/v1/images/edits",
+    headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    model,
+    cacheKey: `openai:${model}`
+  });
+}
+
+async function editImage({ images, prompt, size = "1024x1024", quality = "high" }) {
+  if (!globalThis.fetch || !globalThis.FormData || !globalThis.Blob) {
+    throw new Error("Node 18 fetch, FormData, and Blob are required for image edits.");
+  }
+  const options = { images, prompt, size, quality };
+
+  if (azureImageConfigured()) {
+    try {
+      return await azureEditImage(options);
+    } catch (error) {
+      if (!openAIConfigured()) throw error;
+      console.warn("Azure image edit failed, falling back to OpenAI:", error.message);
+    }
+  }
+  if (!openAIConfigured()) {
+    throw new Error(
+      "No image model is configured for edits. Set AZURE_OPENAI_IMAGE_DEPLOYMENT (plus AZURE_OPENAI_IMAGE_ENDPOINT / AZURE_OPENAI_IMAGE_API_KEY if the image model lives in another resource), or OPENAI_API_KEY."
+    );
+  }
+  return openAIEditImage(options);
 }
 
 async function azureTranscribeAudio({ buffer, mimeType = "audio/webm", filename = "voice.webm", language = "en" }) {

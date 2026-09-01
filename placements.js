@@ -109,26 +109,6 @@ const SIZE_TIERS = {
 
 // The reference diagrams themselves, served to the intake form and linked from
 // the review queue so an operator can check a placement against the standard.
-const REFERENCE_IMAGES = [
-  {
-    id: "garment-placements",
-    src: "/reference/logo-placements-garments.png",
-    title: "Placement by garment type",
-    covers: ["t-shirt", "sweatshirt", "polo", "shirt", "trousers", "jacket", "shorts", "overalls"]
-  },
-  {
-    id: "measurements",
-    src: "/reference/placement-measurements-front-back.png",
-    title: "Front and back placement measurements",
-    covers: ["sleeve", "centre front", "chest", "front hip", "back neck", "top back", "centre back", "bottom back"]
-  },
-  {
-    id: "legwear",
-    src: "/reference/placement-pants-shorts.png",
-    title: "Pants and shorts placement",
-    covers: ["outer thigh", "side hip", "pocket", "lower leg", "full leg", "waistband"]
-  }
-];
 
 function normalize(value) {
   return String(value || "")
@@ -186,7 +166,6 @@ function placementFace(placement) {
 }
 
 module.exports = {
-  REFERENCE_IMAGES,
   placementFace,
   placementGuidance
 };

@@ -461,10 +461,6 @@ async function runBuild(intakeId, build, options) {
         });
         if (choiceIndex >= 0 && decorations[choiceIndex].face === "back") logoOptionName = "Back Logo";
         const choiceLogos = choiceIndex >= 0 ? decorations[choiceIndex].logos : [null];
-        // One geometry cache per PRODUCT: every logo option of the same
-        // garment must measure identically, or sizes drift between variants.
-        const imageCache = {};
-
         for (const choice of choiceLogos) {
           const logoFor = (decoration) =>
             decorations.indexOf(decoration) === choiceIndex && choice ? choice : decoration.logos[0];
@@ -472,16 +468,13 @@ async function runBuild(intakeId, build, options) {
             faceDecos.map((decoration) => ({
               logo: logoFor(decoration),
               label: decoration.label,
-              keys: decoration.keys,
-              tier: decoration.tier,
-              guidance: placementGuidance(decoration.label, decoration.tier)
+              tier: decoration.tier
             }));
           const renderLog = (message) => log(build, `${title}: ${message}`);
 
           /* Decorated views come from the shared producer (productImages.js):
-             vision-measured placement + fabric-blended composites for small
-             artwork, verified model renders for standard/large, with the
-             measured composite as the guaranteed fallback. */
+             one model call per face, given the blank photo, the artwork files
+             and where each mark goes. */
           const images = [];
           if (frontDecos.length && frontBase) {
             const produced = await renderFaceImage({
@@ -490,8 +483,8 @@ async function runBuild(intakeId, build, options) {
               face: "front",
               decorations: faceDecorations(frontDecos),
               method: product.decorationMethod,
-              onLog: renderLog,
-              cache: imageCache
+              productType: product.productType || "garment",
+              onLog: renderLog
             });
             images.push({ face: "front", buffer: produced.buffer });
           }
@@ -502,9 +495,9 @@ async function runBuild(intakeId, build, options) {
               face: "back",
               decorations: faceDecorations(backDecos),
               method: product.decorationMethod,
+              productType: product.productType || "garment",
               getBackBlank: ensureBackBlank,
-              onLog: renderLog,
-              cache: imageCache
+              onLog: renderLog
             });
             images.push({ face: "back", buffer: produced.buffer });
           }

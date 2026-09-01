@@ -42,7 +42,11 @@ The dashboard voice agent records short browser mic turns, sends them to Azure O
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 
-`OPENAI_API_KEY` does more than local development: it is the fallback for chat reasoning AND the active provider for image generation and the supplier blank web search whenever no `AZURE_OPENAI_IMAGE_DEPLOYMENT` is configured. In the current production deploy, image generation runs on this key.
+Image generation AND the decorated-product edit renderer run on **Azure OpenAI** whenever `AZURE_OPENAI_IMAGE_DEPLOYMENT` is set, falling back to `OPENAI_API_KEY` if an Azure call fails. Because the `gpt-image-*` models are region-bound and the chat resource is in `eastus` (which does not offer them), the image deployment lives in the `eastus2` resource and is addressed with `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`. These routes are preview-only, so they use their own `AZURE_OPENAI_IMAGE_API_VERSION` rather than the chat `AZURE_OPENAI_API_VERSION`.
+
+`OPENAI_API_KEY` therefore remains needed as the chat-reasoning fallback, the image fallback, and the active provider for the supplier blank web search (which has no Azure equivalent).
+
+Check which provider is actually live without publishing a product: `POST /api/diagnostics/image` returns `{ok, provider, deployment, bytes, elapsedMs}`.
 ## Re-Auth If Tokens Expire
 
 Stop the server, remove the expired token from `.env`, then restart:

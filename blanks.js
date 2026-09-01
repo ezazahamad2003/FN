@@ -95,6 +95,19 @@ function scoreImageUrl(url) {
   // Back and side views cannot take a front-chest logo.
   if (/(modelback|model_back|-back-|back\d|modelside|model_side|-side-|detail)/.test(name)) return -1;
 
+  /* Dimensions declared in the URL, when they are clearly too small, are a
+     DISQUALIFICATION rather than a low score. Colour-swatch thumbnails name
+     the colourway (midnight-navy_40x40.jpg), so once colour drives the
+     ranking they outrank the real photograph and spend the whole vision
+     budget on 40-pixel images. */
+  const declaredSizes = [
+    ...[...name.matchAll(/[_\-\/](\d{2,4})x(\d{2,4})(?:[_\-.]|$)/g)].flatMap((m) => [+m[1], +m[2]]),
+    ...[...name.matchAll(/[?&]width=(\d{2,4})/g)].map((m) => +m[1]),
+    ...[...name.matchAll(/[_\-](\d{3,4})x(?:[_\-.]|$)/g)].map((m) => +m[1])
+  ];
+  if (declaredSizes.length && Math.max(...declaredSizes) < 400) return -1;
+  if (/_(pico|icon|thumb|small|compact|medium)(?:[_\-.]|$)/.test(name)) return -1;
+
   let score = 0;
   if (/flat.?front/.test(name)) score += 100;
   else if (/(flat|laydown|lay.?down|ghost|invisible.?man)/.test(name)) score += 70;
@@ -111,12 +124,17 @@ function scoreImageUrl(url) {
 }
 
 /*
- * Vision cannot police style identity. NL3600 and NL3214 are both plain navy
- * tees; a verifier looking at pixels passes the wrong one happily, which is
- * precisely how a search result for "NL3600" ended up returning a 3214 photo in
- * testing. Style identity therefore has to come from provenance: the image's
- * own URL must name the style. Anything that cannot prove which style it shows
- * is dropped, and generation takes over.
+ * Vision cannot police style identity: NL3600 and NL3214 are both plain navy
+ * tees, and a verifier looking at pixels passes either happily. A style number
+ * in the image URL is therefore the strongest provenance available, and it
+ * RANKS candidates first.
+ *
+ * It is no longer a requirement. Distributor CDNs name files after their own
+ * SKUs, so demanding it rejected correct photos of the right garment in the
+ * right colour and pushed 79% of built products onto a generated blank. A real
+ * photo of a close-neighbour style is a better product image than an invented
+ * garment, and the vision gate still enforces type, colour, decoration and
+ * flat-front framing.
  */
 function styleTokens(brandStyle) {
   const tokens = new Set();
@@ -280,11 +298,15 @@ async function imageCandidatesFromPage(pageUrl, pageTexts = null) {
     raw.add(match[0].replace(/\\/g, ""));
   }
 
+  // score < 0 is a real disqualification (swatch, icon, back/side view). score
+  // 0 just means the filename says nothing either way - which is the norm on
+  // distributor CDNs - so those are kept as lower-ranked candidates. Requiring
+  // score > 0 here harvested ZERO images from pages we had successfully read.
   return [...raw]
     .map((value) => absoluteUrl(value, pageUrl))
     .filter(Boolean)
     .map((url) => ({ url, score: scoreImageUrl(url) }))
-    .filter((item) => item.score > 0)
+    .filter((item) => item.score >= 0)
     .sort((a, b) => b.score - a.score)
     .map((item) => item.url);
 }
@@ -308,14 +330,20 @@ async function searchSupplier({ brandStyle, garmentColor, productType, vendor })
     tools: [{ type: "web_search" }],
     input: `Find the blank wholesale apparel style "${brandStyle}"${colorPhrase}${
       productType ? ` (a ${productType})` : ""
-    } on the manufacturer's site or an authorised wholesale distributor (SanMar, S&S Activewear, alphabroder, Next Level Apparel, Richardson, Augusta, Carhartt, or the brand's own site).${vendorPhrase}
+    } on the manufacturer's site or an authorised wholesale distributor (SanMar, S&S Activewear, alphabroder, Next Level Apparel, Richardson, Augusta, Carhartt, or the brand's own site).${vendorPhrase}${
+      garmentColor
+        ? `
+
+COLOURWAY MATTERS MORE THAN ANYTHING ELSE HERE. The department ordered this style in ${garmentColor}. Many of these sites publish a SEPARATE page per colourway (…/unisex-cotton-t-shirt-navy, …?color=Navy). Return the page for ${garmentColor} — not the black, white or heather page for the same style. A page showing the right style in the wrong colour is close to useless, because the photo on it cannot be used.`
+        : ""
+    }
 
 I need the plain product photo of the garment with NO decoration on it.
 
 Return ONLY a JSON object and no other text:
 {
-  "productPages": ["product page URLs for this exact style, best first, max 4"],
-  "imageUrls": ["direct URLs ending in .jpg or .png showing this style, prefer a flat/laydown front view over a photo on a model, max 4"],
+  "productPages": ["product page URLs for this exact style${garmentColor ? ` IN ${garmentColor}` : ""}, best first, max 6"],
+  "imageUrls": ["direct URLs ending in .jpg or .png showing this style${garmentColor ? ` in ${garmentColor}` : ""}, prefer a flat/laydown front view over a photo on a model, max 6"],
   "spec": "one paragraph describing exactly what this style looks like: silhouette and cut, neckline or collar, sleeve length, cuffs, placket and buttons, hem, pockets, fabric texture and weight, and how it hangs"
 }
 
@@ -500,19 +528,52 @@ async function findSupplierBlank(product, { onLog } = {}) {
         .map((item) => item.url)
     );
 
-    const identified = [...new Set(candidates)].filter((url) => {
-      if (matchesStyle(url, tokens)) return true;
-      if (vendorPageUrls.has(url)) {
-        log(`accepting ${url.split("/").pop()} on vendor-page provenance (${vendor})`);
-        return true;
-      }
-      log(`skipped ${url.split("/").pop()}: filename does not name style ${brandStyle}`);
-      return false;
-    });
+    /* The style tokens in a filename RANK candidates; they no longer veto them.
+       Vendor CDNs name files after their own SKUs - Richardson's 168 cap ships
+       as richardson_2130-navy-front.jpg - so demanding the style number in the
+       filename discarded ~20 correct front-view photos of the right cap in the
+       right colour and sent the build to a generated garment instead. Across
+       the first three stores that left 79% of products on an invented blank.
+
+       The vision gate below is the real check (right garment type, right
+       colour, undecorated, flat front view), and it runs on every candidate in
+       rank order. A real photo of a neighbouring style beats an imagined one. */
+    const provenance = (url) => {
+      if (matchesStyle(url, tokens)) return 0; // the filename names the style
+      if (vendorPageUrls.has(url)) return 1; // the vendor's own product page
+      if (candidateSource.has(url)) return 2; // a product page we fetched and read
+      return 3; // a bare image URL the search model volunteered
+    };
+
+    /* Colour outranks provenance. A style page carries every colourway, so the
+       first six candidates by style alone were six photos of the same cap in
+       black, brown and charcoal - each an instant "wrong colour" rejection -
+       while the navy one sat further down the list untried. The URL almost
+       always names the colourway (168_Navy_FRONT.jpg), so matching it first
+       spends the vision budget on photos that can actually pass. */
+    const colorTokens = String(expectations.garmentColor || "")
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter((token) => token.length > 2);
+    const namesColor = (url) => {
+      if (!colorTokens.length) return false;
+      const name = url.toLowerCase();
+      return colorTokens.every((token) => name.includes(token));
+    };
+    const rank = (url) => (namesColor(url) ? 0 : 4) + provenance(url);
+
+    // Stable sort: within a rank, page order and URL score still decide.
+    const identified = [...new Set(candidates)].sort((a, b) => rank(a) - rank(b));
+    const named = identified.filter((url) => provenance(url) === 0).length;
+    const coloured = identified.filter(namesColor).length;
+    log(
+      `${identified.length} candidate photos for ${brandStyle} ` +
+        `(${named} name the style, ${coloured} name the colour ${expectations.garmentColor || "-"})`
+    );
 
     let imageBuffer = null;
     let imageUrl = null;
-    const shortlist = identified.slice(0, 6);
+    const shortlist = identified.slice(0, 8);
     for (const url of shortlist) {
       try {
         imageBuffer = await tryCandidate(url, expectations, log);

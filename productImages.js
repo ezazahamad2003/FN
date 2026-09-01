@@ -1,415 +1,187 @@
 /* -----------------------------------------------------------------------------
    Product image production — the ONE place a decorated garment photo is made.
 
-   Used by the store builder (intakeBuild.js) and by the image lab
-   (imageLab.js), so what the lab grades is exactly what stores ship.
+   Used by the store builder (intakeBuild.js) — the single producer of every
+   decorated product photo a store ships.
 
-   The pipeline per face — EVERY decorated image goes through the image
-   model; the composite is a positioning draft and a last-resort fallback,
-   never the intended product photo:
+   ONE model call per face: the blank garment photo, the artwork files, and a
+   plain instruction saying where each mark goes.
 
-     1. MEASURE. Vision measures the base photo (garment box, physical width
-        in inches, patch-ready rectangle per spot). Each measured spot is
-        bounded by the production-standard prior for that location and
-        validated against the pixels, then the artwork is placed at its true
-        physical size and snapped fully onto fabric.
+   This replaced a measure-then-composite pipeline that asked vision to return
+   the garment's box, its width in inches, and a rectangle per spot, then
+   placed artwork inside those numbers. The measurements were not reliable
+   enough to build on — on one hoodie the garment was reported at 88% of the
+   canvas against a true 64%, and spot boxes came back so tight that a 4-inch
+   crest was rendered at 1.4 inches. Each estimate then fed the next, so the
+   errors compounded into artwork that was the wrong size on a real order.
 
-     2. DRAFT. The exact artwork is composited at the measured spot with the
-        fabric's luminance folded into the ink — pixel-faithful lettering,
-        correct position and scale. This is the model's reference, not the
-        deliverable.
-
-     3. RENDER. Large artwork is re-rendered in place over the whole photo.
-        Small and medium artwork uses PATCH RENDERING: the placement region
-        is cropped and upscaled to the model's full canvas (the crest's
-        lettering becomes hundreds of pixels tall), rendered as genuine
-        print/embroidery/patch, verified as a close-up against the original
-        artwork file, then feathered back into the photo. Only artwork whose
-        every render attempt fails verification ships as the draft.
+   Telling the model where the logo goes, in words, and letting it place the
+   mark produces better images than measuring for it did.
    -------------------------------------------------------------------------- */
 
 const sharp = require("sharp");
-const { analyzeGarmentGeometry, integrateArtworkPatch, renderDecoratedGarment } = require("./ai");
-const { STATIC_PLACEMENTS, compositeDecorationsAt, compositeDecorationsOnGarment } = require("./mockup");
+const { editImage } = require("./azureOpenai");
 
-const TIER_INCHES = { small: 4, standard: 6, large: 9 };
-const DEFAULT_GARMENT_WIDTH_INCHES = 22;
-// Boxes at least this fraction of the image width are rendered whole-image;
-// below it, the zoom-patch path preserves lettering far better.
-const WHOLE_IMAGE_FRACTION = 0.42;
+// The customer picks a size tier on the intake form. It is their instruction,
+// not a measurement, so it travels as the words a decorator would use.
+const TIER_PHRASE = {
+  small: "small — about the size of a chest crest",
+  standard: "a medium size",
+  large: "large, filling most of the print area"
+};
 
-function tierInches(tier) {
-  const value = String(tier || "");
+function tierPhrase(tier) {
+  const value = String(tier || "").toLowerCase();
   if (value.startsWith("custom")) {
-    const inches = parseFloat((value.match(/(\d+(?:\.\d+)?)/) || [])[1]);
-    if (Number.isFinite(inches) && inches > 0.5 && inches < 30) return inches;
-    return TIER_INCHES.small;
+    const inches = (value.match(/(\d+(?:\.\d+)?)/) || [])[1];
+    return inches ? "about " + inches + " inches wide" : TIER_PHRASE.small;
   }
-  return TIER_INCHES[value] || TIER_INCHES.small;
+  if (value.startsWith("large")) return TIER_PHRASE.large;
+  if (value.startsWith("standard")) return TIER_PHRASE.standard;
+  return TIER_PHRASE.small;
 }
 
-function tierIsSmall(tier) {
-  return tierInches(tier) <= 5;
+function finishPhrase(method) {
+  if (/embroider/i.test(method)) return "embroidered";
+  if (/patch/i.test(method)) return "a sewn-on patch";
+  if (/heat\s*transfer/i.test(method)) return "heat pressed";
+  return "screen printed";
 }
 
-function widthPercent(tier, garmentWidthInches) {
-  const width = garmentWidthInches || DEFAULT_GARMENT_WIDTH_INCHES;
-  return Math.max(5, Math.min(90, Math.round((tierInches(tier) / width) * 100)));
-}
 
-/* Some spots sit on surfaces the camera sees at an angle. Artwork there must
-   not read as a flat frontal decal: a cap's SIDE panel curves away steeply
-   (the mark shows roughly half, foreshortened), a sleeve's outer face has a
-   gentle cylindrical curve. The draft is pre-squeezed so even the fallback
-   composite reads angled, and the renderer + verifier are told what wrap to
-   produce and accept. */
-function surfaceFor(key) {
-  if (key === "cap-side") return "cap-side";
-  if (/sleeve/.test(key)) return "sleeve";
-  if (key === "beanie-cuff") return "cuff";
-  return "flat";
-}
+/* -----------------------------------------------------------------------------
+   Artwork preparation.
 
-const SURFACE_SQUEEZE = { "cap-side": 0.58, sleeve: 0.88, cuff: 0.95, flat: 1 };
+   The image model reads the logo file in order to reproduce it. When it cannot
+   read the mark it does not fail - it INVENTS a plausible logo, a different
+   one each time, so the failure is silent, unrepeatable, and ships a fake
+   department badge to a customer. One 300x161 department logo came back across
+   four runs as "DEUS", "ONE", "BANDIT OUTDOORS" and "Callaway Golf".
 
-async function squeezeLogo(buffer, factor) {
-  if (factor >= 1) return buffer;
-  const meta = await sharp(buffer).metadata();
-  if (!meta.width || !meta.height) return buffer;
-  return sharp(buffer)
-    .resize(Math.max(1, Math.round(meta.width * factor)), meta.height, { fit: "fill" })
-    .png()
-    .toBuffer();
-}
+   Two things make a mark unreadable, and TRANSPARENCY is the bigger one. A
+   logo on an alpha background failed even at 1024px; the identical file
+   flattened onto white reproduced its script and strapline exactly. Low
+   resolution compounds it, so small artwork is also upscaled - that adds no
+   information, but it puts the detail that exists at a scale the model can
+   resolve.
 
-function widthPhraseFor(decoration, garmentWidthInches) {
-  const inches = tierInches(decoration.tier);
-  const pct = widthPercent(decoration.tier, garmentWidthInches);
-  return `exactly about ${inches} inches (${Math.round(inches * 2.54)} cm) wide — approximately ${pct}% of the garment's full width, no wider, with clear blank fabric around it`;
-}
+   Flattening has one inverse risk: a logo drawn in white disappears on a white
+   ground. When almost nothing survives the flatten, it goes onto a dark ground
+   instead.
+   -------------------------------------------------------------------------- */
+const MIN_ARTWORK_EDGE = 1024;
 
-/* ── Geometry ────────────────────────────────────────────────────────────── */
-
-async function spotOnFabric(baseBuffer, spot) {
-  const { data, info } = await sharp(baseBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const sample = (x, y) => {
-    const i = (y * info.width + x) * info.channels;
-    return [data[i], data[i + 1], data[i + 2]];
-  };
-  const corners = [sample(2, 2), sample(info.width - 3, 2), sample(2, info.height - 3), sample(info.width - 3, info.height - 3)];
-  const background = corners[0].map((_, channel) => corners.reduce((sum, corner) => sum + corner[channel], 0) / corners.length);
-
-  const left = Math.max(0, Math.round(spot.x * info.width));
-  const top = Math.max(0, Math.round(spot.y * info.height));
-  const width = Math.min(info.width - left, Math.max(1, Math.round(spot.w * info.width)));
-  const height = Math.min(info.height - top, Math.max(1, Math.round(spot.h * info.height)));
-
-  const fraction = (x0, y0, w0, h0) => {
-    let backdrop = 0;
-    let total = 0;
-    for (let y = Math.max(0, Math.round(y0)); y < Math.min(info.height, Math.round(y0 + h0)); y += 2) {
-      for (let x = Math.max(0, Math.round(x0)); x < Math.min(info.width, Math.round(x0 + w0)); x += 2) {
-        const i = (y * info.width + x) * info.channels;
-        const distance =
-          Math.abs(data[i] - background[0]) + Math.abs(data[i + 1] - background[1]) + Math.abs(data[i + 2] - background[2]);
-        if (distance < 36) backdrop++;
-        total++;
-      }
-    }
-    return total === 0 ? 1 : backdrop / total;
-  };
-  // White garment on a white backdrop: the frame's center reads as backdrop,
-  // so the pixel test is meaningless — trust the measured geometry instead.
-  if (fraction(info.width * 0.3, info.height * 0.3, info.width * 0.4, info.height * 0.4) > 0.5) return true;
-  return fraction(left, top, width, height) <= 0.25;
-}
-
-/* Vision refines position and scale, but the production-standard coordinate
-   is the PRIOR: a measured chest spot may slide a little, never onto the
-   sleeve seam. The measured center is clamped into a window around the
-   static coordinate for that placement key. */
-function boundSpot(geometry, key, spot) {
-  const prior = STATIC_PLACEMENTS[key];
-  if (!prior) return spot;
-  const garment = geometry.garment;
-  const centerX = (spot.x + spot.w / 2 - garment.x) / garment.w;
-  const centerY = (spot.y + spot.h / 2 - garment.y) / garment.h;
-  // Thigh spots get a tight window: the static prior IS the outer thigh,
-  // and pants geometry (two legs, inseam) misleads vision more than tops.
-  const tolX = /thigh/.test(key) ? 0.05 : 0.11;
-  const tolY = /thigh/.test(key) ? 0.1 : 0.14;
-  const boundedX = Math.min(prior.cx + tolX, Math.max(prior.cx - tolX, centerX));
-  const boundedY = Math.min(prior.cy + tolY, Math.max(prior.cy - tolY, centerY));
-  return {
-    x: garment.x + boundedX * garment.w - spot.w / 2,
-    y: garment.y + boundedY * garment.h - spot.h / 2,
-    w: spot.w,
-    h: spot.h
-  };
-}
-
-async function measureGeometry(baseBuffer, decorations, onLog, cache, cacheKey) {
-  if (cache && cacheKey && cacheKey in cache) return cache[cacheKey];
-  const result = await measureGeometryUncached(baseBuffer, decorations, onLog);
-  if (cache && cacheKey) cache[cacheKey] = result;
-  return result;
-}
-
-async function measureGeometryUncached(baseBuffer, decorations, onLog) {
-  const log = (message) => onLog && onLog(message);
-  const spotKeys = decorations.flatMap((decoration) => decoration.keys || []);
+async function prepareArtwork(buffer) {
   try {
-    const geometry = await analyzeGarmentGeometry(baseBuffer, spotKeys);
-    if (!geometry) {
-      log("garment geometry unavailable; using static placement coordinates");
-      return null;
-    }
-    const missing = [];
-    for (const key of spotKeys) {
-      let spot = geometry.spots[key];
-      if (spot) {
-        spot = boundSpot(geometry, key, spot);
-        geometry.spots[key] = spot;
-      }
-      if (!spot || !(await spotOnFabric(baseBuffer, spot))) missing.push(key);
-    }
-    if (missing.length) {
-      log(`garment geometry missing or off-fabric spots (${missing.join(", ")}); using static placement coordinates`);
-      return null;
-    }
-    return geometry;
-  } catch (error) {
-    log(`garment geometry failed (${error.message}); using static placement coordinates`);
-    return null;
-  }
-}
+    const meta = await sharp(buffer).metadata();
+    const longEdge = Math.max(meta.width || 0, meta.height || 0);
+    const needsUpscale = Boolean(longEdge) && longEdge < MIN_ARTWORK_EDGE;
+    if (!needsUpscale && !meta.hasAlpha) return buffer;
 
-/* ── The draft composite ─────────────────────────────────────────────────── */
-
-/* Every decoration at its measured (or static) spot, at its true physical
-   size, fabric-blended. Returns { buffer, placed } where each placed entry
-   carries the decoration index it belongs to — the patch renderer works
-   region by region from these. */
-async function measuredComposite({ baseBuffer, decorations, geometry, onLog }) {
-  if (!geometry) {
-    const flat = [];
-    for (const [index, decoration] of decorations.entries()) {
-      for (const placementKey of decoration.keys || []) {
-        const surface = surfaceFor(placementKey);
-        flat.push({
-          logoBuffer: await squeezeLogo(decoration.logo.buffer, SURFACE_SQUEEZE[surface]),
-          placementKey,
-          decorationIndex: index,
-          surface
+    const portrait = (meta.height || 0) > (meta.width || 0);
+    const onBackground = (background) => {
+      let pipe = sharp(buffer);
+      if (needsUpscale) {
+        pipe = pipe.resize({
+          [portrait ? "height" : "width"]: MIN_ARTWORK_EDGE,
+          fit: "inside",
+          kernel: "lanczos3"
         });
       }
-    }
-    const { buffer, placed } = await compositeDecorationsOnGarment(baseBuffer, flat);
-    return { buffer, placed: placed.map((entry, i) => ({ ...entry, decorationIndex: flat[i].decorationIndex, surface: flat[i].surface })) };
+      if (meta.hasAlpha) pipe = pipe.flatten({ background });
+      return pipe.png().toBuffer();
+    };
+
+    const onWhite = await onBackground("#ffffff");
+    if (!meta.hasAlpha) return onWhite;
+
+    const ink = (await sharp(onWhite).greyscale().stats()).channels[0];
+    const vanished = ink.mean > 250 && ink.stdev < 6;
+    return vanished ? onBackground("#1f2430") : onWhite;
+  } catch {
+    // An unreadable file is the edit endpoint's problem to report, not ours.
+    return buffer;
   }
-  const meta = await sharp(baseBuffer).metadata();
-  const garmentWidthPx = geometry.garment.w * meta.width;
-  const widthInches = geometry.garmentWidthInches || DEFAULT_GARMENT_WIDTH_INCHES;
-
-  const placements = [];
-  for (const [index, decoration] of decorations.entries()) {
-    for (const key of decoration.keys || []) {
-      const spot = geometry.spots[key];
-      const box = {
-        left: spot.x * meta.width,
-        top: spot.y * meta.height,
-        width: spot.w * meta.width,
-        height: spot.h * meta.height
-      };
-      // True physical width, capped so it never touches the print area's
-      // edges. No box-relative floor: flooring against a generously measured
-      // spot box is exactly how chest crests grew past their tier.
-      const physical = (tierInches(decoration.tier) / widthInches) * garmentWidthPx;
-      const artWidth = Math.max(36, Math.min(physical, box.width * 0.82));
-      const surface = surfaceFor(key);
-      placements.push({
-        logoBuffer: await squeezeLogo(decoration.logo.buffer, SURFACE_SQUEEZE[surface]),
-        box,
-        maxWidth: artWidth,
-        maxHeight: box.height * 0.9,
-        // Large graphics hang from the top of the print area (just below the
-        // collar), the production standard; small crests center in theirs.
-        anchorTop: !tierIsSmall(decoration.tier) && /back|full/.test(key),
-        decorationIndex: index,
-        surface
-      });
-    }
-  }
-  const { buffer, placed } = await compositeDecorationsAt(baseBuffer, placements);
-  return { buffer, placed: placed.map((entry, i) => ({ ...entry, decorationIndex: placements[i].decorationIndex, surface: placements[i].surface })) };
-}
-
-/* ── Patch rendering ─────────────────────────────────────────────────────── */
-
-/* Paste the integrated patch back — but only the ARTWORK'S NEIGHBORHOOD.
-   The model may retone the crop's backdrop or distant fabric; pasting the
-   whole square back printed those tone shifts as faint rectangles. The mask
-   holds full opacity over the artwork plus a margin, fades to zero across a
-   feather ring, and leaves everything beyond it exactly as it was. */
-async function featherPaste(workingBuffer, patchBuffer, left, top, side, artRect) {
-  const restored = await sharp(patchBuffer).resize(side, side, { kernel: "lanczos3" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const { data, info } = restored;
-  const margin = Math.max(8, Math.round(Math.max(artRect.width, artRect.height) * 0.16));
-  const inner = {
-    left: artRect.left - margin * 0.2,
-    top: artRect.top - margin * 0.2,
-    right: artRect.left + artRect.width + margin * 0.2,
-    bottom: artRect.top + artRect.height + margin * 0.2
-  };
-  for (let y = 0; y < info.height; y++) {
-    for (let x = 0; x < info.width; x++) {
-      const dx = Math.max(inner.left - x, 0, x - inner.right);
-      const dy = Math.max(inner.top - y, 0, y - inner.bottom);
-      const outside = Math.sqrt(dx * dx + dy * dy);
-      if (outside <= 0) continue;
-      const i = (y * info.width + x) * 4;
-      data[i + 3] = outside >= margin ? 0 : Math.round(data[i + 3] * (1 - outside / margin));
-    }
-  }
-  const masked = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
-  return sharp(workingBuffer).composite([{ input: masked, left, top }]).png().toBuffer();
-}
-
-async function patchRender({ workingBuffer, placedBox, decoration, method, onLog }) {
-  const meta = await sharp(workingBuffer).metadata();
-  const side = Math.min(
-    Math.min(meta.width, meta.height),
-    Math.max(240, Math.round(Math.max(placedBox.width, placedBox.height) * 2.3))
-  );
-  const left = Math.min(Math.max(Math.round(placedBox.left + placedBox.width / 2 - side / 2), 0), meta.width - side);
-  const top = Math.min(Math.max(Math.round(placedBox.top + placedBox.height / 2 - side / 2), 0), meta.height - side);
-
-  const crop = await sharp(workingBuffer)
-    .extract({ left, top, width: side, height: side })
-    .resize(1024, 1024, { kernel: "lanczos3" })
-    .png()
-    .toBuffer();
-
-  const integrated = await integrateArtworkPatch({
-    patchBuffer: crop,
-    logo: {
-      logoBuffer: decoration.logo.buffer,
-      logoMime: decoration.logo.mimetype,
-      logoName: decoration.logo.originalName
-    },
-    decorationMethod: method,
-    surface: placedBox.surface || "flat",
-    onLog
-  });
-  if (!integrated) return null;
-  // The artwork's rectangle inside the crop, in crop pixels — the paste mask
-  // hugs it so nothing the model touched beyond it survives.
-  const artRect = {
-    left: placedBox.left - left,
-    top: placedBox.top - top,
-    width: placedBox.width,
-    height: placedBox.height
-  };
-  return featherPaste(workingBuffer, integrated, left, top, side, artRect);
-}
-
-function renderDecorationsFor(decorations, garmentWidthInches) {
-  return decorations.map((decoration) => ({
-    logoBuffer: decoration.logo.buffer,
-    logoMime: decoration.logo.mimetype,
-    logoName: decoration.logo.originalName,
-    placementLabel: decoration.label,
-    guidance: decoration.guidance,
-    widthPhrase: widthPhraseFor(decoration, garmentWidthInches)
-  }));
-}
-
-/* Render every placed artwork region on a drafted face. Whole-image when any
-   artwork is large enough to survive full-canvas rendering; the zoom-patch
-   pass otherwise (and as the large path's fallback). */
-async function integrateFace({ baseBuffer, draft, placed, decorations, geometry, face, method, onLog }) {
-  const log = (message) => onLog && onLog(message);
-  const meta = await sharp(draft).metadata();
-  // Large-tier artwork always renders whole-image: a 9-inch graphic at full
-  // canvas survives fine, and the zoom-patch crop gives the model room to
-  // blow wide artwork past its box.
-  const hasBig =
-    decorations.some((decoration) => !tierIsSmall(decoration.tier) && tierInches(decoration.tier) >= 8) ||
-    placed.some((entry) => entry.width >= meta.width * WHOLE_IMAGE_FRACTION);
-
-  if (hasBig) {
-    const rendered = await renderDecoratedGarment({
-      baseBuffer,
-      draftBuffer: draft,
-      decorations: renderDecorationsFor(decorations, geometry?.garmentWidthInches),
-      face,
-      sourceFace: face,
-      decorationMethod: method,
-      onLog
-    });
-    if (rendered) return { buffer: rendered, path: "render" };
-    log(`${face} whole-image render did not verify; patch-rendering each artwork`);
-  }
-
-  let working = draft;
-  let successes = 0;
-  for (const entry of placed) {
-    const result = await patchRender({
-      workingBuffer: working,
-      placedBox: entry,
-      decoration: decorations[entry.decorationIndex],
-      method,
-      onLog
-    });
-    if (result) {
-      working = result;
-      successes++;
-    }
-  }
-  const path = successes === placed.length ? "render" : successes > 0 ? "render-partial" : "render-fallback-composite";
-  if (path !== "render") log(`${face}: ${successes}/${placed.length} artwork regions rendered; the rest ship as the measured composite`);
-  return { buffer: working, path };
 }
 
 /**
  * Produce ONE face image for a product.
  *
- * decorations: [{ logo: {buffer, mimetype, originalName}, label, keys: [placementKey], tier, guidance }]
- * face / sourceFace: which face to produce, and which face baseBuffer shows.
- * getBackBlank: async () => buffer — lazily generates a blank back view
- *   (required when face is "back").
+ * `decorations` are the marks for THIS face: { logo, label, tier }.
+ * A face that is not the source face needs its own blank — back artwork
+ * composited onto a front photo would print across the chest — so
+ * `getBackBlank` supplies it.
  *
- * Returns { buffer, path } — "render" | "render-partial" |
- * "render-fallback-composite" ("composite" never ships by design any more).
+ * Returns { buffer, path }. `path` is "render" when the model produced the
+ * image and "render-failed" when it did not and the blank is shipping
+ * instead, so the caller can tell a real product photo from a bare garment.
  */
-async function renderFaceImage({ baseBuffer, sourceFace = "front", face = "front", decorations, method = "", getBackBlank, onLog, cache = null }) {
-  if (face === sourceFace) {
-    const geometry = await measureGeometry(baseBuffer, decorations, onLog, cache, `geo:${face}`);
-    const { buffer: draft, placed } = await measuredComposite({ baseBuffer, decorations, geometry, onLog });
-    return integrateFace({ baseBuffer, draft, placed, decorations, geometry, face, method, onLog });
-  }
+async function renderFaceImage({
+  baseBuffer,
+  sourceFace = "front",
+  face = "front",
+  decorations,
+  method = "",
+  productType = "garment",
+  getBackBlank,
+  onLog
+}) {
+  const log = (message) => onLog && onLog(message);
+  const base = face === sourceFace ? baseBuffer : await getBackBlank();
 
-  // Cross-face: back produced from a front photo. Large-only backs render
-  // whole-image straight from the front (the model turns the garment
-  // around); everything else drafts on a generated back blank first.
-  const allLarge = decorations.every((decoration) => !tierIsSmall(decoration.tier));
-  if (allLarge) {
-    const frontGeometry = await analyzeGarmentGeometry(baseBuffer, []).catch(() => null);
-    const rendered = await renderDecoratedGarment({
-      baseBuffer,
-      decorations: renderDecorationsFor(decorations, frontGeometry?.garmentWidthInches),
-      face,
-      sourceFace,
-      decorationMethod: method,
-      onLog
+  // One image per distinct artwork file; two spots sharing a logo reference
+  // the same image rather than sending it twice.
+  const images = [{ buffer: base, mimeType: "image/png", name: "garment.png" }];
+  const indexByName = new Map();
+  for (const decoration of decorations) {
+    const name = decoration.logo.originalName || "logo.png";
+    if (indexByName.has(name)) continue;
+    indexByName.set(name, images.length + 1);
+    const artwork = await prepareArtwork(decoration.logo.buffer);
+    images.push({
+      buffer: artwork,
+      // Preparation re-encodes as PNG, so the declared type has to follow it.
+      mimeType: artwork === decoration.logo.buffer ? decoration.logo.mimetype || "image/png" : "image/png",
+      name
     });
-    if (rendered) return { buffer: rendered, path: "render" };
   }
 
-  const blank = await getBackBlank();
-  const geometry = await measureGeometry(blank, decorations, onLog, cache, `geo:${face}`);
-  const { buffer: draft, placed } = await measuredComposite({ baseBuffer: blank, decorations, geometry, onLog });
-  return integrateFace({ baseBuffer: blank, draft, placed, decorations, geometry, face, method, onLog });
+  const instructions = decorations
+    .map((decoration) => {
+      const index = indexByName.get(decoration.logo.originalName || "logo.png");
+      return (
+        "Put the logo in image " + index + " on the " + String(decoration.label || "front left chest").toLowerCase() +
+        " as a badge, " + tierPhrase(decoration.tier) + "."
+      );
+    })
+    .join(" ");
+
+  /* Wording matters more than any other lever here, and this sentence is the
+     result of an A/B across six phrasings on the same garment.
+
+     "as a badge" is what put the mark where a decorator would actually put it.
+     But asking the model to follow "the fabric's folds and the photo's
+     lighting" dulled the artwork - it shaded the ink into the cloth until the
+     colours went muddy and small text stopped reading. Asking instead for the
+     logo's own colours to stay bright and true keeps the crispness of the
+     barest prompt while keeping the better placement. Every extra clause
+     beyond this made the result worse, not better. */
+  const prompt =
+    "Image 1 is a " + productType + ", shown from the " + face + ". " + instructions +
+    " Make each one look really " + finishPhrase(method) + " on the fabric," +
+    " keeping the logo's own colours bright, crisp and exactly as they are in its own image —" +
+    " same colours, same text, spelled the same." +
+    " Change nothing else about the photo.";
+
+  try {
+    const buffer = await editImage({ images, prompt });
+    return { buffer, path: "render" };
+  } catch (error) {
+    // A build that ships a blank is recoverable; a build that throws loses the
+    // whole product, so the failure is logged and the garment goes through.
+    log(face + " render failed (" + error.message + "); shipping the blank garment");
+    return { buffer: base, path: "render-failed" };
+  }
 }
 
-module.exports = { renderFaceImage, tierInches, tierIsSmall, widthPercent };
+module.exports = { renderFaceImage };
