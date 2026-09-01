@@ -71,7 +71,7 @@ function finishPhrase(method) {
    -------------------------------------------------------------------------- */
 const MIN_ARTWORK_EDGE = 1024;
 
-async function prepareArtwork(buffer) {
+async function prepareArtwork(buffer, garmentColor) {
   try {
     const meta = await sharp(buffer).metadata();
     const longEdge = Math.max(meta.width || 0, meta.height || 0);
@@ -92,15 +92,71 @@ async function prepareArtwork(buffer) {
       return pipe.png().toBuffer();
     };
 
-    const onWhite = await onBackground("#ffffff");
-    if (!meta.hasAlpha) return onWhite;
-
-    const ink = (await sharp(onWhite).greyscale().stats()).channels[0];
-    const vanished = ink.mean > 250 && ink.stdev < 6;
-    return vanished ? onBackground("#1f2430") : onWhite;
+    if (!meta.hasAlpha) return onBackground("#ffffff");
+    // White ink is the only thing a white ground destroys, so only then is a
+    // different ground worth the risk of it being drawn.
+    return onBackground((await hasLightInk(buffer)) ? garmentColor || "#1f2430" : "#ffffff");
   } catch {
     // An unreadable file is the edit endpoint's problem to report, not ours.
     return buffer;
+  }
+}
+
+/*
+ * Does the artwork contain near-white ink? Such a mark flattened onto white
+ * loses those strokes entirely - a logo whose lower half was white lettering
+ * came back with those words simply gone.
+ */
+async function hasLightInk(buffer) {
+  const { data, info } = await sharp(buffer)
+    .resize(160, 160, { fit: "inside" })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  let light = 0;
+  let ink = 0;
+  for (let i = 0; i < data.length; i += info.channels) {
+    if (data[i + 3] < 128) continue;
+    ink++;
+    if (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2] > 200) light++;
+  }
+  return ink > 0 && light / ink > 0.45;
+}
+
+/*
+ * The garment's own colour, sampled from the blank photo.
+ *
+ * It is the right ground for artwork carrying white ink: the strokes stay
+ * visible the way they will once printed, and if the model draws the flattened
+ * rectangle at all it is the same colour as the cloth and disappears. A neutral
+ * grey does neither - it was rendered as a visible grey patch on the sleeve.
+ */
+async function garmentColorOf(baseBuffer) {
+  try {
+    const { data, info } = await sharp(baseBuffer)
+      .resize(120, 120, { fit: "inside" })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let n = 0;
+    for (let i = 0; i < data.length; i += info.channels) {
+      // Skip the studio sweep; what remains is the garment.
+      if (data[i] > 232 && data[i + 1] > 232 && data[i + 2] > 232) continue;
+      r += data[i];
+      g += data[i + 1];
+      b += data[i + 2];
+      n++;
+    }
+    if (!n) return null;
+    const hex = (v) => Math.round(v / n).toString(16).padStart(2, "0");
+    return "#" + hex(r) + hex(g) + hex(b);
+  } catch {
+    return null;
   }
 }
 
@@ -129,6 +185,10 @@ async function renderFaceImage({
   const log = (message) => onLog && onLog(message);
   const base = face === sourceFace ? baseBuffer : await getBackBlank();
 
+  // Sampled once: artwork carrying white ink is flattened onto the cloth's own
+  // colour so those strokes survive.
+  const garmentColor = await garmentColorOf(base);
+
   // One image per distinct artwork file; two spots sharing a logo reference
   // the same image rather than sending it twice.
   const images = [{ buffer: base, mimeType: "image/png", name: "garment.png" }];
@@ -137,7 +197,7 @@ async function renderFaceImage({
     const name = decoration.logo.originalName || "logo.png";
     if (indexByName.has(name)) continue;
     indexByName.set(name, images.length + 1);
-    const artwork = await prepareArtwork(decoration.logo.buffer);
+    const artwork = await prepareArtwork(decoration.logo.buffer, garmentColor);
     images.push({
       buffer: artwork,
       // Preparation re-encodes as PNG, so the declared type has to follow it.
@@ -149,9 +209,16 @@ async function renderFaceImage({
   const instructions = decorations
     .map((decoration) => {
       const index = indexByName.get(decoration.logo.originalName || "logo.png");
+      /* "as a badge" earned its place on chest crests - it puts the mark where
+         a decorator would. But it is a literal instruction: on a screen-printed
+         sleeve the model drew an actual badge, a bounded rectangle with a
+         border, where the ink should sit straight on the cloth. So the word
+         follows the decoration method: a patch and embroidery ARE badges, a
+         print and a transfer are not. */
+      const asBadge = /embroider|patch/i.test(method) ? " as a badge," : "";
       return (
         "Put the logo in image " + index + " on the " + String(decoration.label || "front left chest").toLowerCase() +
-        " as a badge, " + tierPhrase(decoration.tier) + "."
+        asBadge + " " + tierPhrase(decoration.tier) + "."
       );
     })
     .join(" ");
@@ -166,8 +233,23 @@ async function renderFaceImage({
      logo's own colours to stay bright and true keeps the crispness of the
      barest prompt while keeping the better placement. Every extra clause
      beyond this made the result worse, not better. */
+  /* A sleeve print is barely visible on a flat front-facing photo: the sleeve
+     is edge-on, so the artwork is squeezed into a sliver and reads as the
+     wrong size no matter how it is described. Real sleeve decoration is
+     photographed from the SIDE, with the decorated arm toward the camera.
+
+     Only when every mark on this face is on a sleeve. A garment that also
+     carries a chest crest or a back graphic has to stay front-on, or the
+     turn hides the decoration the customer actually ordered. */
+  const labels = decorations.map((decoration) => String(decoration.label || ""));
+  const sleeveOnly = labels.length > 0 && labels.every((label) => /sleeve/i.test(label));
+  const viewClause = sleeveOnly
+    ? " Photograph the garment from the side, turned so the decorated sleeve faces the camera and the print on it is fully visible."
+    : "";
+
   const prompt =
     "Image 1 is a " + productType + ", shown from the " + face + ". " + instructions +
+    viewClause +
     " Make each one look really " + finishPhrase(method) + " on the fabric," +
     " keeping the logo's own colours bright, crisp and exactly as they are in its own image —" +
     " same colours, same text, spelled the same." +
