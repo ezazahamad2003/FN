@@ -7,3 +7,4 @@ server.out.log
 npm-debug.log
 .DS_Store
 public/test-assets
+test
