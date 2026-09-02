@@ -457,6 +457,22 @@ async function tryCandidate(url, expectations, log) {
   return normalizeBase(buffer);
 }
 
+/* One combination = one key, shared by the in-process cache, the durable link
+   book, and the console's add-an-order-link endpoint. brandStyle falls back to
+   the vendor; a product with neither keys on color+type alone, which is
+   exactly the combination an operator-booked link resolves. */
+function blankCacheKey(product) {
+  const vendor = String(product.vendor || "").trim();
+  const brandStyle = String(product.brandStyle || "").trim() || vendor;
+  return `${vendor}|${brandStyle}|${product.garmentColor || ""}|${product.productType || ""}`.toLowerCase();
+}
+
+/** Drop one combination from the in-process cache, so a link the operator
+    just booked is picked up by the next build without a restart. */
+function clearCachedBlank(cacheKey) {
+  cache.delete(cacheKey);
+}
+
 /*
  * Find a usable supplier photo for one style. Always resolves — a failure here
  * must never fail the onboarding run, it just falls back to generation.
@@ -472,14 +488,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
   };
 
   const empty = { imageBuffer: null, imageUrl: null, sourceUrl: null, spec: "", note: "" };
-  if (!brandStyle) {
-    return { ...empty, note: "No vendor or brand/style number stated, so no supplier photo could be looked up." };
-  }
-  if (!supplierBlanksEnabled()) {
-    return { ...empty, note: "Supplier photo lookup is disabled (SUPPLIER_BLANKS=off)." };
-  }
-
-  const cacheKey = `${vendor}|${brandStyle}|${product.garmentColor || ""}|${product.productType || ""}`.toLowerCase();
+  const cacheKey = blankCacheKey(product);
   if (cache.has(cacheKey)) return cache.get(cacheKey);
 
   const expectations = {
@@ -513,7 +522,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
     cache.set(cacheKey, result);
     return result;
   }
-  if (booked?.status === "verified" && booked.imageUrl) {
+  if (supplierBlanksEnabled() && booked?.status === "verified" && booked.imageUrl) {
     try {
       const buffer = await fetchImage(booked.imageUrl);
       const meta = await sharp(buffer).metadata();
@@ -535,6 +544,31 @@ async function findSupplierBlank(product, { onLog } = {}) {
       log(`link book entry is dead (${error.message}); marking stale and re-searching`);
       saveSupplierLink(cacheKey, { ...booked, status: "stale", staleReason: String(error.message || error) }).catch(() => {});
     }
+  }
+
+  /* An entry with a source page but no verified photo - operator-booked from
+     the console, or a verified photo gone stale - still supplies the ordering
+     link. It is the ONLY way a product whose form never stated a vendor or
+     style gets a source page, so it must be consulted before those bail-outs. */
+  const bookedSourceOnly = booked?.sourceUrl
+    ? {
+        ...empty,
+        sourceUrl: booked.sourceUrl,
+        spec: booked.spec || "",
+        note: `Order link for this garment/color came from the link book${booked.vendor ? ` (${booked.vendor})` : ""}. No supplier photo on file - generated from specs instead.`
+      }
+    : null;
+
+  if (!brandStyle) {
+    const result = bookedSourceOnly || { ...empty, note: "No vendor or brand/style number stated, so no supplier photo could be looked up." };
+    if (bookedSourceOnly) log(`link book: order link on file for this garment/color (${booked.sourceUrl})`);
+    cache.set(cacheKey, result);
+    return result;
+  }
+  if (!supplierBlanksEnabled()) {
+    const result = bookedSourceOnly || { ...empty, note: "Supplier photo lookup is disabled (SUPPLIER_BLANKS=off)." };
+    cache.set(cacheKey, result);
+    return result;
   }
 
   let result;
@@ -769,8 +803,8 @@ async function findSupplierBlank(product, { onLog } = {}) {
           verifiedAt: new Date().toISOString(),
           source: "build"
         }
-      : booked?.status === "verified" || booked?.status === "stale" || booked?.status === "unavailable"
-        ? null // keep stale URLs for the repair run and deliberate "unavailable" verdicts; don't bury them under "failed"
+      : booked?.status === "verified" || booked?.status === "stale" || booked?.status === "unavailable" || booked?.status === "operator"
+        ? null // keep stale URLs, deliberate "unavailable" verdicts, and operator-booked order links; don't bury them under "failed"
         : {
             ...expectations,
             status: "failed",
@@ -784,11 +818,18 @@ async function findSupplierBlank(product, { onLog } = {}) {
     result = { ...empty, note: `Supplier lookup failed for ${brandStyle} (${error.message}). Generated instead.` };
   }
 
+  // A search that found no photo still ships the operator-booked order link.
+  if (!result.imageBuffer && !result.sourceUrl && bookedSourceOnly) {
+    result = { ...result, sourceUrl: bookedSourceOnly.sourceUrl, note: `${result.note} An order link for this garment/color is on file in the link book.`.trim() };
+  }
+
   cache.set(cacheKey, result);
   return result;
 }
 
 module.exports = {
+  blankCacheKey,
+  clearCachedBlank,
   findSupplierBlank,
   // exported for tests
   scoreImageUrl,

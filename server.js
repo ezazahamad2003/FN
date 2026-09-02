@@ -37,7 +37,8 @@ const {
 } = require("./catalog");
 const { compositeLogoOnGarment, resolvePlacement } = require("./mockup");
 const { placementGuidance } = require("./placements");
-const { findSupplierBlank } = require("./blanks");
+const { blankCacheKey, clearCachedBlank, findSupplierBlank } = require("./blanks");
+const { saveSupplierLink } = require("./linkBook");
 const {
   combineIntakes,
   intakeContextText,
@@ -51,6 +52,7 @@ const {
   deleteCustomerIntakeRecord,
   getCustomerIntake,
   intakeDocumentHtml,
+  intakeFromCustomerRecord,
   listCustomerIntakes,
   updateCustomerIntake
 } = require("./customerIntakes");
@@ -511,6 +513,67 @@ app.post("/api/customer-intakes/:id/build", requireAdminToken, async (req, res) 
     const result = await startIntakeBuild(req.params.id, { force: Boolean(req.body?.force) });
     if (!result.started) return res.status(409).json({ error: result.reason });
     res.status(202).json({ started: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/* -----------------------------------------------------------------------------
+   Operator supplies the order link for a built product whose blank had no
+   source page (vendor never stated → generated lookalike). Two writes: the
+   intake record, so the store page and printable doc show the link at once,
+   and the supplier link book keyed by this garment's vendor|style|color|type,
+   so the NEXT build of the same combination carries the link automatically
+   even when the form names no vendor.
+   -------------------------------------------------------------------------- */
+app.post("/api/customer-intakes/:id/blank-source", requireAdminToken, async (req, res) => {
+  const url = String(req.body?.url || "").trim();
+  const productId = String(req.body?.productId || "").trim();
+  const title = String(req.body?.title || "").trim();
+  try {
+    const parsed = new URL(url);
+    if (!/^https?:$/.test(parsed.protocol)) throw new Error("not http(s)");
+  } catch {
+    return res.status(400).json({ error: "Enter the full supplier product page URL, starting with https://." });
+  }
+  if (!productId && !title) return res.status(400).json({ error: "productId or title is required." });
+
+  try {
+    const record = await getCustomerIntake(req.params.id);
+    const entry = (record.build?.products || []).find(
+      (p) =>
+        (productId && String(p.productId || "") === productId) ||
+        (title && String(p.title || "").toLowerCase() === title.toLowerCase())
+    );
+    if (!entry) return res.status(404).json({ error: "No built product on this store matches that id or title." });
+    entry.blankSourceUrl = url;
+
+    // Book the link under the same key the next build computes for this
+    // garment (split products "Title - logo" match their intake product by
+    // prefix). No match just skips the book; the record still updates.
+    const builtTitle = String(entry.title || "").toLowerCase();
+    const intakeProduct = (intakeFromCustomerRecord(record).products || []).find((p) => {
+      const t = String(p.productLabel || p.productType || "Product").toLowerCase();
+      return builtTitle === t || builtTitle.startsWith(`${t} - `);
+    });
+    let linkBookKey = null;
+    if (intakeProduct) {
+      linkBookKey = blankCacheKey(intakeProduct);
+      await saveSupplierLink(linkBookKey, {
+        vendor: intakeProduct.vendor || "",
+        brandStyle: intakeProduct.brandStyle || "",
+        garmentColor: intakeProduct.garmentColor || "",
+        productType: intakeProduct.productType || "",
+        status: "operator",
+        sourceUrl: url,
+        source: "console",
+        savedAt: new Date().toISOString()
+      });
+      clearCachedBlank(linkBookKey);
+    }
+
+    const intake = await updateCustomerIntake(req.params.id, { build: record.build });
+    res.json({ intake, product: entry, linkBookKey });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

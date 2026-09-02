@@ -3068,6 +3068,34 @@ a.float-source:hover, a.float-source:focus-visible { text-decoration: underline;
 a.float-source:focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--radius-sm); }
 .float-source.is-muted { color: var(--text-subtle); font-weight: 400; }
 
+/* "add order link" affordance + its inline form (generated blanks only) */
+.float-source-slot { display: grid; gap: var(--space-1); justify-items: center; }
+.float-source-add {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--info);
+  cursor: pointer;
+}
+.float-source-add:hover, .float-source-add:focus-visible { text-decoration: underline; }
+.float-source-add:focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--radius-sm); }
+.float-source-form { display: grid; gap: var(--space-2); width: 100%; }
+.float-source-form input {
+  width: 100%;
+  font-size: var(--fs-xs);
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--text);
+}
+.float-source-form input:focus { border-color: var(--info); box-shadow: var(--ring); outline: none; }
+.fsf-actions { display: flex; gap: var(--space-2); justify-content: center; }
+.fsf-error { margin: 0; font-size: var(--fs-xs); color: var(--danger); text-align: center; }
+
 @media (prefers-reduced-motion: reduce) {
   .float-media, .float-shadow { animation: none !important; }
   .store-card, .store-card:hover { transform: none; }

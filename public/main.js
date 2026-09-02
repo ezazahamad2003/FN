@@ -1610,6 +1610,36 @@ async function loadStoreProducts(record) {
       if (entry.productId) builtByProduct.set(String(entry.productId), entry);
       if (entry.title) builtByProduct.set(String(entry.title).toLowerCase(), entry);
     }
+    const addTargets = [];
+    const shelfHtml = products.map((product, index) => {
+      const url = shopifyProductUrl(record, product.id);
+      const media = product.imageUrl
+        ? `<img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.imageAlt || product.title)}" loading="lazy">`
+        : `<span class="pg-noimg" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>`;
+      const inner = `
+        <span class="float-media" style="--float-delay:${(index % 8) * 0.4}s">${media}</span>
+        <span class="float-shadow" aria-hidden="true"></span>
+        <b>${escapeHtml(product.title)}</b>
+        <small>${escapeHtml(product.status)} · ${product.variantCount} variant${product.variantCount === 1 ? "" : "s"}</small>`;
+      const card = url
+        ? `<a class="float-card" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${inner}</a>`
+        : `<span class="float-card">${inner}</span>`;
+      // The card is itself an anchor, so the supplier link must live as a
+      // sibling below it, never nested inside.
+      const built = builtByProduct.get(String(product.id)) || builtByProduct.get(String(product.title || "").toLowerCase());
+      let sourceLine = "";
+      if (built?.blankSourceUrl) {
+        sourceLine = `<a class="float-source" href="${escapeHtml(built.blankSourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(built.vendor || "supplier")} blank ↗</a>`;
+      } else if (built && String(built.blankSource || "").startsWith("generated")) {
+        // No source page: offer to add one. Saving books the link for this
+        // garment+color, so the next vendor-less build reuses it.
+        const targetIndex = addTargets.push(built) - 1;
+        sourceLine = `
+          <span class="float-source is-muted">generated blank · no source page</span>
+          <button class="float-source-add" type="button" data-add-source="${targetIndex}">add order link</button>`;
+      }
+      return `<div class="float-item">${card}${sourceLine ? `<div class="float-source-slot">${sourceLine}</div>` : ""}</div>`;
+    }).join("");
     panel.innerHTML = `
       <div class="card-head">
         <div>
@@ -1618,34 +1648,68 @@ async function loadStoreProducts(record) {
         </div>
         <a class="btn btn-secondary btn-sm" href="#/departments/${encodeURIComponent(collectionId)}">Manage products</a>
       </div>
-      <div class="float-shelf">
-        ${products.map((product, index) => {
-          const url = shopifyProductUrl(record, product.id);
-          const media = product.imageUrl
-            ? `<img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.imageAlt || product.title)}" loading="lazy">`
-            : `<span class="pg-noimg" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>`;
-          const inner = `
-            <span class="float-media" style="--float-delay:${(index % 8) * 0.4}s">${media}</span>
-            <span class="float-shadow" aria-hidden="true"></span>
-            <b>${escapeHtml(product.title)}</b>
-            <small>${escapeHtml(product.status)} · ${product.variantCount} variant${product.variantCount === 1 ? "" : "s"}</small>`;
-          const card = url
-            ? `<a class="float-card" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${inner}</a>`
-            : `<span class="float-card">${inner}</span>`;
-          // The card is itself an anchor, so the supplier link must live as a
-          // sibling below it, never nested inside.
-          const built = builtByProduct.get(String(product.id)) || builtByProduct.get(String(product.title || "").toLowerCase());
-          const sourceLine = built?.blankSourceUrl
-            ? `<a class="float-source" href="${escapeHtml(built.blankSourceUrl)}" target="_blank" rel="noreferrer">${escapeHtml(built.vendor || "supplier")} blank ↗</a>`
-            : built && String(built.blankSource || "").startsWith("generated")
-              ? `<span class="float-source is-muted">generated blank · no source page</span>`
-              : "";
-          return `<div class="float-item">${card}${sourceLine}</div>`;
-        }).join("")}
-      </div>`;
+      <div class="float-shelf">${shelfHtml}</div>`;
+    panel.querySelectorAll("[data-add-source]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const built = addTargets[Number(btn.dataset.addSource)];
+        const slot = btn.closest(".float-source-slot");
+        if (built && slot) openBlankSourceForm(slot, record, built, () => loadStoreProducts(record));
+      });
+    });
   } catch {
     panel.hidden = true;
   }
+}
+
+/* Inline "add order link" form under a generated product card. Saving writes
+   the intake record (the page and printable doc show the link at once) AND
+   books the link for this garment+color, so the next build of the same
+   combination carries it even when the form names no vendor. */
+function openBlankSourceForm(slot, record, built, onSaved) {
+  const original = slot.innerHTML;
+  const restore = () => {
+    slot.innerHTML = original;
+    // innerHTML restore drops the old listener with the old node.
+    slot.querySelector("[data-add-source]")?.addEventListener("click", () => openBlankSourceForm(slot, record, built, onSaved));
+  };
+  slot.innerHTML = `
+    <form class="float-source-form">
+      <input type="url" name="url" required placeholder="https://supplier.com/product-page"
+        aria-label="Supplier product page URL for ${escapeHtml(built.title || "this product")}">
+      <div class="fsf-actions">
+        <button class="btn btn-primary btn-sm" type="submit">Save</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-cancel>Cancel</button>
+      </div>
+      <p class="fsf-error" role="alert" hidden></p>
+    </form>`;
+  const form = slot.querySelector("form");
+  const input = form.querySelector("input");
+  const errorLine = form.querySelector(".fsf-error");
+  input.focus();
+  form.querySelector("[data-cancel]").addEventListener("click", restore);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitBtn = form.querySelector('[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving…";
+    errorLine.hidden = true;
+    try {
+      const res = await adminFetch(`/api/customer-intakes/${encodeURIComponent(record.id)}/blank-source`, {
+        method: "POST",
+        body: JSON.stringify({ productId: built.productId || "", title: built.title || "", url: input.value.trim() })
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || "Could not save the order link.");
+      // `built` is the same object the repaint reads from record.build.
+      built.blankSourceUrl = input.value.trim();
+      onSaved();
+    } catch (error) {
+      errorLine.textContent = error.message;
+      errorLine.hidden = false;
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Save";
+    }
+  });
 }
 
 async function loadStoreDocument(record) {
