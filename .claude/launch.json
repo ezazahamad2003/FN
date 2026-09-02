@@ -5,8 +5,7 @@
       "name": "fn-onboarding",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
-      "port": 3456,
-      "autoPort": true
+      "port": 3456
     }
   ]
 }

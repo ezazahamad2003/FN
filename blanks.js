@@ -2,6 +2,7 @@ const OpenAI = require("openai");
 const fetch = require("node-fetch");
 const sharp = require("sharp");
 const { extractSupplierFacts } = require("./ai");
+const { lookupSupplierLink, saveSupplierLink } = require("./linkBook");
 
 /*
  * Source the BLANK garment photo from the supplier instead of generating it.
@@ -107,6 +108,11 @@ function scoreImageUrl(url) {
   ];
   if (declaredSizes.length && Math.max(...declaredSizes) < 400) return -1;
   if (/_(pico|icon|thumb|small|compact|medium)(?:[_\-.]|$)/.test(name)) return -1;
+  // PrestaShop-style cart/home thumbnails are ~125px however they are named.
+  if (/[\/-](cart|home|small)_default[\/.]/.test(name)) return -1;
+  // Shopify theme chrome (menu backgrounds, arrows, badges) lives under
+  // /assets/; product photography never does.
+  if (/\/assets\//.test(name)) return -1;
 
   let score = 0;
   if (/flat.?front/.test(name)) score += 100;
@@ -319,18 +325,25 @@ async function imageCandidatesFromPage(pageUrl, pageTexts = null) {
 async function searchSupplier({ brandStyle, garmentColor, productType, vendor }) {
   const openai = client();
   const colorPhrase = garmentColor ? ` in ${garmentColor}` : "";
-  // A vendor the department named is the strongest lead we have — their own
-  // catalog page for the style is the exact garment they expect to receive, so
-  // it is searched first and by name.
+  // The query that actually finds the garment is the one a buyer would type:
+  // "<vendor> <garment type> <color>". When the department names a vendor,
+  // that vendor's own product page is almost always in the top handful of
+  // results for that query - far more reliably than searching by style
+  // number, which customers often leave blank or misremember. The style
+  // number, when present, narrows the query rather than leading it.
+  const styleName = brandStyle && brandStyle !== vendor ? brandStyle : "";
+  const searchQuery = [vendor, styleName, productType, garmentColor, "blank"].filter(Boolean).join(" ");
   const vendorPhrase = vendor
-    ? ` The customer says this garment comes from "${vendor}" — search ${vendor}'s own website/catalog FIRST and prefer product pages on their domain.`
+    ? ` The customer buys this garment from "${vendor}". Run the query above first - ${vendor}'s own website/catalog is almost always in the top 3-5 results. Prefer product pages on ${vendor}'s own domain over marketplaces or resellers. If the top results are all resellers, run a second search for "${vendor} official website ${productType || "catalog"}" to find ${vendor}'s own product page, and put it first in productPages. ALSO include one or two wholesale distributor or blank-apparel reseller product pages for the same garment as backup entries after ${vendor}'s page - distributors photograph blanks as flat/laydown front shots, which ${vendor}'s own marketing pages sometimes lack.`
     : "";
   const response = await openai.responses.create({
     model: SEARCH_MODEL,
     tools: [{ type: "web_search" }],
-    input: `Find the blank wholesale apparel style "${brandStyle}"${colorPhrase}${
-      productType ? ` (a ${productType})` : ""
-    } on the manufacturer's site or an authorised wholesale distributor (SanMar, S&S Activewear, alphabroder, Next Level Apparel, Richardson, Augusta, Carhartt, or the brand's own site).${vendorPhrase}${
+    input: `Search the web for: ${searchQuery}
+
+Find the blank wholesale ${productType || "garment"}${styleName ? ` style "${styleName}"` : ""}${colorPhrase} on ${
+      vendor ? `"${vendor}"'s website, ` : ""
+    }the manufacturer's site or an authorised wholesale distributor (SanMar, S&S Activewear, alphabroder, Next Level Apparel, Richardson, Augusta, Carhartt, or the brand's own site).${vendorPhrase}${
       garmentColor
         ? `
 
@@ -477,9 +490,61 @@ async function findSupplierBlank(product, { onLog } = {}) {
     productLabel: product.productLabel || ""
   };
 
+  /* The durable link book first: a verified entry resolves the garment with
+     ONE download - no web search, no vision spend - and makes the result
+     identical on every build. A dead link (vendors reorganise CDNs) is marked
+     stale for the repair queue and the live search below takes over. */
+  let booked = null;
+  try {
+    booked = await lookupSupplierLink(cacheKey);
+  } catch (error) {
+    log(`link book unavailable (${error.message}); using live search`);
+  }
+  // "unavailable" is a deliberate verdict (an agent or operator confirmed the
+  // colorway is not made): stop searching for it on every build and go
+  // straight to the generation fallback, keeping any spec the entry carries.
+  if (booked?.status === "unavailable") {
+    log(`link book: ${booked.reason || "combination marked unavailable"}; skipping search`);
+    const result = {
+      ...empty,
+      spec: booked.spec || "",
+      note: `Supplier photo marked unavailable (${booked.reason || "not made"}). Generated from specs instead.`
+    };
+    cache.set(cacheKey, result);
+    return result;
+  }
+  if (booked?.status === "verified" && booked.imageUrl) {
+    try {
+      const buffer = await fetchImage(booked.imageUrl);
+      const meta = await sharp(buffer).metadata();
+      if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_IMAGE_EDGE) {
+        throw new Error(`too small (${meta.width || 0}x${meta.height || 0})`);
+      }
+      log(`link book hit: ${booked.imageUrl}`);
+      const result = {
+        imageBuffer: await normalizeBase(buffer),
+        imageUrl: booked.imageUrl,
+        sourceUrl: booked.sourceUrl || null,
+        spec: booked.spec || "",
+        facts: booked.facts || null,
+        note: `Blank garment is the supplier's own photo of ${brandStyle} (from the link book).`
+      };
+      cache.set(cacheKey, result);
+      return result;
+    } catch (error) {
+      log(`link book entry is dead (${error.message}); marking stale and re-searching`);
+      saveSupplierLink(cacheKey, { ...booked, status: "stale", staleReason: String(error.message || error) }).catch(() => {});
+    }
+  }
+
   let result;
   try {
     const found = await searchSupplier(expectations);
+    log(
+      `search returned ${found.productPages.length} product page${found.productPages.length === 1 ? "" : "s"}, ` +
+        `${found.imageUrls.length} direct image URL${found.imageUrls.length === 1 ? "" : "s"}` +
+        (found.productPages.length ? ` (first: ${found.productPages[0]})` : "")
+    );
     const rejected = [];
     const tokens = styleTokens(brandStyle);
 
@@ -508,7 +573,11 @@ async function findSupplierBlank(product, { onLog } = {}) {
     const vendorPageUrls = new Set();
     const pageTexts = new Map();
     const candidateSource = new Map();
-    for (const pageUrl of found.productPages) {
+    // The vendor's own pages are read first: their images enter the candidate
+    // list ahead of reseller shots at equal rank, and the facts page (fabric
+    // bullets, size chart) resolves to the vendor's page whenever one loaded.
+    const pagesToRead = [...found.productPages].sort((a, b) => Number(isVendorHost(b)) - Number(isVendorHost(a)));
+    for (const pageUrl of pagesToRead) {
       try {
         const fromPage = await imageCandidatesFromPage(pageUrl, pageTexts);
         candidates.push(...fromPage);
@@ -571,12 +640,53 @@ async function findSupplierBlank(product, { onLog } = {}) {
         `(${named} name the style, ${coloured} name the colour ${expectations.garmentColor || "-"})`
     );
 
+    /* The budget that matters is VISION checks - they are the slow, paid part.
+       A dead download (404, tiny site asset, not an image) used to consume one
+       of the 8 shortlist slots anyway, so a page cluttered with chrome images
+       could exhaust the budget before a real photo was ever judged. Downloads
+       are cheap: try up to 24 of them, but spend at most 8 vision verdicts. */
+    /* One page must not monopolise the try list. A manufacturer's page often
+       carries six model shots of the wrong colourways; ranked globally they
+       fill the whole budget before a distributor's flat-front photo of the
+       SAME garment further down ever gets judged. Interleaving by source page
+       keeps the rank order within each page but spreads attempts across
+       pages. */
+    const byPage = new Map();
+    for (const url of identified) {
+      const key = candidateSource.get(url) || "search-results";
+      if (!byPage.has(key)) byPage.set(key, []);
+      byPage.get(key).push(url);
+    }
+    const interleaved = [];
+    const queues = [...byPage.values()];
+    while (interleaved.length < identified.length) {
+      let advanced = false;
+      for (const queue of queues) {
+        if (queue.length) {
+          interleaved.push(queue.shift());
+          advanced = true;
+        }
+      }
+      if (!advanced) break;
+    }
+
     let imageBuffer = null;
     let imageUrl = null;
-    const shortlist = identified.slice(0, 8);
+    let visionSpent = 0;
+    const shortlist = interleaved.slice(0, 24);
     for (const url of shortlist) {
+      if (visionSpent >= 8) break;
       try {
-        imageBuffer = await tryCandidate(url, expectations, log);
+        const buffer = await fetchImage(url);
+        const meta = await sharp(buffer).metadata();
+        if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_IMAGE_EDGE) {
+          throw new Error(`too small (${meta.width || 0}x${meta.height || 0})`);
+        }
+        visionSpent++;
+        const verdict = await verifyBlankPhoto(buffer, `image/${meta.format === "jpg" ? "jpeg" : meta.format}`, expectations);
+        if (!verdict.usable) throw new Error(verdict.reasons.join("; "));
+        log(`accepted supplier photo: ${url}`);
+        imageBuffer = await normalizeBase(buffer);
         imageUrl = url;
         break;
       } catch (error) {
@@ -586,12 +696,20 @@ async function findSupplierBlank(product, { onLog } = {}) {
     }
 
     // Right style, wrong colourway: address the correct colour's file directly.
+    // Each guessed URL inherits its parent's source page, so the "order this
+    // blank" link points at the page the photo actually came from.
     if (!imageBuffer) {
-      const recolored = [...new Set(shortlist.flatMap((url) => recoloredUrls(url, expectations.garmentColor, tokens)))];
-      for (const url of recolored.slice(0, 5)) {
+      const recoloredFrom = new Map();
+      for (const url of shortlist) {
+        for (const alt of recoloredUrls(url, expectations.garmentColor, tokens)) {
+          if (!recoloredFrom.has(alt)) recoloredFrom.set(alt, candidateSource.get(url) || null);
+        }
+      }
+      for (const url of [...recoloredFrom.keys()].slice(0, 5)) {
         try {
           imageBuffer = await tryCandidate(url, expectations, log);
           imageUrl = url;
+          if (recoloredFrom.get(url) && !candidateSource.has(url)) candidateSource.set(url, recoloredFrom.get(url));
           log(`recovered the correct colourway by URL: ${url}`);
           break;
         } catch (error) {
@@ -604,7 +722,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
     // accepted photo lives on (or the best product page found). Extraction is
     // best-effort: description generation works without it, so a failure here
     // never fails the product.
-    const factsPage = (imageUrl && candidateSource.get(imageUrl)) || found.productPages.find((url) => pageTexts.has(url)) || null;
+    const factsPage = (imageUrl && candidateSource.get(imageUrl)) || pagesToRead.find((url) => pageTexts.has(url)) || null;
     let facts = null;
     if (factsPage && pageTexts.get(factsPage)) {
       try {
@@ -622,7 +740,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
     result = {
       imageBuffer,
       imageUrl,
-      sourceUrl: factsPage || found.productPages[0] || null,
+      sourceUrl: factsPage || pagesToRead[0] || null,
       spec: found.spec,
       facts,
       note: imageBuffer
@@ -633,6 +751,34 @@ async function findSupplierBlank(product, { onLog } = {}) {
             } rejected: ${rejected[0]}). Generated from fetched specs instead.`
           : `No supplier photo found online for ${brandStyle}. Generated from fetched specs instead.`
     };
+
+    /* Write what this search learned into the durable book, best-effort. A
+       success becomes a verified entry every later build reuses for free; a
+       completed-but-empty search becomes a "failed" entry - the work queue
+       the seeding/repair agents pull from. A thrown search (transient network
+       or model error, the catch below) records nothing: a hiccup must not
+       queue agent work or shadow a combo that would resolve fine tomorrow. */
+    const bookEntry = imageBuffer
+      ? {
+          ...expectations,
+          status: "verified",
+          imageUrl,
+          sourceUrl: result.sourceUrl,
+          spec: result.spec || "",
+          facts,
+          verifiedAt: new Date().toISOString(),
+          source: "build"
+        }
+      : booked?.status === "verified" || booked?.status === "stale" || booked?.status === "unavailable"
+        ? null // keep stale URLs for the repair run and deliberate "unavailable" verdicts; don't bury them under "failed"
+        : {
+            ...expectations,
+            status: "failed",
+            failReason: result.note,
+            failedAt: new Date().toISOString(),
+            source: "build"
+          };
+    if (bookEntry) saveSupplierLink(cacheKey, bookEntry).catch((error) => log(`link book write failed: ${error.message}`));
   } catch (error) {
     log(`supplier lookup failed for ${brandStyle}: ${error.message}`);
     result = { ...empty, note: `Supplier lookup failed for ${brandStyle} (${error.message}). Generated instead.` };

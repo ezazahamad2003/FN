@@ -67,50 +67,37 @@
         <section class="view" id="viewDashboard" hidden>
           <section class="hero dashboard-hero">
             <p class="eyebrow">Internal agent platform</p>
-            <h2>Ask the operations agent about Shopify, Drive, onboarding runs, and the Azure migration.</h2>
+            <h2>Ask the company brain about stores, builds, connections, and what to do next.</h2>
           </section>
 
           <section class="dashboard-grid">
-            <div class="voice-console card card-pad" id="voiceAgent" data-state="idle">
-              <div class="card-head voice-head">
+            <div class="chat-console card card-pad" id="brainConsole">
+              <div class="card-head">
                 <div>
-                  <p class="eyebrow">Dashboard Voice Agent</p>
-                  <h2>Talk to operations</h2>
+                  <p class="eyebrow">Company Brain</p>
+                  <h2>Ask operations anything</h2>
                 </div>
                 <span class="status-pill" id="agentModelPill" data-state="checking">
                   <span class="dot"></span><span class="txt">Checking GenAI...</span>
                 </span>
               </div>
 
-              <div class="voice-harness" aria-live="polite">
-                <button class="voice-orb" type="button" id="agentVoiceButton" aria-pressed="false" aria-label="Start voice assistant">
-                  <span class="voice-glow" aria-hidden="true"></span>
-                  <span class="voice-ring voice-ring-one" aria-hidden="true"></span>
-                  <span class="voice-ring voice-ring-two" aria-hidden="true"></span>
-                  <span class="voice-core" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>
-                  </span>
-                </button>
-
-                <div class="voice-copy">
-                  <p class="voice-state" id="voiceState">Mic off</p>
-                  <p class="voice-prompt" id="voicePrompt">Click once to keep the agent listening. Pause to send, talk over it to interrupt, click again to stop.</p>
+              <div class="chat-thread" id="brainThread" aria-live="polite" aria-label="Conversation">
+                <div class="chat-msg" data-role="assistant">
+                  <p>Hi — I'm the company brain. Ask me about the store queue, builds, product images, Shopify, Drive, or how any part of the platform works.</p>
                 </div>
-
-                <div class="voice-meter" aria-hidden="true"><span></span></div>
-
-                <div class="voice-turns" aria-label="Last voice turn">
-                  <p><span>Heard</span><b id="voiceUserTranscript">Nothing yet.</b></p>
-                  <p><span>Answer</span><b id="voiceAssistantReply">Ready when you are.</b></p>
-                </div>
-
-                <audio id="voicePlayback" preload="auto"></audio>
               </div>
-              <div class="voice-quick" aria-label="Quick voice prompts">
+
+              <form class="chat-composer" id="brainForm">
+                <input id="brainInput" type="text" name="question" placeholder="Ask about stores, builds, connections, deploys…" autocomplete="off" maxlength="2000" aria-label="Ask the company brain">
+                <button class="btn btn-primary" type="submit">Send</button>
+              </form>
+
+              <div class="chat-quick" aria-label="Quick prompts">
                 <button type="button" data-agent-prompt="How many Shopify collections and products do we have?">Store count</button>
                 <button type="button" data-agent-prompt="Are Shopify, Google Drive, and GenAI connected?">Service health</button>
+                <button type="button" data-agent-prompt="Summarize the newest store requests in the queue and their build states.">Store queue</button>
                 <button type="button" data-agent-prompt="What should I check before running a new onboarding?">Onboarding check</button>
-                <button type="button" data-agent-prompt="Is production still on the old access-code revision?">Deploy status</button>
               </div>
             </div>
 
@@ -125,20 +112,20 @@
                 </div>
               </section>
 
-              <section class="rail-card voice-brief">
-                <p class="rail-title">Harness</p>
-                <div class="voice-harness-list">
-                  <span><b>Input</b> Azure OpenAI Whisper</span>
-                  <span><b>Output</b> Azure speech audio with browser fallback</span>
-                  <span><b>Context</b> Agent harness plus live services</span>
-                  <span><b>Control</b> One-click live mic with interruption</span>
+              <section class="rail-card">
+                <p class="rail-title">It knows about</p>
+                <div class="brain-scope-list">
+                  <span><b>Store queue</b> live intake submissions and build states</span>
+                  <span><b>Shopify</b> collections and product counts</span>
+                  <span><b>Connections</b> Drive, GenAI, storage health</span>
+                  <span><b>Playbook</b> how every flow in this platform works</span>
                 </div>
               </section>
 
               <section class="rail-card">
                 <p class="rail-title">Agents</p>
                 <div class="agent-roster">
-                  <a href="#/dashboard" data-state="live">Dashboard Voice Agent</a>
+                  <a href="#/dashboard" data-state="live">Company Brain</a>
                   <a href="#/onboarding" data-state="live">Onboarding Agent</a>
                   <span data-state="planned">Catalog Agent</span>
                   <span data-state="planned">Reporting Agent</span>

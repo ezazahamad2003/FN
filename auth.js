@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { google } = require("googleapis");
 const fetch = require("node-fetch");
+const { loadStoredTokens, persistStoredTokens, tokenStoreConfigured } = require("./tokenStore");
 
 const ENV_PATH = path.join(__dirname, ".env");
 
@@ -28,7 +29,6 @@ const DEFAULT_ENV = {
   AZURE_OPENAI_API_KEY: "",
   AZURE_OPENAI_API_VERSION: "2024-10-21",
   AZURE_OPENAI_CHAT_DEPLOYMENT: "",
-  AZURE_OPENAI_IMAGE_DEPLOYMENT: "",
   AZURE_OPENAI_VOICE_DEPLOYMENT: "",
   DATABASE_URL: "",
   POSTGRES_CONNECTION_STRING: "",
@@ -135,12 +135,46 @@ function hasRequiredTokens() {
   return Boolean(shopifyConfigured() && googleConnected());
 }
 
-function disconnectShopify() {
-  writeEnv({ SHOPIFY_ACCESS_TOKEN: "" });
+/*
+ * Persist a token change to durable storage, loudly. The .env write above it
+ * keeps this process working either way, but on Azure that file dies with the
+ * container - if the durable write failed, the operator must know the
+ * connection will not survive a restart.
+ */
+async function persistTokens(partial) {
+  try {
+    await persistStoredTokens(partial);
+  } catch (error) {
+    console.warn(`[auth] token saved for this session but NOT persisted (${error.message}); it will be lost on restart`);
+  }
 }
 
-function disconnectGoogle() {
+/*
+ * Called once at boot: restore tokens from durable storage into process.env.
+ * Environment variables (and .env values) win - the store only fills keys
+ * that are empty, so an explicitly configured token is never overridden.
+ */
+async function hydrateTokensFromStore() {
+  if (!tokenStoreConfigured()) return [];
+  const stored = await loadStoredTokens();
+  const hydrated = [];
+  for (const key of TOKEN_ENV_KEYS) {
+    if (!process.env[key] && stored[key]) {
+      process.env[key] = stored[key];
+      hydrated.push(key);
+    }
+  }
+  return hydrated;
+}
+
+async function disconnectShopify() {
+  writeEnv({ SHOPIFY_ACCESS_TOKEN: "" });
+  await persistTokens({ SHOPIFY_ACCESS_TOKEN: "" });
+}
+
+async function disconnectGoogle() {
   writeEnv({ GOOGLE_REFRESH_TOKEN: "", GOOGLE_REFRESH_TOKEN_2: "" });
+  await persistTokens({ GOOGLE_REFRESH_TOKEN: "", GOOGLE_REFRESH_TOKEN_2: "" });
 }
 
 function requireEnv(keys, service) {
@@ -220,6 +254,7 @@ async function exchangeShopifyCode(code, shop) {
     throw new Error(json.error_description || json.error || "Shopify token exchange failed");
   }
   writeEnv({ SHOPIFY_STORE: store, SHOPIFY_ACCESS_TOKEN: json.access_token });
+  await persistTokens({ SHOPIFY_ACCESS_TOKEN: json.access_token });
   return json.access_token;
 }
 function googleClient() {
@@ -249,11 +284,12 @@ async function exchangeGoogleCode(code) {
   const refreshToken = tokens.refresh_token;
   // Fill the primary slot when it is empty or the same account re-consented;
   // otherwise a different account lands in the secondary (failover) slot.
-  if (!process.env.GOOGLE_REFRESH_TOKEN || refreshToken === process.env.GOOGLE_REFRESH_TOKEN) {
-    writeEnv({ GOOGLE_REFRESH_TOKEN: refreshToken });
-  } else {
-    writeEnv({ GOOGLE_REFRESH_TOKEN_2: refreshToken });
-  }
+  const slot =
+    !process.env.GOOGLE_REFRESH_TOKEN || refreshToken === process.env.GOOGLE_REFRESH_TOKEN
+      ? "GOOGLE_REFRESH_TOKEN"
+      : "GOOGLE_REFRESH_TOKEN_2";
+  writeEnv({ [slot]: refreshToken });
+  await persistTokens({ [slot]: refreshToken });
   return refreshToken;
 }
 
@@ -278,6 +314,7 @@ module.exports = {
   googleDriveAuth,
   googleInstallUrl,
   hasRequiredTokens,
+  hydrateTokensFromStore,
   openBrowser,
   shopifyInstallUrl
 };

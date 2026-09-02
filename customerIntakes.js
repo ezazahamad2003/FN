@@ -3,9 +3,17 @@ const {
   ensureSubfolder,
   listFilesInFolder,
   readFileText,
-  updateJsonFile,
-  uploadJsonFile
+  trashFile,
+  updateJsonFile
 } = require("./drive");
+const {
+  deleteRecordBlob,
+  isBlobRecordId,
+  listRecordBlobs,
+  readRecordBlobText,
+  writeRecordBlob
+} = require("./intakeStore");
+const { googleConnected } = require("./auth");
 const {
   INTAKE_CATEGORY_META,
   feeSkuFor,
@@ -267,7 +275,13 @@ function stripLargeFields(record) {
 
 function validateCustomerIntake(record) {
   const computed = recordWithComputedFields(record);
-  if (!computed.summary.ready) throw new Error("Finish the required fields first: " + computed.summary.missing.join("; "));
+  if (!computed.summary.ready) {
+    const error = new Error("Finish the required fields first: " + computed.summary.missing.join("; "));
+    // Marks the one kind of submit failure a customer can act on. Everything
+    // else (storage, auth, config) is internal and must not reach the form.
+    error.code = "INTAKE_INVALID";
+    throw error;
+  }
 }
 
 /* -----------------------------------------------------------------------------
@@ -602,10 +616,22 @@ function blankSourceBlock(record) {
 }
 
 
-async function intakeFolder() {
+/* Records live in the platform's own blob store; the Drive folder remains as
+   a read-only fallback so intakes submitted before the migration keep showing
+   in the queue, keep building, and keep saving edits. */
+
+async function legacyIntakeFolder() {
   const parentId = process.env.GDRIVE_PARENT_FOLDER_ID;
-  if (!parentId) throw new Error("Set GDRIVE_PARENT_FOLDER_ID before accepting customer intakes.");
+  if (!parentId) return null;
   return ensureSubfolder(INTAKE_FOLDER_NAME, parentId);
+}
+
+function recordMetadata(record) {
+  return {
+    kind: "customer-intake",
+    status: record.status,
+    requestId: record.requestId
+  };
 }
 
 async function createCustomerIntake(payload, files = []) {
@@ -618,13 +644,8 @@ async function createCustomerIntake(payload, files = []) {
   }));
   const record = recordWithComputedFields(normalizeRecord({ ...input, logos }));
   validateCustomerIntake(record);
-  const folder = await intakeFolder();
   const filename = record.createdAt.slice(0, 10) + "-" + slug(record.store.departmentName) + "-" + record.requestId.slice(0, 8) + ".json";
-  const file = await uploadJsonFile(filename, record, folder.id, {
-    kind: "customer-intake",
-    status: record.status,
-    requestId: record.requestId
-  });
+  const file = await writeRecordBlob(filename, record, recordMetadata(record));
   return recordWithComputedFields(record, file);
 }
 
@@ -634,22 +655,52 @@ async function parseDriveRecord(file) {
   return recordWithComputedFields(record, file);
 }
 
+async function parseBlobRecord(file) {
+  const record = JSON.parse(await readRecordBlobText(file.id));
+  return recordWithComputedFields(record, file);
+}
+
+function unreadableRecord(file, error) {
+  return { id: file.id, driveFile: file, status: "error", error: error.message, store: { departmentName: file.name }, summary: { missing: [error.message], ready: false } };
+}
+
 async function listCustomerIntakes() {
-  const folder = await intakeFolder();
-  const files = await listFilesInFolder(folder.id, { mimeType: "application/json", pageSize: 50 });
   const records = [];
-  for (const file of files) {
+  for (const file of await listRecordBlobs()) {
     try {
-      records.push(stripLargeFields(await parseDriveRecord(file)));
+      records.push(stripLargeFields(await parseBlobRecord(file)));
     } catch (error) {
-      records.push({ id: file.id, driveFile: file, status: "error", error: error.message, store: { departmentName: file.name }, summary: { missing: [error.message], ready: false } });
+      records.push(unreadableRecord(file, error));
+    }
+  }
+  // Pre-migration records, best-effort: a Drive outage must never take the
+  // whole queue down with it now that new intakes don't depend on Drive.
+  if (googleConnected()) {
+    try {
+      const folder = await legacyIntakeFolder();
+      const files = folder ? await listFilesInFolder(folder.id, { mimeType: "application/json", pageSize: 50 }) : [];
+      for (const file of files) {
+        try {
+          records.push(stripLargeFields(await parseDriveRecord(file)));
+        } catch (error) {
+          records.push(unreadableRecord(file, error));
+        }
+      }
+    } catch (error) {
+      console.error("Legacy Drive intakes are unavailable right now:", error.message);
     }
   }
   return records.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 }
 
 async function getCustomerIntake(fileId) {
+  if (isBlobRecordId(fileId)) return parseBlobRecord({ id: fileId, name: fileId });
   return parseDriveRecord({ id: fileId });
+}
+
+async function deleteCustomerIntakeRecord(fileId) {
+  if (isBlobRecordId(fileId)) return deleteRecordBlob(fileId);
+  return trashFile(fileId);
 }
 
 async function updateCustomerIntake(fileId, patch = {}) {
@@ -668,12 +719,15 @@ async function updateCustomerIntake(fileId, patch = {}) {
     requestId: existing.requestId
   });
   const record = recordWithComputedFields(merged, existing.driveFile);
-  const file = await updateJsonFile(fileId, record, { status: record.status, requestId: record.requestId, kind: "customer-intake" });
+  const file = isBlobRecordId(fileId)
+    ? await writeRecordBlob(fileId, record, recordMetadata(record))
+    : await updateJsonFile(fileId, record, { status: record.status, requestId: record.requestId, kind: "customer-intake" });
   return recordWithComputedFields(record, file);
 }
 
 module.exports = {
   createCustomerIntake,
+  deleteCustomerIntakeRecord,
   getCustomerIntake,
   intakeDocumentHtml,
   intakeFromCustomerRecord,

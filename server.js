@@ -13,6 +13,7 @@ const {
   googleConnected,
   googleInstallUrl,
   hasRequiredTokens,
+  hydrateTokensFromStore,
   openBrowser,
   shopifyInstallUrl
 } = require("./auth");
@@ -47,13 +48,14 @@ const {
 const { answerDashboardAgent, platformStatus } = require("./agents");
 const {
   createCustomerIntake,
+  deleteCustomerIntakeRecord,
   getCustomerIntake,
   intakeDocumentHtml,
   listCustomerIntakes,
   updateCustomerIntake
 } = require("./customerIntakes");
-const { azureTextToSpeech, azureTranscribeAudio, generateImage } = require("./azureOpenai");
-const { isBuildActive, startIntakeBuild } = require("./intakeBuild");
+const { generateImage } = require("./azureOpenai");
+const { isBuildActive, markActiveBuildsInterrupted, resumeInterruptedBuilds, startIntakeBuild } = require("./intakeBuild");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -87,6 +89,29 @@ app.set("trust proxy", true);
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+/*
+ * Internal pages sit on the same origin as the customer intake form, so with
+ * the admin gate on, the console and setup screens themselves need the token
+ * too - not just the APIs behind them. Registered BEFORE the static handler,
+ * which would otherwise happily serve index.html to anyone.
+ *
+ * An operator opens /?admin=<FN_ADMIN_TOKEN> once; a cookie keeps later
+ * visits (and the /auth/* setup links) working without the query string.
+ * Everyone else is sent to the customer intake form.
+ */
+const INTERNAL_PAGES = new Set(["/", "/index.html", "/setup", "/setup.html"]);
+app.use((req, res, next) => {
+  if (!INTERNAL_PAGES.has(req.path) || !adminGateEnabled()) return next();
+  if (tokenFromRequest(req) !== adminToken()) return res.redirect("/intake");
+  if (String(req.query.admin || "").trim() === adminToken()) {
+    res.setHeader(
+      "Set-Cookie",
+      `fn_admin=${encodeURIComponent(adminToken())}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`
+    );
+  }
+  next();
+});
 
 app.use(express.static(path.join(__dirname, "public")));
 /*
@@ -287,7 +312,12 @@ function adminToken() {
 
 function tokenFromRequest(req) {
   const bearer = String(req.get("authorization") || "").match(/^Bearer\s+(.+)$/i)?.[1];
-  return bearer || String(req.get("x-admin-token") || req.query.admin || "").trim();
+  const cookie = String(req.get("cookie") || "").match(/(?:^|;\s*)fn_admin=([^;]+)/)?.[1];
+  return (
+    bearer ||
+    String(req.get("x-admin-token") || req.query.admin || "").trim() ||
+    (cookie ? decodeURIComponent(cookie) : "")
+  );
 }
 
 // Open by default so the internal queue can be exercised end to end without a
@@ -386,52 +416,6 @@ app.post("/api/agents/dashboard/chat", async (req, res) => {
   }
 });
 
-app.post("/api/agents/dashboard/voice", upload.single("audio"), async (req, res) => {
-  try {
-    if (!req.file?.buffer?.length) throw new Error("Send an audio clip to transcribe.");
-    const transcript = await azureTranscribeAudio({
-      buffer: req.file.buffer,
-      mimeType: req.file.mimetype || "audio/webm",
-      filename: req.file.originalname || "voice.webm",
-      language: req.body.language || "en"
-    });
-    if (!transcript) throw new Error("I could not hear any words in that clip.");
-
-    let messages = [];
-    if (req.body.messages) {
-      try {
-        messages = JSON.parse(req.body.messages);
-      } catch {
-        messages = [];
-      }
-    }
-    messages = Array.isArray(messages) ? messages : [];
-    messages.push({ role: "user", content: transcript });
-
-    const answer = await answerDashboardAgent({ messages });
-    let audio = null;
-    try {
-      audio = await azureTextToSpeech({
-        text: answer.reply,
-        voice: req.body.voice,
-        speed: Number(req.body.speed || 1.04),
-        format: req.body.format || "mp3"
-      });
-    } catch (speechError) {
-      console.warn("Azure speech synthesis unavailable:", speechError.message);
-    }
-
-    res.json({
-      transcript,
-      reply: answer.reply,
-      context: answer.context,
-      audio
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 
 app.get("/intake", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "customer-intake.html"));
@@ -502,7 +486,16 @@ app.post(
         summary: record.summary
       });
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      // Only validation problems are the customer's to fix. Anything else
+      // (storage, config, auth) is internal - log the real cause and answer
+      // with something a fire department can act on.
+      if (error.code === "INTAKE_INVALID") {
+        return res.status(400).json({ error: error.message });
+      }
+      console.error("Customer intake submission failed:", error);
+      res.status(500).json({
+        error: "We couldn't save your store request just now. Please try again in a few minutes, or email us and we'll set it up for you."
+      });
     }
   }
 );
@@ -654,7 +647,7 @@ app.delete("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
       summary.errors.push(`Drive folder: ${error.message}`);
     }
     try {
-      await trashFile(record.id);
+      await deleteCustomerIntakeRecord(record.id);
       summary.recordTrashed = true;
     } catch (error) {
       summary.errors.push(`Intake record: ${error.message}`);
@@ -684,7 +677,10 @@ app.get("/setup", (req, res) => {
   return res.sendFile(path.join(__dirname, "public", "setup.html"));
 });
 
-app.get("/auth/shopify", (req, res, next) => {
+// Starting an OAuth flow (or dropping a connection) rewires which accounts
+// the platform runs on - operator actions, never public ones. The callbacks
+// below stay open because Google and Shopify redirect to them tokenless.
+app.get("/auth/shopify", requireAdminToken, (req, res, next) => {
   try {
     res.redirect(shopifyInstallUrl(req.query.shop, requestOrigin(req)));
   } catch (error) {
@@ -702,17 +698,17 @@ app.get("/callback", async (req, res, next) => {
   }
 });
 
-app.post("/auth/shopify/disconnect", (req, res) => {
-  disconnectShopify();
+app.post("/auth/shopify/disconnect", requireAdminToken, async (req, res) => {
+  await disconnectShopify();
   res.json({ ok: true, service: "shopify", connected: false });
 });
 
-app.post("/auth/google/disconnect", (req, res) => {
-  disconnectGoogle();
+app.post("/auth/google/disconnect", requireAdminToken, async (req, res) => {
+  await disconnectGoogle();
   res.json({ ok: true, service: "google", connected: false });
 });
 
-app.get("/auth/google", (req, res, next) => {
+app.get("/auth/google", requireAdminToken, (req, res, next) => {
   try {
     res.redirect(googleInstallUrl());
   } catch (error) {
@@ -1556,9 +1552,58 @@ app.use((err, req, res, next) => {
   res.status(500).send(`<pre>${err.message}</pre>`);
 });
 
+/* Tokens saved through the app (Google Connect, Shopify OAuth) persist in the
+   platform's storage account; restore them before listening so the very first
+   request already sees the connections. Env vars still win - hydration only
+   fills keys that are empty. A storage hiccup degrades to env-only, it never
+   stops the server. */
+hydrateTokensFromStore()
+  .then((restored) => {
+    if (restored.length) console.log(`[auth] restored ${restored.join(", ")} from platform storage`);
+  })
+  .catch((error) => console.warn(`[auth] token restore failed (${error.message}); continuing with env-configured tokens only`))
+  .then(() => startServer());
+
+function startServer() {
 app.listen(PORT, () => {
   const setupNeeded = !hasRequiredTokens();
   const url = setupNeeded ? `http://localhost:${PORT}/setup` : `http://localhost:${PORT}/`;
   console.log(`FN Onboarding running at ${url}`);
   if (setupNeeded) openBrowser(url);
+
+  /* Builds run in-process, so a deploy or replica restart kills them mid-
+     flight. This watchdog picks dead builds back up: once shortly after boot
+     (a build the old replica was running resumes within a couple of minutes)
+     and on a slow tick forever after. Jittered so two replicas never scan in
+     lockstep. */
+  const resumeTick = () => {
+    resumeInterruptedBuilds()
+      .catch((error) => console.warn(`[intake-build] resume scan failed: ${error.message}`))
+      .finally(() => setTimeout(resumeTick, 2 * 60 * 1000 + Math.floor(Math.random() * 30 * 1000)));
+  };
+  setTimeout(resumeTick, 15 * 1000 + Math.floor(Math.random() * 15 * 1000));
+});
+}
+
+/* Container Apps sends SIGTERM and allows a grace period before the kill.
+   Marking in-flight builds "interrupted" costs one blob write per build and
+   lets the next replica resume them immediately instead of waiting out the
+   heartbeat staleness window. */
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    const marked = await markActiveBuildsInterrupted(signal);
+    if (marked) console.log(`[intake-build] ${marked} build(s) marked interrupted on ${signal}`);
+  } catch (error) {
+    console.warn(`[intake-build] could not mark builds interrupted: ${error.message}`);
+  }
+  process.exit(0);
+}
+process.on("SIGTERM", () => {
+  shutdown("SIGTERM");
+});
+process.on("SIGINT", () => {
+  shutdown("SIGINT");
 });

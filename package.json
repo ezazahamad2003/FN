@@ -4,12 +4,13 @@
   "description": "Internal onboarding automation for fire department custom gear stores.",
   "main": "server.js",
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@azure/storage-blob": "^12.33.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "googleapis": "^144.0.0",

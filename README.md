@@ -42,9 +42,9 @@ The dashboard voice agent records short browser mic turns, sends them to Azure O
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 
-Image generation AND the decorated-product edit renderer run on **Azure OpenAI** whenever `AZURE_OPENAI_IMAGE_DEPLOYMENT` is set, falling back to `OPENAI_API_KEY` if an Azure call fails. Because the `gpt-image-*` models are region-bound and the chat resource is in `eastus` (which does not offer them), the image deployment lives in the `eastus2` resource and is addressed with `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`. These routes are preview-only, so they use their own `AZURE_OPENAI_IMAGE_API_VERSION` rather than the chat `AZURE_OPENAI_API_VERSION`.
+Image generation AND the decorated-product edit renderer run on **direct OpenAI** (`OPENAI_API_KEY`, model `OPENAI_IMAGE_MODEL`, default `gpt-image-1`). There is deliberately no Azure image path any more: production always ran on the OpenAI fallback (the Azure image env vars were never set on the Container App), so the Azure-first code was removed on 2026-09-01 instead of being kept as an untraveled branch. Chat, transcription, and speech stay on Azure.
 
-`OPENAI_API_KEY` therefore remains needed as the chat-reasoning fallback, the image fallback, and the active provider for the supplier blank web search (which has no Azure equivalent).
+`OPENAI_API_KEY` is therefore required: images, the supplier blank web search (no Azure equivalent), and the chat-reasoning fallback.
 
 Check which provider is actually live without publishing a product: `POST /api/diagnostics/image` returns `{ok, provider, deployment, bytes, elapsedMs}`.
 ## Re-Auth If Tokens Expire
@@ -126,7 +126,9 @@ From there:
 
 Send customers `/intake`. They fill a fixed-field store request based on the FNS form draft: store setup, logo upload, decoration size/placement, and repeated category choices for shirts, sweatshirts, jackets, polos, shorts, sweatpants, Class B items, belts, and hats.
 
-On submit, the app saves the request JSON and logos to Google Drive under `Customer Store Intakes`, creates or reuses the matching Shopify collection immediately, and places the request in **New Stores**. The internal queue is open by default while the platform is in testing; set `FN_REQUIRE_ADMIN_TOKEN=1` together with `FN_ADMIN_TOKEN` to require a token for it. The customer link never needs a token.
+On submit, the app saves the request JSON and logos to Azure Blob Storage (container `customer-intakes` on `AZURE_STORAGE_CONNECTION_STRING`), creates or reuses the matching Shopify collection immediately, and places the request in **New Stores**. Google Drive is not involved at submit time — department Drive folders and documents are created later, during the internal build, once Drive is connected. Intakes submitted before this migration still live in Drive under `Customer Store Intakes` and remain readable/editable as long as Drive is connected.
+
+The internal queue is open by default while the platform is in testing; set `FN_REQUIRE_ADMIN_TOKEN=1` together with `FN_ADMIN_TOKEN` to require a token. With the gate on, the console (`/`) and `/setup` pages themselves also require the token — open `/?admin=<FN_ADMIN_TOKEN>` once and a cookie keeps you signed in for 30 days; everyone else is redirected to `/intake`. The customer link never needs a token, and customers never see internal errors — submit failures that aren't form-validation problems return a generic retry message and log the real cause server-side.
 
 From **New Stores**, open a store request to review or edit the customer answers, open the Shopify collection, and watch build progress. Ready submissions start building automatically on submit — products are created as **DRAFT**, so nothing is customer-visible until an operator publishes them in Shopify admin. Use **Build store now** / **Re-run build** on the store page to kick or re-run a build; re-runs are additive and skip existing products.
 The onboarding view accepts a department name, logo images, policy documents, and

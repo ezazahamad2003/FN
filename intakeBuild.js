@@ -35,8 +35,10 @@ const {
   getCustomerIntake,
   intakeDocumentHtml,
   intakeFromCustomerRecord,
+  listCustomerIntakes,
   updateCustomerIntake
 } = require("./customerIntakes");
+const { blobStoreConfigured } = require("./intakeStore");
 const {
   DEFAULT_SIZES,
   MAX_VARIANTS,
@@ -136,6 +138,7 @@ function newBuildState(record) {
   return {
     state: "running",
     startedAt: new Date().toISOString(),
+    heartbeatAt: new Date().toISOString(),
     finishedAt: null,
     error: null,
     requestId: record.requestId,
@@ -147,8 +150,33 @@ function newBuildState(record) {
 
 async function saveBuild(intakeId, build, extra = {}) {
   // The record in Drive is the single source of truth the queue UI polls, so
-  // every meaningful transition is flushed immediately.
+  // every meaningful transition is flushed immediately. Every flush doubles as
+  // a liveness beat: the resume watchdog reads this timestamp to tell a build
+  // that is merely slow from one whose process died.
+  build.heartbeatAt = new Date().toISOString();
   return updateCustomerIntake(intakeId, { build, ...extra });
+}
+
+/* A live build beats at least once a minute (the timer in startIntakeBuild),
+   so five silent minutes means the owning process is gone. Records written
+   before heartbeats existed only move on step timestamps, which one slow image
+   call can legitimately starve for ten minutes - they keep the older, wider
+   window. */
+const HEARTBEAT_EVERY_MS = 60 * 1000;
+const STALE_WITH_HEARTBEAT_MS = 5 * 60 * 1000;
+const STALE_WITHOUT_HEARTBEAT_MS = 15 * 60 * 1000;
+
+function lastBuildActivity(build) {
+  const timestamps = [build?.startedAt, build?.heartbeatAt, ...(build?.steps || []).flatMap((step) => [step.startedAt, step.finishedAt])]
+    .map((value) => Date.parse(value || ""))
+    .filter(Number.isFinite);
+  return timestamps.length ? Math.max(...timestamps) : 0;
+}
+
+function buildLooksDead(build) {
+  if (!build || build.state !== "running") return false;
+  const staleAfter = build.heartbeatAt ? STALE_WITH_HEARTBEAT_MS : STALE_WITHOUT_HEARTBEAT_MS;
+  return Date.now() - lastBuildActivity(build) > staleAfter;
 }
 
 function stepStart(build, key, label) {
@@ -668,20 +696,12 @@ async function startIntakeBuild(intakeId, options = {}) {
   let record;
   try {
     record = await getCustomerIntake(intakeId);
-    if (record.build?.state === "running") {
+    if (record.build?.state === "running" && !buildLooksDead(record.build) && !options.force) {
       // A record can claim "running" after a server restart killed the build
-      // mid-flight. Stale when nothing has been written for 15+ minutes -
-      // judged by the freshest step timestamp, not the build's start time, so
-      // a long legitimate build is not mistaken for a dead one.
-      const timestamps = [record.build.startedAt, ...(record.build.steps || []).flatMap((step) => [step.startedAt, step.finishedAt])]
-        .map((value) => Date.parse(value || ""))
-        .filter(Number.isFinite);
-      const lastActivity = timestamps.length ? Math.max(...timestamps) : 0;
-      const fresh = Date.now() - lastActivity < 15 * 60 * 1000;
-      if (fresh && !options.force) {
-        activeBuilds.delete(intakeId);
-        return { started: false, reason: "This store request is already building." };
-      }
+      // mid-flight; buildLooksDead is what tells that corpse from a build that
+      // is genuinely still beating (possibly on another replica).
+      activeBuilds.delete(intakeId);
+      return { started: false, reason: "This store request is already building." };
     }
   } catch (error) {
     activeBuilds.delete(intakeId);
@@ -693,6 +713,12 @@ async function startIntakeBuild(intakeId, options = {}) {
 
   const build = newBuildState(record);
   activeBuilds.set(intakeId, build);
+  // Step flushes are the build's normal heartbeat, but a single image call can
+  // run for minutes without one; this timer keeps the record fresh so the
+  // watchdog on a rebooted replica never mistakes a slow build for a dead one.
+  const heartbeat = setInterval(() => {
+    if (build.state === "running") saveBuild(intakeId, build).catch(() => {});
+  }, HEARTBEAT_EVERY_MS);
   const task = runBuild(intakeId, build, options)
     .catch(async (error) => {
       build.state = "failed";
@@ -701,7 +727,10 @@ async function startIntakeBuild(intakeId, options = {}) {
       await saveBuild(intakeId, build, { status: "build-error", internalNotes: `Build failed: ${build.error}` }).catch(() => {});
       console.error(`[intake-build] ${intakeId} failed:`, error);
     })
-    .finally(() => activeBuilds.delete(intakeId));
+    .finally(() => {
+      clearInterval(heartbeat);
+      activeBuilds.delete(intakeId);
+    });
 
   if (options.wait) await task;
   return { started: true, build };
@@ -712,4 +741,88 @@ function isBuildActive(intakeId) {
   return activeBuilds.has(intakeId);
 }
 
-module.exports = { isBuildActive, startIntakeBuild };
+/**
+ * Called on SIGTERM/SIGINT: stamp every in-flight build "interrupted" so the
+ * record tells the truth while this process dies, and the watchdog on the next
+ * replica resumes it immediately instead of waiting out the staleness window.
+ */
+async function markActiveBuildsInterrupted(reason = "server shutdown") {
+  const flushes = [];
+  for (const [intakeId, build] of activeBuilds) {
+    // Placeholders ({state:"starting"}) have no record written yet - skip.
+    if (!build || build.state !== "running") continue;
+    build.state = "interrupted";
+    log(build, `interrupted by ${reason}; the build resumes automatically and keeps already-built products`);
+    flushes.push(saveBuild(intakeId, build).catch(() => {}));
+  }
+  await Promise.all(flushes);
+  return flushes.length;
+}
+
+// Random per process: the claim below makes two replicas that both see the
+// same dead build agree on a single resumer.
+const INSTANCE_ID = Math.random().toString(36).slice(2, 10);
+
+/**
+ * Scan every intake record for a build that died - marked "interrupted" by a
+ * clean shutdown, or "running" with no heartbeat - and start it again. Safe
+ * because the builder is additive: finished products are skipped, only the
+ * missing ones are built. Runs shortly after boot and on a slow tick forever
+ * after (wired in server.js).
+ */
+async function resumeInterruptedBuilds({ onLog = (message) => console.log(`[intake-build] ${message}`) } = {}) {
+  // Nothing to scan without the record store; nothing to build into without
+  // Shopify. Resuming while disconnected would flip resumable records into
+  // "failed", which is worse than leaving them for the next scan.
+  if (!blobStoreConfigured() || !shopifyConnected()) return { resumed: 0 };
+
+  let records;
+  try {
+    records = await listCustomerIntakes();
+  } catch (error) {
+    onLog(`resume scan skipped: ${error.message}`);
+    return { resumed: 0 };
+  }
+
+  let resumed = 0;
+  for (const record of records) {
+    const build = record.build;
+    if (!build) continue;
+    if (isBuildActive(record.id)) continue;
+    const interrupted = build.state === "interrupted";
+    if (!interrupted && !buildLooksDead(build)) continue;
+
+    /* Two replicas may both see this dead build. Whoever's claim survives a
+       short settle owns the resume; the loser walks away. Written through
+       updateCustomerIntake directly - NOT saveBuild - so the claim does not
+       stamp a fresh heartbeat that would make the corpse look alive to the
+       freshness re-check inside startIntakeBuild. */
+    try {
+      await updateCustomerIntake(record.id, {
+        build: { ...build, resumeClaim: { owner: INSTANCE_ID, at: new Date().toISOString() } }
+      });
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      const check = await getCustomerIntake(record.id);
+      if (check.build?.resumeClaim?.owner !== INSTANCE_ID) continue;
+    } catch (error) {
+      onLog(`could not claim ${record.id} for resume: ${error.message}`);
+      continue;
+    }
+
+    onLog(
+      `resuming ${record.store?.departmentName || record.id}: build was ${
+        interrupted ? "interrupted by a shutdown" : "running with no heartbeat"
+      }`
+    );
+    try {
+      const result = await startIntakeBuild(record.id);
+      if (result.started) resumed++;
+      else onLog(`resume of ${record.id} not started: ${result.reason}`);
+    } catch (error) {
+      onLog(`resume of ${record.id} failed: ${error.message}`);
+    }
+  }
+  return { resumed };
+}
+
+module.exports = { isBuildActive, markActiveBuildsInterrupted, resumeInterruptedBuilds, startIntakeBuild };

@@ -1640,7 +1640,7 @@ input[aria-invalid="true"],
 }
 
 /* =============================================================================
-   Dashboard Voice Agent
+   Company Brain (dashboard chat)
    ========================================================================== */
 .dashboard-grid {
   display: grid;
@@ -1649,159 +1649,88 @@ input[aria-invalid="true"],
   align-items: start;
 }
 
-.voice-console {
-  --voice-level: 0;
-  min-height: 560px;
+.chat-console {
   display: grid;
-  gap: var(--space-5);
-  align-content: start;
-  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: var(--space-4);
+  min-height: 560px;
+  max-height: 74vh;
 }
 
-.voice-head { margin-bottom: 0; }
-
-.voice-harness {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: var(--space-5);
-  padding: var(--space-7) var(--space-5) var(--space-5);
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   background: linear-gradient(180deg, var(--panel-grad-a), var(--panel-grad-b));
 }
 
-.voice-orb {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: clamp(136px, 18vw, 190px);
-  aspect-ratio: 1;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: #fff;
-  cursor: pointer;
-}
-.voice-orb:focus-visible { outline: none; box-shadow: var(--ring); }
-.voice-glow,
-.voice-ring,
-.voice-core { position: absolute; border-radius: 50%; }
-.voice-glow {
-  inset: -10%;
-  opacity: 0;
-  background: radial-gradient(circle, rgba(53, 211, 154, 0.44), transparent 62%);
-  transition: opacity var(--t), transform var(--t);
-}
-.voice-ring-one {
-  inset: 5%;
-  background: conic-gradient(from 30deg, var(--info), var(--success), var(--brand-strong), var(--info));
-  opacity: 0.32;
-  filter: saturate(0.85);
-  transition: opacity var(--t), filter var(--t), transform var(--t);
-}
-.voice-ring-two {
-  inset: 18%;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-}
-.voice-core {
-  inset: 31%;
-  display: grid;
-  place-items: center;
-  background: #111923;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: inset 0 0 24px rgba(88, 169, 255, 0.16), 0 18px 54px rgba(0, 0, 0, 0.32);
-}
-
-.voice-console[data-state="listening"] .voice-glow,
-.voice-console[data-state="recording"] .voice-glow,
-.voice-console[data-state="thinking"] .voice-glow,
-.voice-console[data-state="speaking"] .voice-glow { opacity: 1; }
-.voice-console[data-state="listening"] .voice-ring-one,
-.voice-console[data-state="recording"] .voice-ring-one {
-  opacity: 0.94;
-  filter: saturate(1.2);
-  animation: voice-spin 1.9s linear infinite;
-}
-.voice-console[data-state="recording"] .voice-ring-two { animation: voice-pulse 720ms ease-in-out infinite; }
-.voice-console[data-state="thinking"] .voice-ring-one { opacity: 0.82; animation: voice-spin 2.7s linear infinite; }
-.voice-console[data-state="speaking"] .voice-core { animation: voice-speak 760ms ease-in-out infinite; }
-
-.voice-copy {
-  display: grid;
-  gap: var(--space-2);
-  max-width: 600px;
-  text-align: center;
-}
-.voice-state {
-  margin: 0;
-  font-size: clamp(1.7rem, 3vw, 2.7rem);
-  font-weight: 850;
-  letter-spacing: 0;
-}
-.voice-prompt {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--fs-base);
-  overflow-wrap: anywhere;
-}
-
-.voice-meter {
-  width: min(360px, 78vw);
-  height: 8px;
-  overflow: hidden;
+.chat-msg {
+  max-width: min(680px, 88%);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--field);
+  border-radius: var(--radius-md);
 }
-.voice-meter span {
-  display: block;
-  width: 100%;
-  height: 100%;
-  transform: scaleX(var(--voice-level));
-  transform-origin: left center;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--success), var(--info), var(--brand-strong));
-  transition: transform 80ms linear;
+.chat-msg[data-role="assistant"] {
+  align-self: flex-start;
+  background: var(--surface-2);
+  border-bottom-left-radius: var(--radius-xs, 6px);
 }
-
-.voice-turns {
-  display: grid;
-  gap: var(--space-2);
-  width: min(760px, 100%);
+.chat-msg[data-role="user"] {
+  align-self: flex-end;
+  background: var(--info-soft);
+  border-color: var(--info-border);
+  border-bottom-right-radius: var(--radius-xs, 6px);
 }
-.voice-turns p {
-  display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-3);
-  min-height: 34px;
+.chat-msg[data-role="error"] {
+  align-self: flex-start;
+  background: var(--danger-soft, var(--surface-2));
+  border-color: var(--danger, var(--border));
+}
+.chat-msg p {
   margin: 0;
-  padding: var(--space-2) 0;
-  border-top: 1px solid var(--border);
-}
-.voice-turns span {
-  color: var(--text-subtle);
-  font-size: var(--fs-xs);
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.voice-turns b {
-  max-height: 4.7em;
-  overflow: auto;
   color: var(--text);
   font-size: var(--fs-sm);
-  font-weight: 600;
-  line-height: 1.55;
+  line-height: 1.6;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.chat-msg[data-pending="true"] p {
+  color: var(--text-muted);
+  animation: chat-pending 1.2s ease-in-out infinite;
+}
 
-.voice-quick {
+.chat-composer {
+  display: flex;
+  gap: var(--space-2);
+}
+.chat-composer input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+}
+.chat-composer input:focus-visible {
+  outline: none;
+  border-color: var(--info-border);
+  box-shadow: var(--ring);
+}
+
+.chat-quick {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-2);
 }
-.voice-quick button {
+.chat-quick button {
   min-height: 42px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1811,8 +1740,8 @@ input[aria-invalid="true"],
   cursor: pointer;
   transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
 }
-.voice-quick button:hover,
-.voice-quick button:focus-visible {
+.chat-quick button:hover,
+.chat-quick button:focus-visible {
   border-color: var(--info-border);
   background: var(--info-soft);
   color: var(--text);
@@ -1826,7 +1755,7 @@ input[aria-invalid="true"],
 
 .status-list,
 .agent-roster,
-.voice-harness-list {
+.brain-scope-list {
   display: grid;
   gap: var(--space-2);
 }
@@ -1834,7 +1763,7 @@ input[aria-invalid="true"],
 .status-line,
 .agent-roster a,
 .agent-roster span,
-.voice-harness-list span {
+.brain-scope-list span {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1849,12 +1778,12 @@ input[aria-invalid="true"],
 .status-line span,
 .agent-roster a,
 .agent-roster span,
-.voice-harness-list span {
+.brain-scope-list span {
   color: var(--text-muted);
   font-size: var(--fs-sm);
 }
 
-.voice-harness-list b,
+.brain-scope-list b,
 .status-line b {
   color: var(--text);
   font-size: var(--fs-sm);
@@ -1885,39 +1814,25 @@ input[aria-invalid="true"],
   background: var(--warn-soft);
 }
 
-@keyframes voice-spin {
-  to { transform: rotate(360deg); }
-}
-@keyframes voice-pulse {
-  0%, 100% { transform: scale(1); opacity: 0.72; }
-  50% { transform: scale(1.08); opacity: 1; }
-}
-@keyframes voice-speak {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
+@keyframes chat-pending {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .voice-console[data-state="listening"] .voice-ring-one,
-  .voice-console[data-state="recording"] .voice-ring-one,
-  .voice-console[data-state="recording"] .voice-ring-two,
-  .voice-console[data-state="thinking"] .voice-ring-one,
-  .voice-console[data-state="speaking"] .voice-core {
-    animation: none;
-  }
+  .chat-msg[data-pending="true"] p { animation: none; }
 }
 
 @media (max-width: 980px) {
   .dashboard-grid { grid-template-columns: 1fr; }
-  .voice-console { min-height: auto; }
-  .voice-harness { min-height: 0; }
-  .voice-quick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .chat-console { min-height: 440px; max-height: none; }
+  .chat-thread { max-height: 48vh; }
+  .chat-quick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 640px) {
-  .voice-harness { padding: var(--space-6) var(--space-3) var(--space-4); }
-  .voice-turns p { grid-template-columns: 1fr; gap: var(--space-1); }
-  .voice-quick { grid-template-columns: 1fr; }
+  .chat-msg { max-width: 100%; }
+  .chat-quick { grid-template-columns: 1fr; }
 }
 
 /* =============================================================================
@@ -3135,6 +3050,23 @@ a.float-card:focus-visible { outline: none; box-shadow: var(--ring); }
 
 .float-card b { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .float-card small { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+/* Card plus the supplier source line under it. The card grows so a shelf
+   mixing sourced and generated products keeps every card the same height. */
+.float-item { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.float-item .float-card { flex: 1; }
+.float-source {
+  align-self: center;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--info);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+a.float-source:hover, a.float-source:focus-visible { text-decoration: underline; }
+a.float-source:focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--radius-sm); }
+.float-source.is-muted { color: var(--text-subtle); font-weight: 400; }
 
 @media (prefers-reduced-motion: reduce) {
   .float-media, .float-shadow { animation: none !important; }

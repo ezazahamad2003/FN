@@ -50,37 +50,17 @@ function openAIConfigured() {
 }
 
 /* -----------------------------------------------------------------------------
-   Image generation.
+   Image generation and edits run on DIRECT OpenAI, deliberately.
 
-   gpt-image-1 is not offered in every Azure OpenAI region, so the image model
-   commonly lives in a different resource from the chat model - exactly like
-   audio already does here. IMAGE_* falls back to the primary resource when it
-   is not set separately.
+   There used to be an Azure-first image path (deployment routes on preview API
+   versions, in a separate eastus2 resource because eastus offers no image
+   models). Production never had those env vars set, so every image was already
+   coming from the OpenAI fallback; the Azure path was removed (2026-09-01)
+   rather than kept as dead code. Chat, transcription, and speech stay on
+   Azure.
    -------------------------------------------------------------------------- */
-function imageEndpoint() {
-  return cleanEndpoint(process.env.AZURE_OPENAI_IMAGE_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT);
-}
-
-function imageApiKey() {
-  return process.env.AZURE_OPENAI_IMAGE_API_KEY || process.env.AZURE_OPENAI_API_KEY;
-}
-
-function imageDeployment() {
-  return process.env.AZURE_OPENAI_IMAGE_DEPLOYMENT || "";
-}
-
-// The image routes live on preview API versions; both generations and edits
-// are pinned to the same one so a swap only has to change a single variable.
-function imageApiVersion() {
-  return process.env.AZURE_OPENAI_IMAGE_API_VERSION || "2025-04-01-preview";
-}
-
-function azureImageConfigured() {
-  return Boolean(imageEndpoint() && imageApiKey() && imageDeployment());
-}
-
 function imageGenConfigured() {
-  return azureImageConfigured() || openAIConfigured();
+  return openAIConfigured();
 }
 
 function genAIStatus() {
@@ -91,8 +71,8 @@ function genAIStatus() {
       configured: true,
       provider: "azure-openai",
       chatDeployment: process.env.AZURE_OPENAI_CHAT_DEPLOYMENT || "",
-      imageDeployment: imageDeployment(),
-      imageProvider: azureImageConfigured() ? "azure-openai" : openAIConfigured() ? "openai" : "none",
+      imageDeployment: "",
+      imageProvider: openAIConfigured() ? "openai" : "none",
       imageConfigured: imageGenConfigured(),
       voiceDeployment: process.env.AZURE_OPENAI_VOICE_DEPLOYMENT || "",
       transcriptionDeployment,
@@ -107,8 +87,8 @@ function genAIStatus() {
     configured: false,
     provider: "none",
     chatDeployment: "",
-    imageDeployment: imageDeployment(),
-    imageProvider: azureImageConfigured() ? "azure-openai" : openAIConfigured() ? "openai" : "none",
+    imageDeployment: "",
+    imageProvider: openAIConfigured() ? "openai" : "none",
     imageConfigured: imageGenConfigured(),
     voiceDeployment: "",
     transcriptionDeployment: "",
@@ -197,37 +177,6 @@ async function reason({ messages, temperature = 0.2, maxTokens = 900, jsonObject
   return response.choices[0]?.message?.content?.trim() || "";
 }
 
-async function azureGenerateImage({ prompt, size = "1024x1024", quality = "medium" }) {
-  const url = `${imageEndpoint()}/openai/deployments/${encodeURIComponent(imageDeployment())}/images/generations?api-version=${encodeURIComponent(imageApiVersion())}`;
-
-  let res;
-  let json;
-  for (let attempt = 0; ; attempt++) {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "api-key": imageApiKey() },
-      body: JSON.stringify({ prompt, n: 1, size, quality, output_format: "png" })
-    });
-    json = await res.json().catch(() => ({}));
-    if (res.status !== 429 || attempt >= RATE_LIMIT_RETRIES) break;
-    const wait = retryAfterMs(res, attempt);
-    console.warn(`Azure image generation rate-limited; retrying in ${Math.round(wait / 1000)}s`);
-    await sleep(wait);
-  }
-  if (!res.ok) {
-    const detail = json.error?.message || JSON.stringify(json).slice(0, 500) || "unknown error";
-    throw new Error(`Azure OpenAI image generation failed (${res.status}): ${detail}`);
-  }
-  const image = json.data?.[0];
-  if (image?.b64_json) return Buffer.from(image.b64_json, "base64");
-  if (image?.url) {
-    const download = await fetch(image.url);
-    if (!download.ok) throw new Error(`Could not download generated image: ${download.status}`);
-    return download.buffer();
-  }
-  throw new Error("Azure OpenAI image generation returned no image data.");
-}
-
 async function openAIGenerateImage({ prompt, size = "1024x1024", quality = "medium" }) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const response = await openai.images.generate({
@@ -245,21 +194,9 @@ async function openAIGenerateImage({ prompt, size = "1024x1024", quality = "medi
   return download.buffer();
 }
 
-// Azure first (same tenancy and billing as the rest of the deploy), OpenAI as a
-// fallback so a missing image deployment does not take the whole run down.
 async function generateImage(options) {
-  if (azureImageConfigured()) {
-    try {
-      return await azureGenerateImage(options);
-    } catch (error) {
-      if (!openAIConfigured()) throw error;
-      console.warn("Azure image generation failed, falling back to OpenAI:", error.message);
-    }
-  }
   if (!openAIConfigured()) {
-    throw new Error(
-      "No image model is configured. Set AZURE_OPENAI_IMAGE_DEPLOYMENT (plus AZURE_OPENAI_IMAGE_ENDPOINT / AZURE_OPENAI_IMAGE_API_KEY if the image model lives in another resource), or OPENAI_API_KEY."
-    );
+    throw new Error("No image model is configured. Set OPENAI_API_KEY.");
   }
   return openAIGenerateImage(options);
 }
@@ -267,11 +204,9 @@ async function generateImage(options) {
 /* -----------------------------------------------------------------------------
    Rate limiting.
 
-   A 429 is a "come back shortly", not a failure. Falling through to direct
-   OpenAI on one - which is what used to happen - silently moves paid work off
-   the Azure deployment the moment a batch gets busy, which is the opposite of
-   what a bulk run wants. Azure states how long to wait; we wait and retry, and
-   only give up (and let the caller fall back) after several attempts.
+   A 429 is a "come back shortly", not a failure. The provider states how long
+   to wait; we wait and retry, and only give up after several attempts - a bulk
+   run must not fail products over a busy minute.
    -------------------------------------------------------------------------- */
 const RATE_LIMIT_RETRIES = 5;
 const TRANSPORT_RETRIES = 3;
@@ -292,16 +227,10 @@ function retryAfterMs(res, attempt) {
    with the artwork rendered as if genuinely printed/embroidered on the
    fabric. input_fidelity "high" is what keeps logo text and small marks
    faithful on the models that still take it.
-
-   Azure first (same tenancy and billing as the rest of the deploy), direct
-   OpenAI as a fallback so a missing image deployment does not take a run down.
-   The two providers speak the same multipart dialect; only the URL, the auth
-   header, and where the model name goes differ.
    -------------------------------------------------------------------------- */
-// Parameters a model rejects are learned once per provider+model and skipped
-// afterwards. Keyed per provider because the same model name can differ across
-// them: direct-OpenAI gpt-image-2 refuses input_fidelity (high fidelity is
-// native there) while Azure's gpt-image-2 still accepts it.
+// Parameters a model rejects are learned once per model and skipped
+// afterwards (direct-OpenAI gpt-image-2 refuses input_fidelity, for example -
+// high fidelity is native there while older models still take the flag).
 const unsupportedEditParams = new Map();
 
 async function postImageEdit({ url, headers, model, cacheKey, images, prompt, size, quality }) {
@@ -379,17 +308,6 @@ async function postImageEdit({ url, headers, model, cacheKey, images, prompt, si
   throw new Error("Image edit failed: could not find a parameter set the model accepts.");
 }
 
-async function azureEditImage(options) {
-  const deployment = imageDeployment();
-  return postImageEdit({
-    ...options,
-    url: `${imageEndpoint()}/openai/deployments/${encodeURIComponent(deployment)}/images/edits?api-version=${encodeURIComponent(imageApiVersion())}`,
-    headers: { "api-key": imageApiKey() },
-    model: "",
-    cacheKey: `azure:${deployment}`
-  });
-}
-
 async function openAIEditImage(options) {
   const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
   return postImageEdit({
@@ -405,22 +323,10 @@ async function editImage({ images, prompt, size = "1024x1024", quality = "high" 
   if (!globalThis.fetch || !globalThis.FormData || !globalThis.Blob) {
     throw new Error("Node 18 fetch, FormData, and Blob are required for image edits.");
   }
-  const options = { images, prompt, size, quality };
-
-  if (azureImageConfigured()) {
-    try {
-      return await azureEditImage(options);
-    } catch (error) {
-      if (!openAIConfigured()) throw error;
-      console.warn("Azure image edit failed, falling back to OpenAI:", error.message);
-    }
-  }
   if (!openAIConfigured()) {
-    throw new Error(
-      "No image model is configured for edits. Set AZURE_OPENAI_IMAGE_DEPLOYMENT (plus AZURE_OPENAI_IMAGE_ENDPOINT / AZURE_OPENAI_IMAGE_API_KEY if the image model lives in another resource), or OPENAI_API_KEY."
-    );
+    throw new Error("No image model is configured for edits. Set OPENAI_API_KEY.");
   }
-  return openAIEditImage(options);
+  return openAIEditImage({ images, prompt, size, quality });
 }
 
 async function azureTranscribeAudio({ buffer, mimeType = "audio/webm", filename = "voice.webm", language = "en" }) {
