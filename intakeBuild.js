@@ -51,7 +51,7 @@ const {
   uploadProductImages,
   variantIdsByLogo
 } = require("./shopify");
-const { getCollectionWithProducts } = require("./catalog");
+const { getCollectionWithProducts, productExists } = require("./catalog");
 const { createDepartmentFolders, listFilesInFolder, uploadBuffer, uploadGeneratedImage, uploadHtmlDocument } = require("./drive");
 const { googleConnected } = require("./auth");
 
@@ -279,11 +279,41 @@ async function runBuild(intakeId, build, options) {
   // failed is NOT in the collection, but it exists in Shopify and is recorded
   // in the prior build. Seed from that record too, or every re-run after such
   // a failure would create a duplicate.
+  //
+  // But only if Shopify still has it. A recorded product that was deleted in
+  // admin (or went down with its collection) must be REBUILT, not skipped -
+  // otherwise the record pins a "complete" build to products that do not
+  // exist and no re-run can ever bring the images back. A survivor that is
+  // no longer in the collection (the collection itself was recreated) is
+  // re-attached rather than duplicated. Title-only entries from older records
+  // cannot be checked and keep the skip.
+  const inCollection = new Set(existingTitles);
   const priorProducts = new Map();
   for (const prior of record.build?.products || []) {
     if (!prior?.title) continue;
-    existingTitles.add(String(prior.title).toLowerCase());
-    priorProducts.set(String(prior.title).toLowerCase(), prior);
+    const titleKey = String(prior.title).toLowerCase();
+    if (prior.productId) {
+      let exists = true;
+      try {
+        exists = await productExists(prior.productId);
+      } catch (error) {
+        log(build, `could not verify prior product ${prior.title} (${error.message}); keeping it`);
+      }
+      if (!exists) {
+        log(build, `prior product no longer in Shopify, rebuilding: ${prior.title} (${prior.productId})`);
+        continue;
+      }
+      if (!inCollection.has(titleKey)) {
+        try {
+          await addProductToCollection(prior.productId, collection.id);
+          log(build, `re-attached prior product to the collection: ${prior.title}`);
+        } catch (error) {
+          log(build, `could not re-attach prior product ${prior.title} (${error.message}); keeping it`);
+        }
+      }
+    }
+    existingTitles.add(titleKey);
+    priorProducts.set(titleKey, prior);
   }
 
   /* Step 3 - Drive folders. "skip" strategy: reuse the department folder if it

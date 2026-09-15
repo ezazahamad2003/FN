@@ -204,6 +204,18 @@ query product($id: ID!) {
   }
 }`;
 
+// The cheapest possible "is it still there": one id field, no media, no
+// variants. The build asks this for every product a prior run recorded.
+const PRODUCT_EXISTS_QUERY = `
+query productExists($id: ID!) {
+  product(id: $id) { id }
+}`;
+
+async function productExists(productId) {
+  const data = await graphql(PRODUCT_EXISTS_QUERY, { id: gid("Product", productId) });
+  return Boolean(data.product);
+}
+
 async function getProduct(productId) {
   const data = await graphql(PRODUCT_QUERY, { id: gid("Product", productId) });
   const product = data.product;
@@ -345,5 +357,6 @@ module.exports = {
   getCollectionWithProducts,
   getProduct,
   listCollections,
+  productExists,
   updateProduct
 };
