@@ -660,17 +660,49 @@ app.delete("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
       return res.status(400).json({ error: `Deletion not confirmed: send confirmName matching "${departmentName}".` });
     }
 
-    const summary = { departmentName, deletedProducts: [], collectionDeleted: false, driveFolderTrashed: false, recordTrashed: false, errors: [] };
+    const summary = { departmentName, deletedProducts: [], collectionDeleted: false, collectionSharedWith: [], driveFolderTrashed: false, recordTrashed: false, errors: [] };
 
-    // Products: everything in the collection plus everything the build
-    // recorded (a product whose collection-add failed is only in the record).
+    // Builds reuse a collection by department title, so a second request for
+    // the same department shares this record's collection. Emptying and
+    // deleting it would strand that other record with a pointer to nothing -
+    // a "complete" build whose products and images are gone from Shopify.
+    // When the collection is shared, or sharing cannot be proven because the
+    // queue would not list in full, only this record's own products go and
+    // the collection stays.
+    const collectionId = record.shopifyCollection?.id ? String(record.shopifyCollection.id) : "";
+    let collectionShared = false;
+    if (collectionId) {
+      try {
+        const intakes = await listCustomerIntakes();
+        const unreadable = intakes.filter((intake) => intake.status === "error");
+        const sharers = intakes.filter(
+          (intake) => intake.id !== record.id && String(intake.shopifyCollection?.id || "") === collectionId
+        );
+        summary.collectionSharedWith = sharers.map((intake) => intake.store?.departmentName || intake.id);
+        collectionShared = sharers.length > 0 || unreadable.length > 0;
+        if (unreadable.length && !sharers.length) {
+          summary.errors.push(
+            `${unreadable.length} store record(s) could not be read, so the collection might be shared; it and any products not recorded on this request were kept.`
+          );
+        }
+      } catch (error) {
+        collectionShared = true;
+        summary.errors.push(
+          `Could not check whether the collection is shared with another store request (${error.message}); it and any products not recorded on this request were kept.`
+        );
+      }
+    }
+
+    // Products: everything the build recorded (a product whose collection-add
+    // failed is only in the record), plus everything in the collection when
+    // the collection belongs to this record alone.
     const productIds = new Set();
     for (const product of record.build?.products || []) {
       if (product?.productId) productIds.add(String(product.productId));
     }
-    if (record.shopifyCollection?.id) {
+    if (collectionId && !collectionShared) {
       try {
-        const collection = await getCollectionWithProducts(record.shopifyCollection.id);
+        const collection = await getCollectionWithProducts(collectionId);
         for (const product of collection.products || []) {
           if (product?.id) productIds.add(String(product.id));
         }
@@ -687,9 +719,9 @@ app.delete("/api/customer-intakes/:id", requireAdminToken, async (req, res) => {
       }
     }
 
-    if (record.shopifyCollection?.id) {
+    if (collectionId && !collectionShared) {
       try {
-        await deleteCollection(record.shopifyCollection.id);
+        await deleteCollection(collectionId);
         summary.collectionDeleted = true;
       } catch (error) {
         summary.errors.push(`Collection: ${error.message}`);
@@ -1381,10 +1413,12 @@ function requireShopify(res) {
 
 // Shopify's own errors are the useful ones here (a frozen store answers 402
 // "Unavailable Shop", a bad id answers 404), so they are passed through rather
-// than flattened into a generic failure.
+// than flattened into a generic failure. A record that points at a collection
+// or product Shopify no longer has is a 404 of its own, so the console can
+// tell "deleted in admin" apart from "Shopify is down".
 function catalogError(res, error) {
   const message = String(error?.message || "Shopify request failed.");
-  const status = /^Shopify (4\d\d|5\d\d)/.test(message) ? 502 : 500;
+  const status = /^Shopify (4\d\d|5\d\d)/.test(message) ? 502 : / was not found in Shopify\.?$/.test(message) ? 404 : 500;
   console.error("Catalog API:", message);
   res.status(status).json({ error: message });
 }

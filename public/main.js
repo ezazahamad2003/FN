@@ -1591,13 +1591,77 @@ async function loadStoreProducts(record) {
     panel.hidden = true;
     return;
   }
+  const builtProducts = record.build?.products || [];
+  const builtCount = builtProducts.length;
+  const builtOn = String(record.build?.finishedAt || record.build?.startedAt || "").slice(0, 10);
+  const collectionLabel = `"${record.shopifyCollection?.title || "the collection"}" (${collectionId})`;
+  const plural = (n, one, many) => (n === 1 ? one : many);
+  const head = (title, { manage = true } = {}) => `
+      <div class="card-head">
+        <div>
+          <p class="eyebrow">The store so far</p>
+          <h3>${escapeHtml(title)}</h3>
+        </div>
+        ${manage ? `<a class="btn btn-secondary btn-sm" href="#/departments/${encodeURIComponent(collectionId)}">Manage products</a>` : ""}
+      </div>`;
+  const rebuildAction = `<button class="btn btn-primary btn-sm" type="button" data-showcase-rebuild>Re-run build</button>`;
+  const retryAction = `<button class="btn btn-secondary btn-sm" type="button" data-showcase-retry>Try again</button>`;
+  const wireActions = () => {
+    // One build path only: the showcase button presses the header's button,
+    // which owns the request, the "Building…" label, and the polling.
+    panel.querySelector("[data-showcase-rebuild]")?.addEventListener("click", () => {
+      el("storeReviewPanel")?.querySelector("[data-build-intake]")?.click();
+    });
+    panel.querySelector("[data-showcase-retry]")?.addEventListener("click", () => loadStoreProducts(record));
+  };
+  // Every unhappy path lands here with the panel VISIBLE. A hidden showcase
+  // under a "complete" build reads as "the build made no images", when the
+  // truth is usually "Shopify no longer has them" - which has a fix.
+  const showState = (title, state, options) => {
+    panel.hidden = false;
+    panel.innerHTML = head(title, options) + stateBlock(state);
+    wireActions();
+  };
   try {
     const res = await fetch(`/api/collections/${encodeURIComponent(collectionId)}`);
     const payload = await res.json().catch(() => ({}));
+    if (res.status === 404) {
+      showState("Shopify collection missing", {
+        tone: "warn",
+        title: "This store's Shopify collection no longer exists",
+        sub:
+          `Collection ${collectionLabel} was deleted in Shopify` +
+          (builtCount ? `, and with it the ${builtCount} product${plural(builtCount, "", "s")} built on ${builtOn}` : "") +
+          ". Re-run the build to recreate the collection, the products, and their images.",
+        actionHtml: rebuildAction
+      }, { manage: false });
+      return;
+    }
+    if (res.status === 401) {
+      showState("Shopify not connected", {
+        tone: "info",
+        title: "Connect Shopify to see this store's products",
+        sub: payload.error || "Open Connections to link the store."
+      }, { manage: false });
+      return;
+    }
     if (!res.ok) throw new Error(payload.error || "Could not load collection products.");
     const products = payload.products || [];
     if (!products.length) {
-      panel.hidden = true;
+      // Nothing built yet: the collection is created at submit time and
+      // stays empty until the first build, which the build panel covers.
+      if (!builtCount) {
+        panel.hidden = true;
+        return;
+      }
+      showState("Collection is empty", {
+        tone: "warn",
+        title: "The Shopify collection has no products",
+        sub:
+          `${builtCount} product${plural(builtCount, "", "s")} built on ${builtOn} ${plural(builtCount, "is", "are")} no longer in ${collectionLabel}; ` +
+          `${plural(builtCount, "it was", "they were")} most likely deleted in Shopify admin. Re-run the build to recreate ${plural(builtCount, "it", "them")}.`,
+        actionHtml: rebuildAction
+      });
       return;
     }
     panel.hidden = false;
@@ -1640,15 +1704,26 @@ async function loadStoreProducts(record) {
       }
       return `<div class="float-item">${card}${sourceLine ? `<div class="float-source-slot">${sourceLine}</div>` : ""}</div>`;
     }).join("");
-    panel.innerHTML = `
-      <div class="card-head">
-        <div>
-          <p class="eyebrow">The store so far</p>
-          <h3>${products.length} product${products.length === 1 ? "" : "s"} in ${escapeHtml(payload.collection?.title || "the collection")}</h3>
-        </div>
-        <a class="btn btn-secondary btn-sm" href="#/departments/${encodeURIComponent(collectionId)}">Manage products</a>
-      </div>
-      <div class="float-shelf">${shelfHtml}</div>`;
+    // Built products the collection no longer holds (deleted in admin, or
+    // dropped from the collection) are named above the shelf, so a short
+    // store reads as short rather than merely quiet.
+    const presentIds = new Set(products.map((product) => String(product.id)));
+    const presentTitles = new Set(products.map((product) => String(product.title || "").toLowerCase()));
+    const missing = builtProducts.filter(
+      (built) => !(built.productId && presentIds.has(String(built.productId))) && !presentTitles.has(String(built.title || "").toLowerCase())
+    );
+    const missingHtml = missing.length
+      ? `<p class="float-missing" role="status">
+          <b>${missing.length} built product${plural(missing.length, "", "s")} missing from Shopify:</b>
+          <span>${missing.map((built) => escapeHtml(built.title)).join(", ")}. Re-run the build to recreate ${plural(missing.length, "it", "them")}.</span>
+          <button class="btn btn-ghost btn-sm" type="button" data-showcase-rebuild>Re-run build</button>
+        </p>`
+      : "";
+    panel.innerHTML =
+      head(`${products.length} product${plural(products.length, "", "s")} in ${payload.collection?.title || "the collection"}`) +
+      missingHtml +
+      `<div class="float-shelf">${shelfHtml}</div>`;
+    wireActions();
     panel.querySelectorAll("[data-add-source]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const built = addTargets[Number(btn.dataset.addSource)];
@@ -1656,8 +1731,15 @@ async function loadStoreProducts(record) {
         if (built && slot) openBlankSourceForm(slot, record, built, () => loadStoreProducts(record));
       });
     });
-  } catch {
-    panel.hidden = true;
+  } catch (error) {
+    // A network drop or a Shopify outage must read as such, not as "no
+    // products": the operator would otherwise believe the build made nothing.
+    showState("Products could not be loaded", {
+      tone: "danger",
+      title: "Could not load this store's products",
+      sub: error.message,
+      actionHtml: retryAction
+    });
   }
 }
 
@@ -1997,9 +2079,15 @@ function renderStoreDetail(record) {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.error || "Could not delete the store.");
       const problems = (payload.errors || []).length ? `\n\nCompleted with warnings:\n${payload.errors.join("\n")}` : "";
+      const sharedWith = payload.collectionSharedWith || [];
+      const collectionOutcome = payload.collectionDeleted
+        ? "removed"
+        : sharedWith.length
+          ? `kept (shared with ${sharedWith.join(", ")})`
+          : "not found";
       window.alert(
         `"${name}" deleted: ${payload.deletedProducts.length} product${payload.deletedProducts.length === 1 ? "" : "s"}, ` +
-        `collection ${payload.collectionDeleted ? "removed" : "not found"}, Drive folder ${payload.driveFolderTrashed ? "trashed" : "not found"}.${problems}`
+        `collection ${collectionOutcome}, Drive folder ${payload.driveFolderTrashed ? "trashed" : "not found"}.${problems}`
       );
       window.location.hash = "#/new-stores";
     } catch (error) {

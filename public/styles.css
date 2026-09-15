@@ -1196,6 +1196,8 @@ input[aria-invalid="true"],
 .state-block .sb-sub { color: var(--text-muted); font-size: var(--fs-sm); max-width: 52ch; }
 .state-block .state-spinner { width: 20px; height: 20px; margin-bottom: var(--space-1); }
 .state-block[data-tone="info"] { border-color: var(--info-border); background: var(--info-soft); }
+.state-block[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); }
+.state-block[data-tone="warn"] .sb-title { color: var(--warn); }
 .state-block[data-tone="danger"] { border-color: var(--danger-border); background: var(--danger-soft); }
 .state-block[data-tone="danger"] .sb-title { color: var(--danger); }
 .state-block .btn { margin-top: var(--space-2); }
@@ -3050,6 +3052,23 @@ a.float-card:focus-visible { outline: none; box-shadow: var(--ring); }
 
 .float-card b { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 .float-card small { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+/* Built products Shopify no longer has: a warning strip above the shelf. */
+.float-missing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.float-missing b { color: var(--warn); }
+.float-missing span { flex: 1 1 24ch; }
 
 /* Card plus the supplier source line under it. The card grows so a shelf
    mixing sourced and generated products keeps every card the same height. */
