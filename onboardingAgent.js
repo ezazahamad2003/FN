@@ -1396,6 +1396,12 @@ async function buildMockups(id, record, product, log) {
       driveUrl: "",
       fileName: image.fileName,
       path: image.path,
+      /* Where the garment itself came from: "photo" (Dan's), "supplier" (a real
+         catalogue picture) or "generated" (invented by the image model).
+         `path` says what was done TO the image; this says whether the garment
+         in it is real. Dropping it made a photograph and an invention look
+         identical everywhere downstream. */
+      base: image.base || null,
       verified: image.verified || null,
       warnings: image.warnings || []
     };
@@ -2073,6 +2079,18 @@ async function finalCheck(id, { by = "", build = null } = {}) {
       if (mockup.path === "missing-artwork" || mockup.path === "render-failed") {
         report.missingInformation.push(`${product.title || product.id} ${mockup.color} ${mockup.face}: ${mockup.warnings?.[0] || mockup.path}`);
       }
+    }
+    /* Part 2 makes the blank photo Dan's to supply; when none arrived the
+       agent invents the garment. That is a deliberate fallback, so it is a
+       warning rather than missing information — it says what happened without
+       blocking the store. One line per product: a six-colour row would
+       otherwise emit twelve. */
+    const generatedBlanks = (product.mockups || []).filter((mockup) => mockup && mockup.base === "generated");
+    if (generatedBlanks.length) {
+      const colors = [...new Set(generatedBlanks.map((mockup) => mockup.color).filter(Boolean))];
+      report.warnings.push(
+        `${product.title || product.id}: ${generatedBlanks.length} image(s) show an AI-generated blank, not the real garment (${colors.join(", ")}). Upload blank photos and re-run to replace them.`
+      );
     }
     for (const warning of product.validation?.warnings || []) report.warnings.push(`${product.title || product.id}: ${warning}`);
     for (const assumption of product.validation?.assumptions || []) report.warnings.push(`${product.title || product.id}: assumption — ${assumption}`);

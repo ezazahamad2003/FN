@@ -418,6 +418,19 @@ test("renderProductMockups: the default supplier lookup goes through the injecte
   assert.equal(calls.supplier[0].garmentColor, "Navy");
   assert.deepEqual(out.map((m) => m.base), ["supplier", "generated"]);
   assert.deepEqual(out.map((m) => m.path), ["render", "render"]);
+  // The invented garment says so. Both faces carry it: the warnings are
+  // per-colour, and an operator looking at either image needs to know.
+  const invented = out.filter((m) => m.warnings.some((w) => /AI-generated/.test(w)));
+  assert.equal(invented.length, 2, "a generated blank must be announced, not silently substituted");
+  assert.match(
+    out[1].warnings.find((w) => /AI-generated/.test(w)),
+    /Navy back: no blank photo was supplied.*AI-generated.*Upload a back photo/s
+  );
+  // A real supplier photo is never described as invented.
+  assert.equal(
+    out.every((m) => !/Navy front: .*AI-generated/.test(m.warnings.join(" "))),
+    true
+  );
   // verify on: both rendered faces were checked through the injected reason().
   assert.equal(calls.reason.length, 2);
   assert.deepEqual(out.map((m) => m.verified.ok), [true, true]);

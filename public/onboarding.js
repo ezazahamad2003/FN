@@ -303,6 +303,25 @@
     return "muted";
   }
 
+  /* Where the GARMENT came from, which `path` does not say: a rendered logo on
+     an invented blank and a rendered logo on Dan's photo both read "render".
+     Only the invented case needs to catch the eye. */
+  const BASE_BADGES = {
+    photo: { label: "blank photo", tone: "ok" },
+    supplier: { label: "supplier photo", tone: "info" },
+    generated: { label: "AI blank", tone: "warn" }
+  };
+
+  function baseBadge(base) {
+    const badge = BASE_BADGES[String(base || "")];
+    if (!badge) return "";
+    return `<span class="ob-badge" data-tone="${esc(badge.tone)}" title="${esc(
+      base === "generated"
+        ? "The garment in this image was generated, not photographed. Upload a blank photo and re-run to replace it."
+        : "The garment in this image comes from a real photograph."
+    )}">${esc(badge.label)}</span>`;
+  }
+
   function chip(label, tone) {
     return `<span class="status-chip" data-tone="${esc(tone)}">${esc(label)}</span>`;
   }
@@ -1716,6 +1735,7 @@
           <b>${esc(caption)}</b>
           <span class="ob-badges">
             <span class="ob-badge" data-tone="${esc(pathTone(mockup?.path))}">${esc(mockup?.path || "unknown")}</span>
+            ${baseBadge(mockup?.base)}
             ${verified && verified.ok === false ? `<span class="ob-badge" data-tone="warn">check</span>` : ""}
           </span>
           ${verified && verified.ok === false && verified.notes ? `<small class="ob-mockup-note">${esc(verified.notes)}</small>` : ""}

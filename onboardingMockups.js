@@ -361,6 +361,17 @@ async function resolveBases({ product, color, photos, supplierLookup, generateBl
     // Undecorated items only get a back image when Dan supplied one.
     await take("back", "photo", async () => asBuffer(photos.back));
   }
+
+  /* A generated blank is an invention, not a photograph of the garment, and
+     Part 2 makes the blank photo Dan's to supply. Saying so here is the only
+     way it reaches him: the source is otherwise just a word in a log line that
+     scrolls past during the build. */
+  for (const face of ["front", "back"]) {
+    if (base[`${face}Source`] !== "generated") continue;
+    base.warnings.push(
+      `${color} ${face}: no blank photo was supplied and no supplier photo was found, so this garment is AI-generated rather than a picture of the real item. Upload a ${face} photo of the blank and re-run to replace it.`
+    );
+  }
   return base;
 }
 

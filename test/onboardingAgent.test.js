@@ -248,7 +248,7 @@ function fakeShopify({ megaMenuAvailable = false, order = [] } = {}) {
   return shopify;
 }
 
-function fakeMockups() {
+function fakeMockups({ base = "photo" } = {}) {
   return {
     async renderProductMockups({ product, departmentCode }) {
       const out = [];
@@ -265,6 +265,7 @@ function fakeMockups() {
               buffer: Buffer.from(`${color.code}-${style || ""}-${face}`),
               fileName: rules.mockupFileName({ departmentCode, styleNumber: product.styleNumber, colorCode: color.code, style, face }),
               path: "render",
+              base,
               warnings: [],
               verified: { ok: true, notes: "artwork visible" }
             });
@@ -633,6 +634,36 @@ test("front mockups bind to the variants of their own Style and Colour; backs st
   assert.equal(record.products[0].mockups.length, 8);
   assert.ok(record.products[0].mockups.every((m) => m.assetId && m.driveUrl));
   assert.equal(deps.drive.calls.images.filter((i) => i.folderId === "folder-Product Images").length, 8);
+});
+
+test("an AI-generated blank is recorded and reported, never passed off as the garment", async () => {
+  const { id, record } = await builtOnboarding({ mockups: fakeMockups({ base: "generated" }) });
+
+  // The provenance survives the hop from renderer to record. It used to be
+  // computed and then dropped, which made an invention and a photograph of the
+  // real garment indistinguishable everywhere downstream.
+  assert.ok(record.products[0].mockups.length > 0);
+  assert.ok(
+    record.products[0].mockups.every((mockup) => mockup.base === "generated"),
+    `bases: ${JSON.stringify(record.products[0].mockups.map((m) => m.base))}`
+  );
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  const warning = checked.report.warnings.find((w) => /AI-generated blank/.test(w));
+  assert.ok(warning, `report warnings: ${JSON.stringify(checked.report.warnings)}`);
+  assert.match(warning, /Upload blank photos and re-run/);
+  // One line per product, not one per image.
+  assert.equal(checked.report.warnings.filter((w) => /AI-generated blank/.test(w)).length, 1);
+  // A warning, not missing information: generation is a deliberate fallback,
+  // so saying so must not create a second gate the store can never pass.
+  assert.equal(checked.report.missingInformation.some((m) => /AI-generated/.test(m)), false);
+});
+
+test("a blank from a real photo raises no invented-garment warning", async () => {
+  const { id, record } = await builtOnboarding();
+  assert.ok(record.products[0].mockups.every((mockup) => mockup.base === "photo"));
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.equal(checked.report.warnings.some((w) => /AI-generated blank/.test(w)), false);
 });
 
 test("without Locksmith the lock becomes the §7 checklist, not a silent skip", async () => {
