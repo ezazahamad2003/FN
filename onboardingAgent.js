@@ -2069,17 +2069,22 @@ async function lockAccessVerdict(record, { liveProductCount = null } = {}) {
   const productCount = Number.isFinite(liveProductCount)
     ? liveProductCount
     : (record.products || []).filter((product) => clean(product?.shopify?.productId)).length;
+  /* Every branch carries the URL, not just the one that reaches the storefront
+     check: the "after pricing and publishing, open <url> signed out" line in
+     "Needs Dan" is the most-read instruction in the report, and the
+     pendingLaunch branch used to leave a hole where the link should be. */
+  const handle = clean(record.collection?.handle);
   const base = {
     checked: false,
     closedToPublic: null,
     opensWithSecretLink: null,
     publicProductLinks: null,
-    collectionUrl: "",
+    collectionUrl: clean(record.collection?.storefrontUrl) || (handle ? `https://${storefrontDomain()}/collections/${handle}` : ""),
     productCount,
     pendingLaunch: false,
     reason: ""
   };
-  if (!clean(record.collection?.handle)) return { ...base, reason: "The collection has no handle yet." };
+  if (!handle) return { ...base, reason: "The collection has no handle yet." };
   if (!(productCount > 0)) {
     return {
       ...base,

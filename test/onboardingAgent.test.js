@@ -948,10 +948,12 @@ test("a Draft-only store cannot prove or disprove the lock, and does not block o
     false,
     "a Draft store must not be reported as a broken secret link"
   );
-  assert.ok(
-    checked.report.needsDan.some((n) => /After pricing and publishing/.test(n)),
-    `expected a post-launch re-check item: ${JSON.stringify(checked.report.needsDan)}`
-  );
+  const recheck = checked.report.needsDan.find((n) => /After pricing and publishing/.test(n));
+  assert.ok(recheck, `expected a post-launch re-check item: ${JSON.stringify(checked.report.needsDan)}`);
+  /* "open  signed out to confirm the store is private" — the instruction is
+     useless without the link, and this branch never gets as far as the
+     storefront check that used to be the only thing filling it in. */
+  assert.match(recheck, /open https:\/\/\S+\/collections\/\S+ signed out/);
   // And the unprovable verdict is never written to the record as if it were one.
   assert.equal(checked.lock.access.checkedAt, "");
 });
