@@ -456,3 +456,112 @@ test("verifyLock re-reads the lock and checks the tag", async () => {
     assert.equal(bad.tagMatches, false);
   });
 });
+
+/* ---------------------------------------------------------------------------
+   §7 checked by behaviour: the lock's job is that the public cannot see the
+   department's products, and that the secret link can.
+   ------------------------------------------------------------------------- */
+
+// A collection page as the storefront renders it, with N product cards.
+function storefront(productCount) {
+  const cards = Array.from({ length: productCount }, (_, i) => `<a href="/collections/vacaville/products/tee-${i + 1}">Tee ${i + 1}</a>`);
+  // The chrome every page carries, locked or not: nav, search, footer.
+  return `<html><head><title>Store</title></head><body><nav><a href="/account/login">Log in</a></nav>${cards.join("")}<footer>Password</footer></body></html>`;
+}
+
+function fakeStorefront(byUrl) {
+  const seen = [];
+  locksmith.setFetch(async (url) => {
+    seen.push(String(url));
+    const hit = Object.entries(byUrl).find(([fragment]) => String(url).includes(fragment));
+    if (!hit) throw new Error(`unexpected fetch ${url}`);
+    const [, value] = hit;
+    if (value instanceof Error) throw value;
+    return { status: 200, ok: true, text: async () => value };
+  });
+  return seen;
+}
+
+test("productLinkCount counts distinct products and ignores page chrome", () => {
+  assert.equal(locksmith.productLinkCount(storefront(0)), 0);
+  assert.equal(locksmith.productLinkCount(storefront(3)), 3);
+  // The same product linked twice (card + quick-view) is still one product.
+  assert.equal(locksmith.productLinkCount(`<a href="/products/tee">x</a><a href="/products/tee">y</a>`), 1);
+  assert.equal(locksmith.productLinkCount(null), 0);
+});
+
+test("a locked collection shows the public nothing, and the secret link opens it", async () => {
+  fakeStorefront({
+    "?ls=": storefront(12),
+    "/collections/1-vacaville": storefront(0)
+  });
+  const verdict = await locksmith.checkPublicAccess({
+    storefrontDomain: "fnsimple.com",
+    collectionHandle: "1-vacaville",
+    productCount: 58,
+    secretLink: "https://fnsimple.com/collections/1-vacaville?ls=abc123"
+  });
+  assert.equal(verdict.checked, true);
+  assert.equal(verdict.closedToPublic, true);
+  assert.equal(verdict.publicProductLinks, 0);
+  assert.equal(verdict.opensWithSecretLink, true);
+  assert.equal(verdict.reason, "");
+  locksmith.setFetch(null);
+});
+
+test("a collection still visible to the public fails the check and says how many leaked", async () => {
+  fakeStorefront({ "/collections/1-vacaville": storefront(16) });
+  const verdict = await locksmith.checkPublicAccess({
+    storefrontDomain: "fnsimple.com",
+    collectionHandle: "1-vacaville",
+    productCount: 58
+  });
+  assert.equal(verdict.closedToPublic, false);
+  assert.equal(verdict.publicProductLinks, 16);
+  assert.match(verdict.reason, /16 product link\(s\) to the public/);
+  locksmith.setFetch(null);
+});
+
+test("a secret link that opens nothing is reported, not assumed to work", async () => {
+  fakeStorefront({
+    "?ls=": storefront(0),
+    "/collections/1-vacaville": storefront(0)
+  });
+  const verdict = await locksmith.checkPublicAccess({
+    storefrontDomain: "fnsimple.com",
+    collectionHandle: "1-vacaville",
+    productCount: 58,
+    secretLink: "https://fnsimple.com/collections/1-vacaville?ls=wrong"
+  });
+  assert.equal(verdict.closedToPublic, true);
+  assert.equal(verdict.opensWithSecretLink, false);
+  assert.match(verdict.reason, /does not open the store/);
+  locksmith.setFetch(null);
+});
+
+test("an empty collection proves nothing, so the verdict stays unknown", async () => {
+  const seen = fakeStorefront({ "/collections/1-vacaville": storefront(0) });
+  const verdict = await locksmith.checkPublicAccess({
+    storefrontDomain: "fnsimple.com",
+    collectionHandle: "1-vacaville",
+    productCount: 0
+  });
+  assert.equal(verdict.checked, false);
+  assert.equal(verdict.closedToPublic, null, "null is not a pass");
+  assert.match(verdict.reason, /no products yet/);
+  assert.deepEqual(seen, [], "and it does not waste a request finding out");
+  locksmith.setFetch(null);
+});
+
+test("a storefront that will not answer leaves the verdict unknown rather than failed", async () => {
+  fakeStorefront({ "/collections/1-vacaville": new Error("ECONNRESET") });
+  const verdict = await locksmith.checkPublicAccess({
+    storefrontDomain: "fnsimple.com",
+    collectionHandle: "1-vacaville",
+    productCount: 58
+  });
+  assert.equal(verdict.closedToPublic, null);
+  assert.equal(verdict.checked, false);
+  assert.match(verdict.reason, /Could not read .*ECONNRESET/);
+  locksmith.setFetch(null);
+});

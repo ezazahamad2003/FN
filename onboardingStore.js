@@ -400,7 +400,13 @@ function recordDefaults({ name = "", state = "", storeOrdinal = 1, storeName = "
       secretCode: "",
       secretLink: "",
       tagKey: "",
-      settings: { enabled: true, protectProducts: true, hideFromNavigation: true, hideFromLists: true },
+      /* §7.2's four settings. null is "nobody has established this yet" —
+         they used to default to true, which is how a lock that did not exist
+         yet reported all four as checked. */
+      settings: { enabled: null, protectProducts: null, hideFromNavigation: null, hideFromLists: null },
+      /* What the lock actually DOES, measured from outside: Locksmith's option
+         names are undocumented, so this is the only honest evidence. */
+      access: { checkedAt: "", closedToPublic: null, opensWithSecretLink: null, publicProductLinks: null, reason: "" },
       checklist: [],
       error: "",
       verifiedAt: ""

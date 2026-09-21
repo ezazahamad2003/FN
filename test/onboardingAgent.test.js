@@ -297,6 +297,30 @@ function fakeCatalog({ descriptionHtml = () => "" } = {}) {
 
 const PRODUCTION_FILES = ["VAC-F01.png", "VAC-B01.png", "VAC-F02.png"];
 
+/*
+ * The real Locksmith module, minus the network: unconfigured (so the build
+ * takes the §7 checklist path) and with a canned verdict for the storefront
+ * check that final check now makes. Pass `lockAccess` to change the verdict.
+ */
+function fakeLocksmith(access = {}) {
+  const real = require("../locksmith");
+  return {
+    ...real,
+    configured: () => false,
+    async checkPublicAccess() {
+      return {
+        checked: true,
+        collectionUrl: "https://fnsimple.com/collections/1-vacaville-fire-department",
+        publicProductLinks: 0,
+        closedToPublic: true,
+        opensWithSecretLink: true,
+        reason: "",
+        ...access
+      };
+    }
+  };
+}
+
 function harness(options = {}) {
   store.setBlobAdapter(store.memoryBlobAdapter());
   referenceTables.invalidate();
@@ -310,6 +334,7 @@ function harness(options = {}) {
     policy: options.policy || fakePolicy(),
     helium: options.helium || fakeHelium({ present: false }),
     mockups: options.mockups || fakeMockups(),
+    locksmith: options.locksmith || fakeLocksmith(options.lockAccess),
     catalog: options.catalog || fakeCatalog({ descriptionHtml: () => shopify.lastSetProduct()?.descriptionHtml || "" }),
     shopifyCore: { shopifyConnected: () => true },
     auth: { googleConnected: () => true }
@@ -320,6 +345,7 @@ function harness(options = {}) {
     policy: deps.policy,
     helium: deps.helium,
     mockups: deps.mockups,
+    locksmith: deps.locksmith,
     catalog: deps.catalog,
     shopifyCore: deps.shopifyCore,
     auth: deps.auth
@@ -747,6 +773,60 @@ test("final check stays open until the shared settings are confirmed, then compl
   assert.ok(checked.report.completed.some((c) => c.includes("secret link")));
   assert.ok(checked.report.driveDocUrl, "the report is saved to the department folder");
   assert.ok(agent.reportHtml(checked).includes("1. Completed"));
+});
+
+const SECRET_LINK = "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123";
+
+/* §7/§12: a recorded secret link used to be all it took to report a store as
+   locked. These three cases all record one and must still not pass. */
+
+test("a store still visible to the public is never reported as locked", async () => {
+  const { id } = await builtOnboarding({
+    lockAccess: { closedToPublic: false, publicProductLinks: 16, reason: "The collection page shows 16 product link(s) to the public (HTTP 200); the lock is not hiding them." }
+  });
+  await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
+  const checked = await agent.finalCheck(id, { by: "dan" });
+
+  assert.notEqual(checked.status, "complete");
+  assert.equal(checked.report.completed.some((c) => /Private store lock in place/.test(c)), false, "a leaking store is not 'in place'");
+  assert.ok(checked.report.warnings.some((w) => /still visible to the public/.test(w)), JSON.stringify(checked.report.warnings));
+  assert.equal(checked.lock.access.closedToPublic, false);
+  assert.equal(checked.lock.access.publicProductLinks, 16);
+});
+
+test("a secret link that opens nothing keeps the onboarding open", async () => {
+  const { id } = await builtOnboarding({ lockAccess: { closedToPublic: true, opensWithSecretLink: false, reason: "The secret link showed no products, so it does not open the store." } });
+  await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
+  const checked = await agent.finalCheck(id, { by: "dan" });
+
+  assert.notEqual(checked.status, "complete");
+  assert.ok(checked.report.warnings.some((w) => /does not open it/.test(w)), JSON.stringify(checked.report.warnings));
+});
+
+test("a lock that cannot be checked from outside is not confirmed private", async () => {
+  const { id } = await builtOnboarding({
+    lockAccess: { checked: false, closedToPublic: null, reason: "Could not read https://fnsimple.com/collections/1-vacaville-fire-department: ECONNRESET" }
+  });
+  await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
+  const checked = await agent.finalCheck(id, { by: "dan" });
+
+  assert.notEqual(checked.status, "complete");
+  assert.ok(checked.report.missingInformation.some((m) => /not confirmed private/.test(m)), JSON.stringify(checked.report.missingInformation));
+  // An unchecked verdict is never written to the record as if it were one.
+  assert.equal(checked.lock.access.checkedAt, "");
+});
+
+test("a lock proven to work is reported with the evidence, not just the link", async () => {
+  const { id } = await builtOnboarding();
+  await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
+  const checked = await agent.finalCheck(id, { by: "dan" });
+
+  const line = checked.report.completed.find((c) => /Private store lock in place/.test(c));
+  assert.ok(line, JSON.stringify(checked.report.completed));
+  assert.match(line, /the public sees none of the 1 product\(s\)/);
+  assert.match(line, /the secret link opens the store/);
+  assert.equal(checked.lock.access.closedToPublic, true);
+  assert.ok(checked.lock.access.checkedAt);
 });
 
 test("final check catches a product Shopify says is ACTIVE or carries another department's tag", async () => {

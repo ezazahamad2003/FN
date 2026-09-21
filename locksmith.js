@@ -506,6 +506,101 @@ function lockId(lock) {
 }
 
 /* ---------------------------------------------------------------------------
+   §7 checked by behaviour rather than by configuration
+   ------------------------------------------------------------------------- */
+
+/*
+ * Locksmith's option names are undocumented, so asserting them would prove
+ * nothing about the spec's four settings — a name we guessed wrong is accepted
+ * and ignored, and the store stays open while the report says it is locked.
+ *
+ * What the four settings EXIST to produce is observable from outside with no
+ * credentials at all: a locked department collection renders none of its
+ * products to the public, and the secret link opens it. That is the thing Dan
+ * actually needs to be true, and it holds however Locksmith spells its
+ * options internally.
+ *
+ * Measured against the live store: the public "FN Simple Merch" collection
+ * renders 16 distinct product links, while Vacaville (58 products) and Benicia
+ * (41 products) render 0.
+ */
+const PRODUCT_LINK_RE = /\/products\/[a-z0-9][a-z0-9-]*/gi;
+
+function productLinkCount(html) {
+  const found = String(html || "").match(PRODUCT_LINK_RE) || [];
+  return new Set(found.map((link) => link.toLowerCase())).size;
+}
+
+async function fetchPublicHtml(url) {
+  const res = await getFetch()(url, { redirect: "follow", signal: timeoutSignal() });
+  const html = await res.text();
+  return { status: res.status, html };
+}
+
+/**
+ * Does the lock actually do its job? Fetches the collection as the public sees
+ * it, and — when a secret link is known — through that link.
+ *
+ * Every verdict is `true`, `false`, or `null` for "could not be established".
+ * Null is not a pass: an empty collection proves nothing, and neither does a
+ * storefront that would not answer.
+ */
+async function checkPublicAccess({ storefrontDomain, collectionHandle, productCount = 0, secretLink = "" } = {}) {
+  const out = {
+    checked: false,
+    collectionUrl: "",
+    publicProductLinks: null,
+    closedToPublic: null,
+    opensWithSecretLink: null,
+    reason: ""
+  };
+  let domain;
+  try {
+    domain = normalizeDomain(storefrontDomain || process.env.SHOPIFY_STOREFRONT_DOMAIN || process.env.SHOPIFY_STORE);
+  } catch {
+    domain = "";
+  }
+  const handle = String(collectionHandle || "").trim().replace(/^\/+|\/+$/g, "");
+  if (!domain || !handle) {
+    out.reason = "A storefront domain and collection handle are needed to check public access.";
+    return out;
+  }
+  out.collectionUrl = `https://${domain}/collections/${handle}`;
+
+  if (!(Number(productCount) > 0)) {
+    out.reason = "The collection has no products yet, so an empty public page would prove nothing.";
+    return out;
+  }
+
+  try {
+    const { status, html } = await fetchPublicHtml(out.collectionUrl);
+    out.publicProductLinks = productLinkCount(html);
+    out.closedToPublic = out.publicProductLinks === 0;
+    out.checked = true;
+    if (!out.closedToPublic) {
+      out.reason = `The collection page shows ${out.publicProductLinks} product link(s) to the public (HTTP ${status}); the lock is not hiding them.`;
+    }
+  } catch (error) {
+    out.reason = `Could not read ${out.collectionUrl}: ${error.message}`;
+    return out;
+  }
+
+  const link = String(secretLink || "").trim();
+  if (!link) return out;
+  try {
+    const { html } = await fetchPublicHtml(link);
+    const withLink = productLinkCount(html);
+    out.opensWithSecretLink = withLink > 0;
+    if (!out.opensWithSecretLink) {
+      out.reason = `${out.reason ? out.reason + " " : ""}The secret link showed no products, so it does not open the store.`.trim();
+    }
+  } catch (error) {
+    out.reason = `${out.reason ? out.reason + " " : ""}Could not follow the secret link: ${error.message}`.trim();
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------------------
    §7 as a checklist for Dan (when the API is unavailable or fails)
    ------------------------------------------------------------------------- */
 
@@ -542,5 +637,7 @@ module.exports = {
   createCollectionLock,
   verifyLock,
   inspectLock,
+  checkPublicAccess,
+  productLinkCount,
   manualChecklist
 };

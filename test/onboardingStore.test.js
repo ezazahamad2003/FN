@@ -67,7 +67,10 @@ test("emptyRecord: full default shape from the design doc", () => {
   assert.equal(record.collection.title, `1. ${NAME}`);
   assert.equal(record.collection.descriptionSet, false);
   assert.equal(record.lock.status, "pending");
-  assert.deepEqual(record.lock.settings, { enabled: true, protectProducts: true, hideFromNavigation: true, hideFromLists: true });
+  // Nothing about the lock is established until something establishes it;
+  // these used to default to true, so a lock nobody built read as checked.
+  assert.deepEqual(record.lock.settings, { enabled: null, protectProducts: null, hideFromNavigation: null, hideFromLists: null });
+  assert.deepEqual(record.lock.access, { checkedAt: "", closedToPublic: null, opensWithSecretLink: null, publicProductLinks: null, reason: "" });
   assert.equal(record.sharedSettings.megaMenu.status, "pending");
   assert.deepEqual(record.sharedSettings.megaMenu.proposal, { insertAfter: "", insertBefore: "", index: 0, title: "", url: "" });
   assert.equal(record.sharedSettings.flow.status, "pending");
@@ -119,7 +122,10 @@ test("normalizeRecord: fills missing sub-objects, keeps unknown keys, recomputes
   assert.deepEqual(record.department.code.candidates, []);
   assert.equal(record.lock.status, "created");
   assert.equal(record.lock.secretLink, "https://fnsimple.com/x");
-  assert.deepEqual(record.lock.settings, { enabled: true, protectProducts: true, hideFromNavigation: true, hideFromLists: true });
+  // Nothing about the lock is established until something establishes it;
+  // these used to default to true, so a lock nobody built read as checked.
+  assert.deepEqual(record.lock.settings, { enabled: null, protectProducts: null, hideFromNavigation: null, hideFromLists: null });
+  assert.deepEqual(record.lock.access, { checkedAt: "", closedToPublic: null, opensWithSecretLink: null, publicProductLinks: null, reason: "" });
   assert.equal(record.sharedSettings.megaMenu.status, "proposed");
   assert.deepEqual(record.sharedSettings.megaMenu.proposal, { insertAfter: "", insertBefore: "", index: 4, title: "", url: "" });
   assert.equal(record.sharedSettings.flow.status, "pending");

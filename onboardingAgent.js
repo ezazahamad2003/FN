@@ -1496,7 +1496,8 @@ async function buildLock(record, log) {
       status: "manual",
       checklist: locksmith().manualChecklist({ collectionTitle: title, departmentTag: tag }),
       error: "",
-      settings: { enabled: true, protectProducts: true, hideFromNavigation: true, hideFromLists: true }
+      // Dan has not built the lock yet, so nothing about it is established.
+      settings: { enabled: null, protectProducts: null, hideFromNavigation: null, hideFromLists: null }
     };
   }
   const created = await locksmith().createCollectionLock(
@@ -2006,6 +2007,36 @@ async function checkProduct(record, product, colorTable) {
  * §12: check everything against live Shopify, then report in four sections.
  * Never "complete" while anything is unresolved.
  */
+/*
+ * §7 measured from outside the store. The product count comes from what was
+ * actually created in Shopify, not from the rows, because a collection that is
+ * simply empty must never read as "closed to the public".
+ */
+async function lockAccessVerdict(record) {
+  const productCount = (record.products || []).filter((product) => clean(product?.shopify?.productId)).length;
+  const base = {
+    checked: false,
+    closedToPublic: null,
+    opensWithSecretLink: null,
+    publicProductLinks: null,
+    collectionUrl: "",
+    productCount,
+    reason: ""
+  };
+  if (!clean(record.collection?.handle)) return { ...base, reason: "The collection has no handle yet." };
+  try {
+    const verdict = await locksmith().checkPublicAccess({
+      storefrontDomain: storefrontDomain(),
+      collectionHandle: record.collection.handle,
+      productCount,
+      secretLink: record.lock?.secretLink || ""
+    });
+    return { ...base, ...verdict, productCount };
+  } catch (error) {
+    return { ...base, reason: `The storefront check failed: ${errorText(error)}` };
+  }
+}
+
 async function finalCheck(id, { by = "", build = null } = {}) {
   let record = await store().getOnboarding(id);
   const report = rules.emptyReport();
@@ -2040,9 +2071,42 @@ async function finalCheck(id, { by = "", build = null } = {}) {
     }
   }
 
-  const lockResolved = record.lock.status === "verified" || (record.lock.status === "created" && clean(record.lock.secretLink)) || (record.lock.status === "manual" && clean(record.lock.secretLink));
-  if (lockResolved) report.completed.push(`Private store lock in place${record.lock.secretLink ? `; secret link: ${record.lock.secretLink}` : ""}.`);
-  else unresolved.push(`The Locksmith lock is not confirmed (${record.lock.status}). ${record.lock.checklist?.length ? "Follow the lock checklist and record the secret link." : ""}`.trim());
+  /* §7 / §12. A recorded secret link used to be enough to report the store as
+     locked, which meant a lock nobody built — or one built with a box unticked
+     — passed. Locksmith's option names are undocumented, so asserting them
+     would prove nothing either. Check what the lock is FOR instead: the public
+     must not be able to see the department's products, and the secret link
+     must open them. */
+  const access = await lockAccessVerdict(record);
+  if (access.checked) {
+    record = await store().updateOnboarding(record.id, (r) => {
+      r.lock.access = {
+        checkedAt: nowIso(),
+        closedToPublic: access.closedToPublic,
+        opensWithSecretLink: access.opensWithSecretLink,
+        publicProductLinks: access.publicProductLinks,
+        reason: access.reason || ""
+      };
+      return r;
+    });
+  }
+  const lockRecorded =
+    record.lock.status === "verified" || ((record.lock.status === "created" || record.lock.status === "manual") && clean(record.lock.secretLink));
+  if (!lockRecorded) {
+    unresolved.push(`The Locksmith lock is not confirmed (${record.lock.status}). ${record.lock.checklist?.length ? "Follow the lock checklist and record the secret link." : ""}`.trim());
+  } else if (access.closedToPublic === false) {
+    unresolved.push(`The department's products are still visible to the public at ${access.collectionUrl}. ${access.reason}`.trim());
+  } else if (access.closedToPublic === null) {
+    unresolved.push(`The lock could not be checked from outside, so the store is not confirmed private. ${access.reason}`.trim());
+  } else if (access.opensWithSecretLink === false) {
+    unresolved.push(`The store is private, but the recorded secret link does not open it. ${access.reason}`.trim());
+  } else {
+    report.completed.push(
+      `Private store lock in place — the public sees none of the ${access.productCount} product(s)${
+        access.opensWithSecretLink ? " and the secret link opens the store" : ""
+      }${record.lock.secretLink ? `; secret link: ${record.lock.secretLink}` : ""}.`
+    );
+  }
 
   const menuStatus = record.sharedSettings.megaMenu.status;
   if (menuStatus === "verified" || menuStatus === "applied") report.completed.push(`Mega Menu carries "${record.collection.title}".`);
