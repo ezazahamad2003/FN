@@ -55,6 +55,12 @@
     { key: "setup", label: "Setup", panel: "setup" },
     { key: "inputs", label: "Build inputs", panel: "inputs" },
     { key: "build", label: "Build", panel: "build" },
+    /* The approvals step. It was missing from this list, so the one panel
+       holding the buttons that finish an onboarding — Mega Menu, Flow, Helium,
+       the lock — had no way to navigate to it. On a 17,000px page that means
+       it may as well not have existed. Its phase is "build": the record has no
+       separate phase for approvals, and the step is about reaching the panel. */
+    { key: "build", label: "Approvals", panel: "shared" },
     { key: "report", label: "Report", panel: "report" }
   ];
 
@@ -2048,8 +2054,13 @@
 
     if (action === "goto") {
       const target = document.getElementById(`obPanel-${trigger.dataset.obTarget}`) || page()?.querySelector(`[data-ob-panel="${trigger.dataset.obTarget}"]`);
-      target?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
-      target?.querySelector("button, input, select, textarea, a[href]")?.focus({ preventScroll: true });
+      if (!target) return;
+      /* Instant, not smooth. A smooth scrollIntoView did not move this page at
+         all — focus landed on the target panel while the scroll position
+         stayed at 0 — so the panel still looked unreachable. Across 11,000px
+         an animated scroll is the wrong behaviour anyway. */
+      target.scrollIntoView({ block: "start" });
+      target.querySelector("button, input, select, textarea, a[href]")?.focus({ preventScroll: true });
       return;
     }
     if (action === "copy") {

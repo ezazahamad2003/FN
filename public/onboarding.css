@@ -242,8 +242,20 @@
 
 /* ---- Phase stepper (extends .wizard-rail: five phases, not four) --------- */
 .ob-stepper {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-bottom: 0;
+  /* The detail page runs to ~17,000px. A stepper that scrolls away with it
+     leaves no way back, which is how the approvals panel became unreachable:
+     it sits at 11,000px, below everything an operator reads. */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--surface);
+  padding-block: var(--space-2);
+}
+
+@media (max-width: 720px) {
+  .ob-stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .ob-stepper li[data-state="todo"] button { opacity: 0.78; }
