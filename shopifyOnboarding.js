@@ -1058,12 +1058,16 @@ async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
   return { applied: true, alreadyPresent: false, menuItemId: inserted?.id || null, index: recomputed.index, insertAfter: recomputed.insertAfter, insertBefore: recomputed.insertBefore };
 }
 
-async function verifyMegaMenu(title) {
+/* `collectionGid` matters: an item Dan added by hand is named however he named
+   it, and matching on the title alone reports a store that IS in the menu as
+   missing. menuTitleMatches accepts either, exactly as the proposal's
+   already-present check does. */
+async function verifyMegaMenu(title, { collectionGid = null } = {}) {
   const fresh = await readMegaMenu();
   if (!fresh.available) return { available: false, present: false, index: -1, before: null, after: null, reason: fresh.reason, accessDenied: Boolean(fresh.accessDenied) };
   const store = findStoreItem(fresh.menu);
   const children = store?.items || [];
-  const index = children.findIndex((it) => normText(it.title) === normText(title));
+  const index = children.findIndex((it) => menuTitleMatches(it, title, collectionGid));
   return {
     available: true,
     present: index !== -1,

@@ -26,7 +26,11 @@ only for reading messy policies, drafting the rep email, and rendering mockups.
   cannot read or write customers. The MegaMenu is Shopify menu `gid://shopify/Menu/191418204297`
   (handle `megamenu`); department stores are nested under its "Store" item,
   oldest→newest, followed by the public stores (FN Simple Merch, SF City Gear,
-  Bay Area Firefighter, LOGIN…).
+  Bay Area Firefighter, LOGIN…). **Menu items are named without the
+  collection's "N." ordinal** — all 108 live entries are ("Bishop Fire
+  Department" → `/collections/1-bishop-fire-department`), so the menu title is
+  `rules.megaMenuItemTitle(collection.title)`, and verification matches on the
+  collection gid as well as the title.
 - Locksmith exposes an Admin API (`https://uselocksmith.com/api/unstable`,
   headers `x-shopify-shop-domain` + `x-locksmith-access-token`): `POST /lock`
   with `resource_type: "custom_collection"`, `resources[]`, `options`

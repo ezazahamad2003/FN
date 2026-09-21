@@ -242,12 +242,14 @@ function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, m
       if (!megaMenuAvailable) return { available: false, accessDenied: true, reason: "Access denied to menus." };
       return { available: true, menu: { id: "gid://shopify/Menu/1", handle: "megamenu", title: "Mega Menu", items: [] } };
     },
-    proposeMegaMenuInsert() {
-      return { newItem: { title: COLLECTION_TITLE, type: "COLLECTION", url: "/collections/1-vacaville-fire-department" }, index: 3, insertAfter: "Suisun City Fire Department", insertBefore: "FN Simple Merch", alreadyPresent: false, storeItemId: "gid://shopify/MenuItem/9" };
+    // Echoes the title it is asked for, so a caller that asks for the wrong
+    // one (the collection's "N." ordinal) shows up in the live menu below.
+    proposeMegaMenuInsert(menu, { title } = {}) {
+      return { newItem: { title, type: "COLLECTION", url: "/collections/1-vacaville-fire-department" }, index: 3, insertAfter: "Suisun City Fire Department", insertBefore: "FN Simple Merch", alreadyPresent: false, storeItemId: "gid://shopify/MenuItem/9" };
     },
-    async applyMegaMenuInsert() {
+    async applyMegaMenuInsert(menu, proposal) {
       if (!megaMenuAvailable) throw new Error("Mega Menu is not writable: Access denied to menus.");
-      liveMenuTitles.push(COLLECTION_TITLE);
+      liveMenuTitles.push(proposal.newItem.title);
       return { applied: true, alreadyPresent: false, menuItemId: "gid://shopify/MenuItem/50", index: 3 };
     },
     async verifyMegaMenu(title) {
@@ -257,6 +259,7 @@ function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, m
     },
     // A change made by hand in Shopify admin, which the API never saw.
     addMenuTitleByHand: (title) => liveMenuTitles.push(title),
+    liveMenuTitles: () => [...liveMenuTitles],
     lastSetProduct: () => lastSet
   };
   return shopify;
@@ -776,6 +779,11 @@ test("final check stays open until the shared settings are confirmed, then compl
   await agent.approveSharedSetting(id, "helium", { by: "dan" });
   const verified = await agent.verifySharedSettings(id, { by: "dan" });
   assert.equal(verified.sharedSettings.megaMenu.status, "verified");
+  /* Every one of the 108 entries in the live megamenu is named without the
+     collection's "N." ordinal, so inserting "1. Vacaville Fire Department"
+     would be the only odd one out — and would then fail to verify. */
+  assert.equal(verified.sharedSettings.megaMenu.proposal.title, MENU_ITEM_TITLE);
+  assert.ok(deps.shopify.liveMenuTitles().includes(MENU_ITEM_TITLE), JSON.stringify(deps.shopify.liveMenuTitles()));
   assert.equal(verified.sharedSettings.helium.status, "verified");
   assert.equal(verified.sharedSettings.flow.status, "confirmed");
   assert.deepEqual(
@@ -796,6 +804,8 @@ test("final check stays open until the shared settings are confirmed, then compl
    counts as proof. */
 
 const MENU_LINK = "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123";
+// §8a: the menu item is named without the collection's ordinal.
+const MENU_ITEM_TITLE = "Vacaville Fire Department";
 
 // Everything except the menu, so the menu alone decides the verdict.
 async function settleAllButTheMenu(deps, id) {
@@ -827,7 +837,7 @@ test("a menu item added by hand is proof as soon as the live menu shows it", asy
   const { deps, id } = await builtOnboarding({ liveProducts: 1 });
   await settleAllButTheMenu(deps, id);
 
-  deps.shopify.addMenuTitleByHand(COLLECTION_TITLE);
+  deps.shopify.addMenuTitleByHand(MENU_ITEM_TITLE);
   await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
 
   const checked = await agent.finalCheck(id, { by: "dan" });

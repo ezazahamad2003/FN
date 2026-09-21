@@ -739,6 +739,9 @@ function collectionItem(id, title, collectionId, handle) {
 
 // The live Mega Menu: department stores oldest→newest under "Store", then the
 // public stores, then the rest of the top-level navigation.
+/* Mirrors the live megamenu: department entries are named WITHOUT the
+   collection's "N." ordinal (the handle keeps it), and the public stores
+   follow them. */
 function megaMenuFixture() {
   return {
     id: "gid://shopify/Menu/191418204297",
@@ -754,9 +757,9 @@ function megaMenuFixture() {
         resourceId: null,
         tags: [],
         items: [
-          collectionItem(21, "1. Ripon Fire Department", 601, "1-ripon-fire-department"),
-          collectionItem(22, "1. Bishop Fire Department", 602, "1-bishop-fire-department"),
-          collectionItem(23, "2. Bishop Fire Department Union", 603, "2-bishop-fire-department-union"),
+          collectionItem(21, "Ripon Fire Department", 601, "1-ripon-fire-department"),
+          collectionItem(22, "Bishop Fire Department", 602, "1-bishop-fire-department"),
+          collectionItem(23, "Bishop Fire Department Union", 603, "2-bishop-fire-department-union"),
           collectionItem(24, "FN Simple Merch", 604, "fn-simple-merch"),
           collectionItem(25, "SF City Gear", 605, "sf-city-gear"),
           collectionItem(26, "Bay Area Firefighter", 606, "bay-area-firefighter"),
@@ -783,7 +786,7 @@ function megaMenuFixture() {
 }
 
 const NEW_STORE = {
-  title: "1. Vacaville Fire Department",
+  title: "Vacaville Fire Department",
   collectionHandle: "1-vacaville-fire-department",
   collectionGid: "gid://shopify/Collection/700"
 };
@@ -866,6 +869,33 @@ test("findStoreItem picks Store by title, else the COLLECTIONS entry", () => {
   assert.equal(shopifyOnboarding.findStoreItem(null), null);
 });
 
+test("verifyMegaMenu finds the store by collection, not only by the exact title", async (t) => {
+  t.after(resetShopify);
+  stubGraphql({ megaMenu: () => ({ menus: { nodes: [megaMenuFixture()] } }) });
+
+  const byTitle = await shopifyOnboarding.verifyMegaMenu("Bishop Fire Department");
+  assert.equal(byTitle.present, true);
+  assert.equal(byTitle.index, 1);
+  assert.equal(byTitle.before, "Ripon Fire Department");
+
+  /* Dan names an item he adds by hand however he likes, and the final check
+     now blocks on "not there" — so a store that IS in the menu must not be
+     reported missing over a spelling. */
+  const renamed = await shopifyOnboarding.verifyMegaMenu("1. Bishop Fire Department", {
+    collectionGid: "gid://shopify/Collection/602"
+  });
+  assert.equal(renamed.present, true);
+  assert.equal(renamed.index, 1);
+
+  // A collection that really is absent is still absent.
+  const missing = await shopifyOnboarding.verifyMegaMenu("Vacaville Fire Department", {
+    collectionGid: "gid://shopify/Collection/700"
+  });
+  assert.equal(missing.present, false);
+  assert.equal(missing.index, -1);
+});
+
+
 test("proposeMegaMenuInsert lands after the last department store and before the first public store", () => {
   const menu = megaMenuFixture();
   const proposal = shopifyOnboarding.proposeMegaMenuInsert(menu, NEW_STORE);
@@ -873,21 +903,21 @@ test("proposeMegaMenuInsert lands after the last department store and before the
   assert.equal(proposal.storeItemId, "gid://shopify/MenuItem/2");
   assert.equal(proposal.storeItemTitle, "Store");
   assert.equal(proposal.index, 3);
-  assert.equal(proposal.insertAfter, "2. Bishop Fire Department Union");
+  assert.equal(proposal.insertAfter, "Bishop Fire Department Union");
   assert.equal(proposal.insertBefore, "FN Simple Merch");
   assert.equal(proposal.alreadyPresent, false);
   assert.equal(proposal.existingItemId, null);
   assert.deepEqual(proposal.newItem, {
-    title: "1. Vacaville Fire Department",
+    title: "Vacaville Fire Department",
     type: "COLLECTION",
     url: "/collections/1-vacaville-fire-department",
     resourceId: "gid://shopify/Collection/700"
   });
   assert.deepEqual(proposal.itemsPreview, [
-    "1. Ripon Fire Department",
-    "1. Bishop Fire Department",
-    "2. Bishop Fire Department Union",
-    "1. Vacaville Fire Department",
+    "Ripon Fire Department",
+    "Bishop Fire Department",
+    "Bishop Fire Department Union",
+    "Vacaville Fire Department",
     "FN Simple Merch",
     "SF City Gear",
     "Bay Area Firefighter"
@@ -897,7 +927,7 @@ test("proposeMegaMenuInsert lands after the last department store and before the
 test("proposeMegaMenuInsert recognises an item that is already there, and a menu with no Store", () => {
   const menu = megaMenuFixture();
   const present = shopifyOnboarding.proposeMegaMenuInsert(menu, {
-    title: "1. Bishop Fire Department",
+    title: "Bishop Fire Department",
     collectionHandle: "1-bishop-fire-department",
     collectionGid: "gid://shopify/Collection/602"
   });
@@ -907,7 +937,7 @@ test("proposeMegaMenuInsert recognises an item that is already there, and a menu
 
   // Matched by resourceId even when the title was edited by hand.
   const renamed = shopifyOnboarding.proposeMegaMenuInsert(menu, {
-    title: "1. Bishop FD",
+    title: "Bishop FD",
     collectionHandle: "1-bishop-fire-department",
     collectionGid: "gid://shopify/Collection/602"
   });
@@ -931,10 +961,10 @@ test("buildMenuUpdateItems inserts the new store and loses nothing", () => {
 
   const store = items[1];
   assert.deepEqual(store.items.map((i) => i.title), [
-    "1. Ripon Fire Department",
-    "1. Bishop Fire Department",
-    "2. Bishop Fire Department Union",
-    "1. Vacaville Fire Department",
+    "Ripon Fire Department",
+    "Bishop Fire Department",
+    "Bishop Fire Department Union",
+    "Vacaville Fire Department",
     "FN Simple Merch",
     "SF City Gear",
     "Bay Area Firefighter",
@@ -948,7 +978,7 @@ test("buildMenuUpdateItems inserts the new store and loses nothing", () => {
   assert.equal(fresh.length, 1);
   assert.deepEqual(fresh[0], {
     id: null,
-    title: "1. Vacaville Fire Department",
+    title: "Vacaville Fire Department",
     type: "COLLECTION",
     url: "/collections/1-vacaville-fire-department",
     resourceId: "gid://shopify/Collection/700"
@@ -966,7 +996,7 @@ test("buildMenuUpdateItems inserts the new store and loses nothing", () => {
 test("buildMenuUpdateItems leaves the tree alone when the store is already listed, and rejects a stale proposal", () => {
   const menu = megaMenuFixture();
   const present = shopifyOnboarding.proposeMegaMenuInsert(menu, {
-    title: "1. Bishop Fire Department",
+    title: "Bishop Fire Department",
     collectionHandle: "1-bishop-fire-department",
     collectionGid: "gid://shopify/Collection/602"
   });
@@ -1037,7 +1067,7 @@ test("verifyMegaMenu reports where the store ended up, or why it could not look"
     available: true,
     present: true,
     index: 3,
-    before: "2. Bishop Fire Department Union",
+    before: "Bishop Fire Department Union",
     after: "FN Simple Merch",
     storeItemTitle: "Store"
   });
@@ -1059,21 +1089,21 @@ test("verifyMegaMenu reports where the store ended up, or why it could not look"
    ------------------------------------------------------------------------- */
 
 test("storefrontNavContains finds the store in the nav, in a drawer, or not at all", () => {
-  const nav = `<header><nav class="header__inline-menu"><ul><li><a href="/collections/1-vacaville-fire-department">1. Vacaville Fire Department</a></li></ul></nav></header>`;
-  assert.equal(shopifyOnboarding.storefrontNavContains(nav, "1. Vacaville Fire Department"), true);
+  const nav = `<header><nav class="header__inline-menu"><ul><li><a href="/collections/1-vacaville-fire-department">Vacaville Fire Department</a></li></ul></nav></header>`;
+  assert.equal(shopifyOnboarding.storefrontNavContains(nav, "Vacaville Fire Department"), true);
   // Case and run-together whitespace do not matter.
-  assert.equal(shopifyOnboarding.storefrontNavContains(nav, "1.  vacaville   fire department"), true);
-  assert.equal(shopifyOnboarding.storefrontNavContains(nav, "1. Bishop Fire Department"), false);
+  assert.equal(shopifyOnboarding.storefrontNavContains(nav, "vacaville   fire department"), true);
+  assert.equal(shopifyOnboarding.storefrontNavContains(nav, "Bishop Fire Department"), false);
 
   // Themes render the mega menu in a <details> drawer outside <nav>.
-  const drawer = `<nav><ul><li>Store</li></ul></nav><details><summary>Store</summary><a href="/collections/1-vacaville-fire-department">1. Vacaville Fire Department</a></details>`;
-  assert.equal(shopifyOnboarding.storefrontNavContains(drawer, "1. Vacaville Fire Department"), true);
+  const drawer = `<nav><ul><li>Store</li></ul></nav><details><summary>Store</summary><a href="/collections/1-vacaville-fire-department">Vacaville Fire Department</a></details>`;
+  assert.equal(shopifyOnboarding.storefrontNavContains(drawer, "Vacaville Fire Department"), true);
 
   // Entities are decoded, and scripts/styles never count as page text.
   assert.equal(shopifyOnboarding.storefrontNavContains("<nav><a>Bishop &amp; Sons Fire</a></nav>", "Bishop & Sons Fire"), true);
-  assert.equal(shopifyOnboarding.storefrontNavContains('<script>var m = ["1. Vacaville Fire Department"];</script>', "1. Vacaville Fire Department"), false);
+  assert.equal(shopifyOnboarding.storefrontNavContains('<script>var m = ["Vacaville Fire Department"];</script>', "Vacaville Fire Department"), false);
 
-  assert.equal(shopifyOnboarding.storefrontNavContains("", "1. Vacaville Fire Department"), false);
+  assert.equal(shopifyOnboarding.storefrontNavContains("", "Vacaville Fire Department"), false);
   assert.equal(shopifyOnboarding.storefrontNavContains(nav, ""), false);
   assert.equal(shopifyOnboarding.storefrontNavContains(null, "x"), false);
 });
@@ -1211,7 +1241,7 @@ test("ensureDepartmentCollection treats a blank description as the Non-Stock not
     publishablePublish: { publishablePublish: { userErrors: [] } }
   });
 
-  await shopifyOnboarding.ensureDepartmentCollection({ title: "1. Vacaville Fire Department", descriptionHtml: "   " });
+  await shopifyOnboarding.ensureDepartmentCollection({ title: "Vacaville Fire Department", descriptionHtml: "   " });
 
   const [create] = callsNamed(calls, "collectionCreate");
   assert.equal(create.variables.input.descriptionHtml, rules.collectionDescriptionHtml());
@@ -1254,7 +1284,7 @@ test("collectionSnapshot pages its products and reports the banner size", async 
   const collectionFields = {
     id: "gid://shopify/Collection/77",
     legacyResourceId: "77",
-    title: "1. Vacaville Fire Department",
+    title: "Vacaville Fire Department",
     handle: "1-vacaville-fire-department",
     descriptionHtml: rules.collectionDescriptionHtml(),
     image: { url: "https://cdn/banner.png", width: rules.BANNER_WIDTH, height: rules.BANNER_HEIGHT },
@@ -1307,7 +1337,7 @@ test("productSnapshot pages variants and keeps the fields the final check tests"
     productType: "",
     options: [{ name: "Color", optionValues: [{ name: "Navy" }] }, { name: "Size", optionValues: [{ name: "S" }, { name: "M" }] }],
     media: { nodes: [{ id: "gid://shopify/MediaImage/1", image: { url: "https://cdn/front.png" } }] },
-    collections: { nodes: [{ id: "gid://shopify/Collection/77", legacyResourceId: "77", title: "1. Vacaville Fire Department" }] }
+    collections: { nodes: [{ id: "gid://shopify/Collection/77", legacyResourceId: "77", title: "Vacaville Fire Department" }] }
   };
   const variant = (sku, size) => ({
     id: "gid://shopify/ProductVariant/" + size,
@@ -1336,7 +1366,7 @@ test("productSnapshot pages variants and keeps the fields the final check tests"
   assert.deepEqual(snap.variants.map((v) => v.sku), ["NL3600-S-NVY-VAC-F01/B01", "NL3600-M-NVY-VAC-F01/B01"]);
   assert.ok(snap.variants.every((v) => v.inventoryPolicy === "CONTINUE"), "§9.8 continue selling");
   assert.ok(snap.variants.every((v) => v.image && v.image.url), "§9.10 each variant carries its image");
-  assert.deepEqual(snap.collections.map((c) => c.title), ["1. Vacaville Fire Department"]);
+  assert.deepEqual(snap.collections.map((c) => c.title), ["Vacaville Fire Department"]);
 });
 
 /* A throttle error that happens to name the field is not a schema rejection —

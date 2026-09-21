@@ -2,6 +2,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const rules = require("../onboardingRules");
 
+
+test("the mega menu item is named without the collection's ordinal", () => {
+  // Live megamenu: 108 department entries, none carrying an "N." prefix.
+  assert.equal(rules.megaMenuItemTitle("1. Vacaville Fire Department"), "Vacaville Fire Department");
+  assert.equal(rules.megaMenuItemTitle("2. Local 1171 Apparel"), "Local 1171 Apparel");
+  assert.equal(rules.megaMenuItemTitle("10. Some Store"), "Some Store");
+  // Already plain, or empty, is left alone.
+  assert.equal(rules.megaMenuItemTitle("Bishop Fire Department"), "Bishop Fire Department");
+  assert.equal(rules.megaMenuItemTitle(""), "");
+  // A number that is part of the name is not an ordinal.
+  assert.equal(rules.megaMenuItemTitle("Local 1243"), "Local 1243");
+});
+
 test("sizes: alpha, tall, hats, numeric, waist x inseam, fitted", () => {
   assert.deepEqual(rules.normalizeSize("s"), { size: "S", kind: "alpha" });
   assert.deepEqual(rules.normalizeSize("2xl"), { size: "2XL", kind: "alpha" });

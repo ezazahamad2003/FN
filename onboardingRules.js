@@ -860,6 +860,17 @@ function isPublicStoreTitle(title) {
 }
 
 /*
+ * The MENU item is named WITHOUT the collection's "N." ordinal: the live
+ * megamenu has 108 department entries and not one carries it ("Bishop Fire
+ * Department" links to /collections/1-bishop-fire-department). The ordinal
+ * orders the collections; the menu is ordered by position. §8a never names the
+ * item, so the store's own convention decides.
+ */
+function megaMenuItemTitle(collectionTitle) {
+  return String(collectionTitle || "").trim().replace(/^\d+\.\s*/, "").trim();
+}
+
+/*
  * Given the "Store" submenu items (in order), return the index at which the
  * new department item must be inserted: directly before the first public
  * store, i.e. directly after the last department store.
@@ -964,6 +975,7 @@ module.exports = {
   // shared settings
   isPublicStoreTitle,
   megaMenuInsertIndex,
+  megaMenuItemTitle,
   alphabeticalInsertIndex,
   // report
   emptyReport

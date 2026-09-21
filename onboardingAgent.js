@@ -1636,10 +1636,11 @@ async function mockupImages(id, product, variants, title) {
    §8 shared settings
    ------------------------------------------------------------------------- */
 
-function megaMenuChecklist({ collectionTitle, insertAfter, insertBefore }) {
+function megaMenuChecklist({ menuTitle, collectionTitle, insertAfter, insertBefore }) {
   const steps = [
-    'Content > Menus > Mega Menu > "Add menu item to store." Link it to the new collection.',
-    `Name the item exactly "${collectionTitle}".`
+    `Content > Menus > Mega Menu > "Add menu item to store." Link it to "${collectionTitle}".`,
+    // Every other entry in the live menu is named without the ordinal.
+    `Name the item exactly "${menuTitle || collectionTitle}" — no "N." prefix, like every other store in the menu.`
   ];
   if (insertAfter && insertBefore) steps.push(`Drag it directly below "${insertAfter}" and directly above "${insertBefore}".`);
   else if (insertBefore) steps.push(`Drag it directly above "${insertBefore}" (the first public store).`);
@@ -1653,18 +1654,20 @@ function megaMenuChecklist({ collectionTitle, insertAfter, insertBefore }) {
 async function proposeSharedSettings(id, { by = "" } = {}) {
   const record = await store().getOnboarding(id);
   const title = record.collection.title;
+  // The collection keeps its "N." ordinal; the menu item never carries one.
+  const menuTitle = rules.megaMenuItemTitle(title);
   const tag = record.department.tag;
 
   const menu = {
     status: "manual",
-    proposal: { insertAfter: "", insertBefore: "", index: 0, title, url: record.collection.storefrontUrl || "", newItem: null, collectionHandle: record.collection.handle || "", collectionGid: record.collection.gid || "" },
+    proposal: { insertAfter: "", insertBefore: "", index: 0, title: menuTitle, url: record.collection.storefrontUrl || "", newItem: null, collectionHandle: record.collection.handle || "", collectionGid: record.collection.gid || "" },
     checklist: [],
     error: ""
   };
   try {
     const read = await shop().readMegaMenu();
     if (read.available) {
-      const proposal = shop().proposeMegaMenuInsert(read.menu, { title, collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
+      const proposal = shop().proposeMegaMenuInsert(read.menu, { title: menuTitle, collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
       /* newItem/collectionHandle/collectionGid travel with the proposal
          because applyMegaMenuInsert re-reads the live menu and rebuilds the
          insert from them — a stored proposal without newItem cannot be
@@ -1673,22 +1676,22 @@ async function proposeSharedSettings(id, { by = "" } = {}) {
         insertAfter: proposal.insertAfter || "",
         insertBefore: proposal.insertBefore || "",
         index: proposal.index,
-        title,
+        title: menuTitle,
         url: proposal.newItem?.url || "",
         newItem: proposal.newItem || null,
         collectionHandle: record.collection.handle || "",
         collectionGid: record.collection.gid || ""
       };
       menu.status = proposal.alreadyPresent ? "verified" : "proposed";
-      menu.checklist = megaMenuChecklist({ collectionTitle: title, insertAfter: menu.proposal.insertAfter, insertBefore: menu.proposal.insertBefore });
+      menu.checklist = megaMenuChecklist({ menuTitle, collectionTitle: title, insertAfter: menu.proposal.insertAfter, insertBefore: menu.proposal.insertBefore });
       if (proposal.reason) menu.error = proposal.reason;
     } else {
       menu.error = read.reason || "";
-      menu.checklist = megaMenuChecklist({ collectionTitle: title });
+      menu.checklist = megaMenuChecklist({ menuTitle, collectionTitle: title });
     }
   } catch (error) {
     menu.error = errorText(error);
-    menu.checklist = megaMenuChecklist({ collectionTitle: title });
+    menu.checklist = megaMenuChecklist({ menuTitle, collectionTitle: title });
   }
 
   // A form the platform cannot read still gets a checklist; only the
@@ -1807,7 +1810,7 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
       try {
         const read = await shop().readMegaMenu();
         if (!read.available) throw new Error(read.reason || "The Mega Menu could not be read.");
-        const proposal = shop().proposeMegaMenuInsert(read.menu, { title: record.collection.title, collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
+        const proposal = shop().proposeMegaMenuInsert(read.menu, { title: rules.megaMenuItemTitle(record.collection.title), collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
         // The recomputed proposal must match what Dan approved; applyMegaMenuInsert
         // refuses a stale one rather than inserting in the wrong place.
         /* Carry what Dan APPROVED, not what we just recomputed, or the
@@ -1852,7 +1855,7 @@ async function verifySharedSettings(id, { by = "" } = {}) {
 
   let menu = null;
   try {
-    menu = await shop().verifyMegaMenu(record.collection.title);
+    menu = await shop().verifyMegaMenu(rules.megaMenuItemTitle(record.collection.title), { collectionGid: record.collection.gid });
   } catch (error) {
     menu = { available: false, present: false, reason: errorText(error) };
   }
@@ -2162,7 +2165,7 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   const menuStatus = record.sharedSettings.megaMenu.status;
   let menuCheck;
   try {
-    menuCheck = await shop().verifyMegaMenu(record.collection.title);
+    menuCheck = await shop().verifyMegaMenu(rules.megaMenuItemTitle(record.collection.title), { collectionGid: record.collection.gid });
   } catch (error) {
     menuCheck = { available: false, present: false, reason: errorText(error) };
   }
