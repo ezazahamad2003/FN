@@ -34,13 +34,15 @@ const SECRET_TYPE_RE = /secret/i;
 // Option keys on a secret-link condition that carry the code itself.
 const SECRET_OPTION_KEY_RE = /secret|code|link/i;
 
-// §7.2 — the four settings, by their names in the Locksmith UI.
-const LOCK_SETTINGS = [
-  "Enable this lock",
-  "Protect products in this collection",
-  "Hide from navigation menus",
-  "Hide from lists"
+// §7.2 — the four settings, by their names in the Locksmith UI, each paired
+// with the key inspectLock() reports it under.
+const SETTING_LABELS = [
+  ["Enable this lock", "enabled"],
+  ["Protect products in this collection", "protectProducts"],
+  ["Hide from navigation menus", "hideFromNavigation"],
+  ["Hide from lists", "hideFromLists"]
 ];
+const LOCK_SETTINGS = SETTING_LABELS.map(([label]) => label);
 
 /*
  * Lock options the spec's four settings map onto in the API. These always win
@@ -396,6 +398,15 @@ function buildCollectionLock({ collectionLegacyId, collectionTitle, departmentTa
       }
     ],
     enabled: true,
+    /* §7.2 "Protect products in this collection". It is NOT one of the five
+       documented lock options — it is this top-level field, established
+       against the live store rather than guessed: of 175 collection locks 171
+       carry it true and 4 carry it false, and Locksmith's own storefront API
+       reports a product inside a true collection as locked, while a product
+       inside a false one comes back locked=false, access_granted=true.
+       Without it the collection page hides and every product in it stays
+       reachable by direct URL. */
+    enabled_for_children: true,
     // Learned options first, the spec's settings last so they always win.
     options: { ...(t.lockOptions || {}), ...SPEC_LOCK_OPTIONS },
     keys: [tagKey, secretKey]
@@ -481,7 +492,19 @@ async function verifyLock(lockId, { departmentTag = "" } = {}) {
 
 function inspectLock(lock, { departmentTag = "" } = {}) {
   if (!lock || typeof lock !== "object") {
-    return { ok: false, id: lockId(lock), enabled: false, hasTagKey: false, hasSecretKey: false, tag: "", tagMatches: null, options: {}, error: "Lock not found" };
+    return {
+      ok: false,
+      id: lockId(lock),
+      enabled: false,
+      settings: { enabled: false, protectProducts: null, hideFromNavigation: false, hideFromLists: false },
+      unsetSettings: [...LOCK_SETTINGS],
+      hasTagKey: false,
+      hasSecretKey: false,
+      tag: "",
+      tagMatches: null,
+      options: {},
+      error: "Lock not found"
+    };
   }
   const enabled = typeof lock.enabled === "boolean" ? lock.enabled : Boolean(lock.options && lock.options.enabled);
   const tag = findCondition(lock, isTagCondition);
@@ -489,15 +512,32 @@ function inspectLock(lock, { departmentTag = "" } = {}) {
   const tagValue = tag ? templateTag(tag.condition) : "";
   const expected = String(departmentTag || "").trim();
   const tagMatches = expected ? tagValue === expected : null;
+  const options = lock.options && typeof lock.options === "object" ? { ...lock.options } : {};
+
+  /* §7.2's four settings, each asserted against the field that actually
+     carries it. "Protect products in this collection" only means anything on
+     a collection lock, so elsewhere it stays null rather than reading false.
+     These used to be copied into the result and never checked. */
+  const settings = {
+    enabled,
+    protectProducts: isCollectionLock(lock) ? lock.enabled_for_children === true : null,
+    hideFromNavigation: options.hide_links_to_resource === true,
+    hideFromLists: options.hide_resource === true
+  };
+  // Paired explicitly: a security check must not depend on key order.
+  const unsetSettings = SETTING_LABELS.filter(([, key]) => settings[key] === false).map(([label]) => label);
+
   return {
-    ok: enabled && Boolean(tag) && Boolean(secret) && tagMatches !== false,
+    ok: enabled && unsetSettings.length === 0 && Boolean(tag) && Boolean(secret) && tagMatches !== false,
     id: lockId(lock),
     enabled,
+    settings,
+    unsetSettings,
     hasTagKey: Boolean(tag),
     hasSecretKey: Boolean(secret),
     tag: tagValue,
     tagMatches,
-    options: lock.options && typeof lock.options === "object" ? { ...lock.options } : {}
+    options
   };
 }
 

@@ -18,6 +18,9 @@ function bishopLock() {
     created_at: "2026-03-01T10:00:00Z",
     updated_at: "2026-03-02T10:00:00Z",
     enabled: true,
+    // "Protect products in this collection" — true on 171 of the store's 175
+    // real collection locks.
+    enabled_for_children: true,
     resource_type: "custom_collection",
     resources: [
       {
@@ -288,6 +291,52 @@ test("inspectLock reports the §7 requirements", () => {
   disabled.enabled = false;
   assert.equal(locksmith.inspectLock(disabled).ok, false);
   assert.equal(locksmith.inspectLock(null).ok, false);
+
+  // All four of §7.2, each reported and each able to fail the lock on its own.
+  assert.deepEqual(ok.settings, { enabled: true, protectProducts: true, hideFromNavigation: true, hideFromLists: true });
+  assert.deepEqual(ok.unsetSettings, []);
+});
+
+test("a lock missing any one of the four settings is not ok, and says which", () => {
+  const cases = [
+    ["enabled_for_children", "Protect products in this collection", (l) => { l.enabled_for_children = false; }],
+    ["hide_links_to_resource", "Hide from navigation menus", (l) => { l.options.hide_links_to_resource = false; }],
+    ["hide_resource", "Hide from lists", (l) => { l.options.hide_resource = false; }]
+  ];
+  for (const [field, label, break_] of cases) {
+    const lock = bishopLock();
+    break_(lock);
+    const verdict = locksmith.inspectLock(lock, { departmentTag: "Bishop Fire Department" });
+    assert.equal(verdict.ok, false, `${field} off must fail the lock`);
+    assert.deepEqual(verdict.unsetSettings, [label]);
+  }
+
+  // A missing enabled_for_children is as bad as an explicit false: the
+  // products stay reachable either way.
+  const absent = bishopLock();
+  delete absent.enabled_for_children;
+  assert.equal(locksmith.inspectLock(absent, { departmentTag: "Bishop Fire Department" }).ok, false);
+
+  // It means nothing on a product lock, so it must not fail one.
+  const onProduct = { id: 9, enabled: true, resources: [{ resource_type: "product", resource_id: 1 }], options: { hide_links_to_resource: true, hide_resource: true }, keys: [] };
+  assert.equal(locksmith.inspectLock(onProduct).settings.protectProducts, null);
+  assert.deepEqual(locksmith.inspectLock(onProduct).unsetSettings, []);
+});
+
+test("a new lock is built with all four settings on", () => {
+  const { body } = locksmith.buildCollectionLock({
+    collectionLegacyId: 265379381385,
+    collectionTitle: "1. Zol Test Fire Department",
+    departmentTag: "Zol Test Fire Department",
+    secretCode: "abc123"
+  });
+  assert.equal(body.enabled, true);
+  assert.equal(body.enabled_for_children, true, "without this the products stay reachable by direct URL");
+  assert.equal(body.options.hide_links_to_resource, true);
+  assert.equal(body.options.hide_resource, true);
+  // And what we build passes our own inspection.
+  const verdict = locksmith.inspectLock({ ...body, id: 1 }, { departmentTag: "Zol Test Fire Department" });
+  assert.deepEqual(verdict.unsetSettings, []);
 });
 
 test("manualChecklist carries the §7 steps, the four settings and the exact tag", () => {
