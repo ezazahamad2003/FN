@@ -1081,8 +1081,8 @@
           <span aria-current="page">${esc(record.department?.name || "Department")}</span>
         </nav>
         ${banner("obDetailError")}
-        ${detailHeader(record)}
         ${finishCard(record)}
+        ${detailHeader(record)}
         ${stepperHtml(record)}
         <div class="ob-layout">
           <div class="ob-main">
