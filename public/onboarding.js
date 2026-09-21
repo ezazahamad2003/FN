@@ -1082,6 +1082,7 @@
         </nav>
         ${banner("obDetailError")}
         ${detailHeader(record)}
+        ${finishCard(record)}
         ${stepperHtml(record)}
         <div class="ob-layout">
           <div class="ob-main">
@@ -1204,6 +1205,72 @@
           </div>
           <button class="${btnClass(record, "code")}" type="button" data-ob="approve-code">Approve code</button>
           <button class="btn btn-secondary btn-sm" type="button" data-ob="run-setup">${record.drive?.departmentFolderId ? "Re-run lookup" : "Run code lookup"}</button>
+        </div>
+      </section>`;
+  }
+
+  /* ---- Finish -------------------------------------------------------------
+     One place, at the top, that answers "what is left and can I be done?".
+
+     Everything below this card is detail: six panels, a dozen buttons, three
+     approval cards. An operator finishing a department should not have to
+     assemble that into a plan. This asks the two questions only a human can
+     answer, does everything the agent can do itself, and runs the final check.
+     ------------------------------------------------------------------------ */
+  function finishCard(record) {
+    const settings = record.sharedSettings || {};
+    const done = (key) => ["applied", "verified", "confirmed"].includes(settings[key]?.status);
+    const menuWritable = Boolean(state.caps?.megaMenu?.writable);
+    const complete = record.status === "complete";
+
+    // What only a person can do, because these have no write API at all.
+    const asks = [
+      { key: "flow", label: "Shopify Flow", ask: "Added the department tag to the condition step?" },
+      { key: "helium", label: "Helium", ask: "Added the tag to all three Department fields?" }
+    ].filter((item) => !done(item.key));
+
+    // What pressing the button will do on the operator's behalf.
+    const willDo = [];
+    if (!done("megaMenu") && menuWritable) willDo.push("add the store to the Mega Menu");
+    if (asks.length) willDo.push("record " + asks.map((a) => a.label).join(" and ") + " as done");
+    willDo.push("run the final check");
+
+    if (complete) {
+      return `
+      <section class="card card-pad ob-finish" data-tone="ok">
+        <p class="eyebrow">Finished</p>
+        <h3>Everything the agent can check is done.</h3>
+        <p class="muted">What is left is yours, in Shopify: set prices and cost, add Easify options, then set the products Active. Nothing is visible to a customer until you do.</p>
+        ${record.collection?.url ? `<a class="btn btn-secondary btn-sm" href="${esc(record.collection.url)}" target="_blank" rel="noreferrer">Open the collection in Shopify</a>` : ""}
+      </section>`;
+    }
+
+    const blockers = list(record.report?.missingInformation).filter((m) => !/Mega Menu|Shopify Flow|Helium/i.test(m));
+
+    return `
+      <section class="card card-pad ob-finish" data-tone="${asks.length || blockers.length ? "warn" : "ok"}">
+        <p class="eyebrow">Ready to finish?</p>
+        <h3>${asks.length ? "Two things only you can do" : "Nothing left for you outside the console"}</h3>
+        ${asks.length
+          ? `<ul class="ob-finish-asks">${asks
+              .map(
+                (item) => `<li>
+                  <label>
+                    <input type="checkbox" data-ob-finish-ask="${esc(item.key)}">
+                    <span><b>${esc(item.label)}</b> — ${esc(item.ask)}</span>
+                  </label>
+                </li>`
+              )
+              .join("")}</ul>
+             <p class="hint">The exact steps are in the Approvals panel. Neither app has an API to write, so the agent cannot do these for you.</p>`
+          : `<p class="muted">Flow and Helium are already recorded.</p>`}
+        ${blockers.length
+          ? `<div class="ob-finish-blockers"><p><b>Still unresolved:</b></p><ul>${blockers.slice(0, 4).map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`
+          : ""}
+        <p class="muted">Pressing yes will ${esc(willDo.join(", then "))}.</p>
+        <div class="ob-finish-actions">
+          <button class="btn btn-primary" type="button" data-ob="finish" ${asks.length ? "disabled" : ""}>Yes — finish this onboarding</button>
+          ${!menuWritable && !done("megaMenu") ? `<span class="hint" data-tone="warn">The Mega Menu has to be edited by hand — no navigation scope.</span>` : ""}
         </div>
       </section>`;
   }
@@ -2040,6 +2107,14 @@
   }
 
   function onDetailChange(event) {
+    // The two "have you done this?" ticks arm the finish button.
+    if (event.target.closest("[data-ob-finish-ask]")) {
+      const scope = page();
+      const asks = [...(scope?.querySelectorAll("[data-ob-finish-ask]") || [])];
+      const finish = scope?.querySelector('[data-ob="finish"]');
+      if (finish) finish.disabled = !asks.every((box) => box.checked);
+      return;
+    }
     const upload = event.target.closest("input[data-ob-upload]");
     if (upload) {
       uploadFiles(upload);
@@ -2102,6 +2177,7 @@
     if (action === "final-check") return runSimple(trigger, "Checking…", "/final-check");
     if (action === "propose-shared") return runSimple(trigger, "Computing…", "/shared-settings/propose");
     if (action === "verify-shared") return runSimple(trigger, "Verifying…", "/shared-settings/verify");
+    if (action === "finish") return finishOnboarding(trigger);
     if (action === "approve-shared") return approveShared(trigger, false);
     if (action === "confirm-shared") return approveShared(trigger, true);
     if (action === "save-lock") return saveLock(trigger);
@@ -2217,6 +2293,52 @@
       }
     }
     return runSimple(button, "Approving…", "/code", { code: value, by: currentOperator() });
+  }
+
+  /*
+   * The whole tail of an onboarding behind one button.
+   *
+   * Order matters: the Mega Menu is a real write and can fail, so it goes
+   * first and a failure stops the rest rather than recording approvals for a
+   * store that is not in the navigation. Flow and Helium are attestations of
+   * work already done outside. The final check runs last and decides whether
+   * the record reaches "complete".
+   */
+  async function finishOnboarding(button) {
+    const id = state.record?.id;
+    if (!id) return;
+    const by = currentOperator();
+    const settings = state.record.sharedSettings || {};
+    const done = (key) => ["applied", "verified", "confirmed"].includes(settings[key]?.status);
+
+    const steps = [];
+    if (!done("megaMenu") && state.caps?.megaMenu?.writable) {
+      steps.push({ label: "Adding to the Mega Menu…", suffix: "/shared-settings/megaMenu/approve", body: { by, applied: true } });
+    }
+    for (const kind of ["flow", "helium"]) {
+      if (!done(kind)) steps.push({ label: `Recording ${kind === "flow" ? "Flow" : "Helium"}…`, suffix: `/shared-settings/${kind}/approve`, body: { by, applied: true } });
+    }
+    steps.push({ label: "Checking everything…", suffix: "/final-check", body: { by } });
+
+    return runAction(
+      button,
+      steps[0].label,
+      async () => {
+        let payload = null;
+        for (const step of steps) {
+          button.textContent = step.label;
+          payload = await api(recordPath(id, step.suffix), { method: "POST", body: JSON.stringify(step.body) });
+          if (!isCurrent("detail", id)) return;
+        }
+        applyRecord(payload);
+        const record = state.record;
+        if (record.status === "complete") {
+          showBanner(page(), "obDetailError", "Done. Set prices and make the products Active in Shopify to put the store live.", "ok");
+        }
+      },
+      page(),
+      "obDetailError"
+    );
   }
 
   function approveShared(button, applied) {

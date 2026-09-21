@@ -1214,3 +1214,55 @@
 @media (prefers-reduced-motion: reduce) {
   .ob-candidate:hover { transform: none; }
 }
+
+/* =============================================================================
+   Finish card — the one place that answers "what is left and can I be done?"
+   ========================================================================== */
+.ob-finish {
+  border-left: 3px solid var(--warn-border);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-finish[data-tone="ok"] { border-left-color: var(--success-border); }
+
+.ob-finish h3 { margin: 0; }
+
+.ob-finish-asks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-finish-asks label {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  cursor: pointer;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.ob-finish-asks input { margin-top: 0.2rem; flex: none; }
+
+.ob-finish-blockers {
+  border: 1px solid var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
+.ob-finish-blockers p { margin: 0 0 var(--space-1); }
+.ob-finish-blockers ul { margin: 0; padding-left: 1.1rem; }
+
+.ob-finish-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
