@@ -126,7 +126,7 @@ function fakeHelium({ present = false } = {}) {
 
 /* The Shopify layer: records every call so the tests can assert on the exact
    input productSet / attachMockups received. */
-function fakeShopify({ megaMenuAvailable = false, order = [] } = {}) {
+function fakeShopify({ megaMenuAvailable = false, order = [], liveProducts = 0 } = {}) {
   const calls = { setProduct: [], attachMockups: [], duplicate: [], collection: [] };
   let lastSet = null;
   const shopify = {
@@ -204,7 +204,10 @@ function fakeShopify({ megaMenuAvailable = false, order = [] } = {}) {
         descriptionHtml: rules.collectionDescriptionHtml(),
         image: { url: "https://cdn.test/banner.png", width: 3584, height: 2048 },
         productsCount: 1,
-        products: []
+        /* §9.2 keeps real products Draft, and a Draft product renders nowhere —
+           so the from-outside lock proof is only possible after launch. Tests
+           that exercise that proof pass liveProducts to say the store is live. */
+        products: Array.from({ length: liveProducts }, (_, i) => ({ id: String(i + 1), gid: PRODUCT_GID, title: "Live product", status: "ACTIVE", tags: [], vendor: "", variantCount: 1 }))
       };
     },
     async productSnapshot() {
@@ -325,7 +328,7 @@ function harness(options = {}) {
   store.setBlobAdapter(store.memoryBlobAdapter());
   referenceTables.invalidate();
   const order = [];
-  const shopify = options.shopify || fakeShopify({ order, ...(options.shopifyOptions || {}) });
+  const shopify = options.shopify || fakeShopify({ order, liveProducts: options.liveProducts || 0, ...(options.shopifyOptions || {}) });
   const drive = options.drive || fakeDrive({ productionFiles: options.productionFiles || PRODUCTION_FILES });
   const deps = {
     shopify,
@@ -741,7 +744,7 @@ test("the build refuses to start while a row has not passed validation", async (
    ------------------------------------------------------------------------- */
 
 test("final check stays open until the shared settings are confirmed, then completes", async () => {
-  const { deps, id, record } = await builtOnboarding();
+  const { deps, id, record } = await builtOnboarding({ liveProducts: 1 });
 
   // The build's own final check ran and left it open: §8 is only proposed.
   assert.notEqual(record.status, "complete");
@@ -782,6 +785,7 @@ const SECRET_LINK = "https://fnsimple.com/collections/1-vacaville-fire-departmen
 
 test("a store still visible to the public is never reported as locked", async () => {
   const { id } = await builtOnboarding({
+    liveProducts: 16,
     lockAccess: { closedToPublic: false, publicProductLinks: 16, reason: "The collection page shows 16 product link(s) to the public (HTTP 200); the lock is not hiding them." }
   });
   await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
@@ -795,7 +799,7 @@ test("a store still visible to the public is never reported as locked", async ()
 });
 
 test("a secret link that opens nothing keeps the onboarding open", async () => {
-  const { id } = await builtOnboarding({ lockAccess: { closedToPublic: true, opensWithSecretLink: false, reason: "The secret link showed no products, so it does not open the store." } });
+  const { id } = await builtOnboarding({ liveProducts: 8, lockAccess: { closedToPublic: true, opensWithSecretLink: false, reason: "The secret link showed no products, so it does not open the store." } });
   await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
   const checked = await agent.finalCheck(id, { by: "dan" });
 
@@ -805,6 +809,7 @@ test("a secret link that opens nothing keeps the onboarding open", async () => {
 
 test("a lock that cannot be checked from outside is not confirmed private", async () => {
   const { id } = await builtOnboarding({
+    liveProducts: 8,
     lockAccess: { checked: false, closedToPublic: null, reason: "Could not read https://fnsimple.com/collections/1-vacaville-fire-department: ECONNRESET" }
   });
   await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
@@ -816,8 +821,33 @@ test("a lock that cannot be checked from outside is not confirmed private", asyn
   assert.equal(checked.lock.access.checkedAt, "");
 });
 
+test("a Draft-only store cannot prove or disprove the lock, and does not block on it", async () => {
+  /* Found by running a real build: the agent's first live lock reported
+     closedToPublic=true and opensWithSecretLink=false, and BOTH were
+     meaningless — all four products were Draft, so the storefront showed
+     nothing with or without a lock. §9.2 guarantees that state at build time,
+     so blocking here would gate every onboarding on an impossibility. */
+  const { id } = await builtOnboarding({
+    lockAccess: { closedToPublic: true, opensWithSecretLink: false, reason: "should never be consulted while everything is Draft" }
+  });
+  await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
+  const checked = await agent.finalCheck(id, { by: "dan" });
+
+  assert.equal(
+    checked.report.warnings.some((w) => /does not open it/.test(w)),
+    false,
+    "a Draft store must not be reported as a broken secret link"
+  );
+  assert.ok(
+    checked.report.needsDan.some((n) => /After pricing and publishing/.test(n)),
+    `expected a post-launch re-check item: ${JSON.stringify(checked.report.needsDan)}`
+  );
+  // And the unprovable verdict is never written to the record as if it were one.
+  assert.equal(checked.lock.access.checkedAt, "");
+});
+
 test("a lock proven to work is reported with the evidence, not just the link", async () => {
-  const { id } = await builtOnboarding();
+  const { id } = await builtOnboarding({ liveProducts: 1 });
   await agent.recordLock(id, { secretLink: SECRET_LINK, by: "dan" });
   const checked = await agent.finalCheck(id, { by: "dan" });
 

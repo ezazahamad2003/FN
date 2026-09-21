@@ -2012,8 +2012,23 @@ async function checkProduct(record, product, colorTable) {
  * actually created in Shopify, not from the rows, because a collection that is
  * simply empty must never read as "closed to the public".
  */
-async function lockAccessVerdict(record) {
-  const productCount = (record.products || []).filter((product) => clean(product?.shopify?.productId)).length;
+async function lockAccessVerdict(record, { liveProductCount = null } = {}) {
+  /*
+   * Count PUBLISHED products, not created ones.
+   *
+   * §9.2 keeps every product Draft until Dan prices it, and a Draft product
+   * renders nowhere. So a freshly built department shows zero products to the
+   * public whether or not the lock works: "closed" proves nothing, and the
+   * secret link looks broken when it is merely opening onto an empty store.
+   * Measured on the first lock the agent ever created — 4 products, all Draft,
+   * verdict closedToPublic=true / opensWithSecretLink=false, both meaningless.
+   *
+   * The lock's settings are still checked structurally against the Locksmith
+   * API; this is only the from-outside proof, and it has to wait for launch.
+   */
+  const productCount = Number.isFinite(liveProductCount)
+    ? liveProductCount
+    : (record.products || []).filter((product) => clean(product?.shopify?.productId)).length;
   const base = {
     checked: false,
     closedToPublic: null,
@@ -2021,9 +2036,17 @@ async function lockAccessVerdict(record) {
     publicProductLinks: null,
     collectionUrl: "",
     productCount,
+    pendingLaunch: false,
     reason: ""
   };
   if (!clean(record.collection?.handle)) return { ...base, reason: "The collection has no handle yet." };
+  if (!(productCount > 0)) {
+    return {
+      ...base,
+      pendingLaunch: true,
+      reason: "Every product is still Draft, so the storefront shows nothing with or without the lock. Re-check once Dan has priced and published them."
+    };
+  }
   try {
     const verdict = await locksmith().checkPublicAccess({
       storefrontDomain: storefrontDomain(),
@@ -2052,6 +2075,8 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   if (record.drive.productionFolderId) report.completed.push(`Production folder "${rules.productionFolderName(record.department.name, code)}" exists.`);
   else unresolved.push(`The production folder "${rules.productionFolderName(record.department.name, code)}" does not exist.`);
 
+  // Products the PUBLIC can actually see; the lock proof below needs it.
+  let liveProductCount = null;
   if (!record.collection.id) {
     unresolved.push("The department collection has not been created.");
   } else {
@@ -2065,6 +2090,7 @@ async function finalCheck(id, { by = "", build = null } = {}) {
         else report.completed.push("Collection description is the Non-Stock Item Notice.");
         if (!snapshot.image?.url) unresolved.push("The collection has no banner image.");
         else report.completed.push("Collection banner set.");
+        liveProductCount = (snapshot.products || []).filter((product) => String(product.status).toUpperCase() === "ACTIVE").length;
       }
     } catch (error) {
       report.warnings.push(`The collection could not be read back (${errorText(error)}).`);
@@ -2077,7 +2103,7 @@ async function finalCheck(id, { by = "", build = null } = {}) {
      would prove nothing either. Check what the lock is FOR instead: the public
      must not be able to see the department's products, and the secret link
      must open them. */
-  const access = await lockAccessVerdict(record);
+  const access = await lockAccessVerdict(record, { liveProductCount });
   if (access.checked) {
     record = await store().updateOnboarding(record.id, (r) => {
       r.lock.access = {
@@ -2096,6 +2122,13 @@ async function finalCheck(id, { by = "", build = null } = {}) {
     unresolved.push(`The Locksmith lock is not confirmed (${record.lock.status}). ${record.lock.checklist?.length ? "Follow the lock checklist and record the secret link." : ""}`.trim());
   } else if (access.closedToPublic === false) {
     unresolved.push(`The department's products are still visible to the public at ${access.collectionUrl}. ${access.reason}`.trim());
+  } else if (access.pendingLaunch) {
+    /* Not a failure and not a pass: the proof is simply unavailable until the
+       products are live. Blocking here would gate every onboarding on
+       something §9.2 guarantees cannot be true yet. */
+    report.needsDan.push(
+      `After pricing and publishing, open ${access.collectionUrl} signed out to confirm the store is private, then open the secret link to confirm it lets you in.`
+    );
   } else if (access.closedToPublic === null) {
     unresolved.push(`The lock could not be checked from outside, so the store is not confirmed private. ${access.reason}`.trim());
   } else if (access.opensWithSecretLink === false) {
