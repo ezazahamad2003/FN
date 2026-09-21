@@ -1396,6 +1396,8 @@ async function buildMockups(id, record, product, log) {
       driveUrl: "",
       fileName: image.fileName,
       path: image.path,
+      // Why it is not a render, straight from the renderer.
+      reason: image.reason || "",
       /* Where the garment itself came from: "photo" (Dan's), "supplier" (a real
          catalogue picture) or "generated" (invented by the image model).
          `path` says what was done TO the image; this says whether the garment
@@ -2174,7 +2176,10 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   for (const product of record.products) {
     for (const mockup of product.mockups || []) {
       if (mockup.path === "missing-artwork" || mockup.path === "render-failed") {
-        report.missingInformation.push(`${product.title || product.id} ${mockup.color} ${mockup.face}: ${mockup.warnings?.[0] || mockup.path}`);
+        /* The path-specific reason, not warnings[0] — that slot belongs to
+           whichever colour/Class B/AI-blank notice landed first, which is how
+           a missing embroidery proof got reported as a missing blank photo. */
+        report.missingInformation.push(`${product.title || product.id} ${mockup.color} ${mockup.face}: ${mockup.reason || mockup.warnings?.[0] || mockup.path}`);
       }
     }
     /* Part 2 makes the blank photo Dan's to supply; when none arrived the

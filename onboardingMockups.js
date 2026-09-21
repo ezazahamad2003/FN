@@ -458,6 +458,10 @@ async function renderProductMockups({
           buffer: null,
           fileName: fileNameFor(face),
           path: "stock",
+          /* Why this face is not a render. warnings[] is a mixed bag — colour
+             warnings, the Class B caveat, the AI-blank notice — so whichever
+             happens to be first is not the explanation. */
+          reason: "",
           base: bases[`${face}Source`],
           warnings: [...colorWarnings],
           verified: null
@@ -470,7 +474,8 @@ async function renderProductMockups({
           if (!faceBase) {
             if (face === "front") {
               entry.path = "render-failed";
-              entry.warnings.push(`No front blank for ${color.name}: upload a front photo of the blank.`);
+              entry.reason = `No front blank for ${color.name}: upload a front photo of the blank.`;
+              entry.warnings.push(entry.reason);
               results.push(entry);
             } else {
               log(`${tag}: no back photo supplied; back image skipped`);
@@ -484,7 +489,8 @@ async function renderProductMockups({
 
         if (!faceBase) {
           entry.path = "render-failed";
-          entry.warnings.push(`No ${face} blank for ${color.name}: the ${face} decoration (${decorations.map((d) => d.code).join(", ")}) could not be rendered.`);
+          entry.reason = `No ${face} blank for ${color.name}: the ${face} decoration (${decorations.map((d) => d.code).join(", ")}) could not be rendered.`;
+          entry.warnings.push(entry.reason);
           results.push(entry);
           continue;
         }
@@ -493,9 +499,8 @@ async function renderProductMockups({
         if (missing.length) {
           entry.path = "missing-artwork";
           entry.buffer = await stockImage(faceBase, size);
-          entry.warnings.push(
-            `No artwork for ${missing.map((c) => `${c} (${rules.decorationFileStem(departmentCode, c)})`).join(", ")}; the ${face} image is the blank.`
-          );
+          entry.reason = `No artwork for ${missing.map((c) => `${c} (${rules.decorationFileStem(departmentCode, c)})`).join(", ")}; the ${face} image is the blank.`;
+          entry.warnings.push(entry.reason);
           log(`${tag} ${face}: missing artwork for ${missing.join(", ")}`);
           results.push(entry);
           continue;

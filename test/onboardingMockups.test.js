@@ -536,3 +536,33 @@ test("bannerLogoChoice follows the spec order and returns the chosen file", asyn
   assert.equal(await mockups.bannerLogoChoice([{ assetId: "x", kind: "artwork", role: "" }]), null);
   assert.equal(await mockups.bannerLogoChoice([]), null);
 });
+
+test("a face names its own reason, not whichever warning landed first", async () => {
+  /* The cap case from a real run: E01 embroidery with no Printed Image proof.
+     The face ships the blank and is flagged missing-artwork — but the entry
+     also carries an AI-blank notice from the colour stage, and reporting
+     warnings[0] told Dan his blank photo was missing when the actual problem
+     was the proof. */
+  const calls = fakeRenderers();
+  const product = {
+    brand: "Richardson", styleNumber: "R112", type: "Snapback hat",
+    colors: [{ name: "Navy", code: "NVY" }], sizes: ["OSFA"],
+    decorationCodes: "E01", decorationMethod: "embroidery", fulfillment: "Non Stock Item"
+  };
+  const out = await mockups.renderProductMockups({
+    product,
+    departmentCode: "ZOT",
+    artwork: {},           // no proof for E01
+    blankPhotos: {},       // and no blank photo, so the blank is generated too
+    verify: false,
+    size: SIZE
+  });
+
+  const front = out.find((m) => m.face === "front");
+  assert.equal(front.path, "missing-artwork");
+  assert.match(front.reason, /No artwork for E01 \(ZOT-E01\)/, `reason was: ${front.reason}`);
+  // Both facts are still recorded; the reason is just no longer whichever was first.
+  assert.ok(front.warnings.some((w) => /AI-generated/.test(w)), "the generated blank is still reported");
+  assert.notEqual(front.warnings[0], front.reason, "warnings[0] is NOT the path reason here — that is the bug");
+  assert.equal(calls.render.length, 0, "nothing is rendered when the artwork is absent");
+});
