@@ -179,7 +179,31 @@ function checkProduct(product, expectedCode) {
 async function checkDepartment(code) {
   console.log(`\n=== ${code} ===`);
   const data = await graphql(COLLECTION_QUERY, { query: `title:*${code}*` });
-  let collections = data.collections.nodes;
+  /*
+   * `title:*CON*` is a substring match, so it also returns "Butte
+   * CONstruction Company", "CONtra Costa District Aide" and "Sale Store CON".
+   * Their products are then measured against CON's rules and every one of
+   * them fails — hundreds of violations that say nothing about this agent and
+   * bury the ones that do.
+   *
+   * A department store is titled "N. <Department Name>" (§6.2), and it owns
+   * its products: at least one carries the code as a tag (§9.4) or in a SKU
+   * (§10). Require both before judging anything inside it.
+   */
+  const owns = (collection) =>
+    (collection.products?.nodes || []).some(
+      (product) =>
+        (product.tags || []).some((tag) => String(tag).trim().toUpperCase() === code.toUpperCase()) ||
+        (product.variants?.nodes || []).some((variant) => {
+          const parsed = rules.parseSku(variant.sku, { departmentCode: code });
+          return parsed && String(parsed.code).toUpperCase() === code.toUpperCase();
+        })
+    );
+  const candidates = data.collections.nodes;
+  let collections = candidates.filter((c) => /^\d+\.\s/.test(c.title) && owns(c));
+  for (const skipped of candidates.filter((c) => !collections.includes(c))) {
+    console.log(`  (skipped "${skipped.title}" — ${/^\d+\.\s/.test(skipped.title) ? `no product carries ${code}` : "not a numbered department store"})`);
+  }
   if (!collections.length) {
     // Fall back to matching by the department tag on its products.
     const byTag = await graphql(
