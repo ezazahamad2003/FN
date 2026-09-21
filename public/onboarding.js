@@ -1936,7 +1936,19 @@
     if (lockStatus !== "verified" && lockStatus !== "created") {
       items.push({ label: `Lock: ${lockStatus}`, detail: "Create the lock with the four settings and both keys, then record the secret link.", target: "shared" });
     }
-    list(record.report?.needsDan).forEach((item) => items.push({ label: item, detail: "", target: "report" }));
+    /* The standing §12 items — pricing, cost, Easify, launch — are done in
+       Shopify, not here. They used to carry a jump button to the report panel
+       the reader is already looking at. A checklist line is the honest shape;
+       the ones that are about the store link straight to it. */
+    const collectionUrl = record.collection?.url || "";
+    list(record.report?.needsDan).forEach((item) =>
+      items.push({
+        label: item,
+        detail: "",
+        target: "",
+        href: /pricing|cost|easify|active|review/i.test(item) ? collectionUrl : ""
+      })
+    );
 
     return `
       <section class="rail-card ob-needs">
@@ -1951,7 +1963,11 @@
                 (item) => `<li>
                   <b>${esc(item.label)}</b>
                   ${item.detail ? `<span>${esc(item.detail)}</span>` : ""}
-                  <button class="btn btn-ghost btn-sm" type="button" data-ob="goto" data-ob-target="${esc(item.target)}">Go</button>
+                  ${item.target
+                    ? `<button class="btn btn-ghost btn-sm" type="button" data-ob="goto" data-ob-target="${esc(item.target)}">Show me</button>`
+                    : item.href
+                      ? `<a class="btn btn-ghost btn-sm" href="${esc(item.href)}" target="_blank" rel="noreferrer">In Shopify</a>`
+                      : ""}
                 </li>`
               )
               .join("")}</ul>`
