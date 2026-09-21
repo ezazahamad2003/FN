@@ -180,7 +180,15 @@ async function renderFaceImage({
   method = "",
   productType = "garment",
   getBackBlank,
-  onLog
+  onLog,
+  // Optional output size / quality for the edit call. Omitted = the model's
+  // default (1024x1024, high). The Department Onboarding Agent asks for
+  // 2000x2000 (spec §5) on models that accept custom sizes.
+  size,
+  quality,
+  // When true, an edit failure is thrown instead of silently shipping the
+  // blank, so a caller that wants to retry at another size can.
+  throwOnFailure = false
 }) {
   const log = (message) => onLog && onLog(message);
   const base = face === sourceFace ? baseBuffer : await getBackBlank();
@@ -256,9 +264,13 @@ async function renderFaceImage({
     " Change nothing else about the photo.";
 
   try {
-    const buffer = await editImage({ images, prompt });
+    const editOptions = { images, prompt };
+    if (size) editOptions.size = size;
+    if (quality) editOptions.quality = quality;
+    const buffer = await editImage(editOptions);
     return { buffer, path: "render" };
   } catch (error) {
+    if (throwOnFailure) throw error;
     // A build that ships a blank is recoverable; a build that throws loses the
     // whole product, so the failure is logged and the garment goes through.
     log(face + " render failed (" + error.message + "); shipping the blank garment");

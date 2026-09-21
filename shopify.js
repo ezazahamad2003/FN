@@ -5,7 +5,10 @@ const sharp = require("sharp");
 // product per garment with a Front Logo variant per uploaded logo (30+ logos ×
 // 7 sizes on real departments), and REST products are capped at 100 variants.
 // GraphQL supports up to 2048 variants per product.
-const API_VERSION = "2024-07";
+// Shopify serves a retired version with the OLDEST SUPPORTED schema, so a
+// stale pin silently drifts; the version is pinned to one that is supported
+// for the next year and matches what production has actually been served.
+const API_VERSION = "2026-01";
 
 // Re-mint the token a few minutes before it actually expires so requests never
 // race the expiry boundary.
@@ -33,8 +36,8 @@ function shopifyConnected() {
   return hasClientCredentials() || Boolean(process.env.SHOPIFY_ACCESS_TOKEN);
 }
 
-function shopifyUrl(path) {
-  return `https://${process.env.SHOPIFY_STORE}/admin/api/${API_VERSION}${path}`;
+function shopifyUrl(path, apiVersion = API_VERSION) {
+  return `https://${process.env.SHOPIFY_STORE}/admin/api/${apiVersion}${path}`;
 }
 
 // Exchange the app's client credentials for a fresh Admin API access token.
@@ -94,8 +97,12 @@ function startTokenAutoRefresh() {
 
 async function shopifyRequest(path, options = {}) {
   const token = await getAccessToken();
-  const res = await fetch(shopifyUrl(path), {
-    ...options,
+  // Callers may pin a different API version than API_VERSION (the
+  // Department Onboarding Agent's productSet/menu work); everything else
+  // stays on API_VERSION so the proven product flows are untouched.
+  const { apiVersion, ...fetchOptions } = options;
+  const res = await fetch(shopifyUrl(path, apiVersion), {
+    ...fetchOptions,
     headers: {
       "Content-Type": "application/json",
       "X-Shopify-Access-Token": token,
@@ -111,10 +118,11 @@ async function shopifyRequest(path, options = {}) {
   return json;
 }
 
-async function graphql(query, variables = {}) {
+async function graphql(query, variables = {}, { apiVersion } = {}) {
   const json = await shopifyRequest("/graphql.json", {
     method: "POST",
-    body: JSON.stringify({ query, variables })
+    body: JSON.stringify({ query, variables }),
+    ...(apiVersion ? { apiVersion } : {})
   });
   if (json.errors?.length) {
     throw new Error(`Shopify GraphQL: ${JSON.stringify(json.errors)}`);

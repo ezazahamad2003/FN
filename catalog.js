@@ -258,13 +258,14 @@ async function getProduct(productId) {
   };
 }
 
-// `input:` rather than the newer `product: ProductUpdateInput` — the app pins
-// API 2024-07, where the `product` argument does not exist yet. `input` is
-// marked deprecated on current versions but still accepted, so this one form
-// works either side of an API bump.
+// `product: ProductUpdateInput` is the current argument; the older `input:`
+// form is deprecated. Both are still accepted by the pinned version (checked
+// against the live store), so this is a move off a deprecated field rather
+// than a fix for a breakage — but it is the form that will survive the
+// deprecation, and the version pin no longer protects us from it.
 const PRODUCT_UPDATE_MUTATION = `
-mutation productUpdate($input: ProductInput!) {
-  productUpdate(input: $input) {
+mutation productUpdate($product: ProductUpdateInput!) {
+  productUpdate(product: $product) {
     product { id legacyResourceId title }
     userErrors { field message }
   }
@@ -333,7 +334,7 @@ async function updateProduct(productId, fields) {
   }
 
   if (Object.keys(input).length > 1) {
-    const data = await graphql(PRODUCT_UPDATE_MUTATION, { input });
+    const data = await graphql(PRODUCT_UPDATE_MUTATION, { product: input });
     assertNoUserErrors("productUpdate", data.productUpdate.userErrors);
   }
 

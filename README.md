@@ -42,7 +42,7 @@ The dashboard voice agent records short browser mic turns, sends them to Azure O
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 
-Image generation AND the decorated-product edit renderer run on **direct OpenAI** (`OPENAI_API_KEY`, model `OPENAI_IMAGE_MODEL`, default `gpt-image-1`). There is deliberately no Azure image path any more: production always ran on the OpenAI fallback (the Azure image env vars were never set on the Container App), so the Azure-first code was removed on 2026-09-01 instead of being kept as an untraveled branch. Chat, transcription, and speech stay on Azure.
+Image generation AND the decorated-product edit renderer run on **direct OpenAI** (`OPENAI_API_KEY`, model `OPENAI_IMAGE_MODEL`, default `gpt-image-2.5-flare`; `gpt-image-2.5-sunburst` is the slower, more precise edit model). There is deliberately no Azure image path any more: production always ran on the OpenAI fallback (the Azure image env vars were never set on the Container App), so the Azure-first code was removed on 2026-09-01 instead of being kept as an untraveled branch. Chat, transcription, and speech stay on Azure.
 
 `OPENAI_API_KEY` is therefore required: images, the supplier blank web search (no Azure equivalent), and the chat-reasoning fallback.
 
@@ -84,7 +84,7 @@ The app opens on **Dashboard** for live platform status and the voice-first oper
 | **Dashboard** | `#/dashboard` | Live service status plus the voice operations agent |
 | **New Stores** | `#/new-stores` | Internal review queue for customer-submitted store requests |
 | **Departments** | `#/departments` | Browse all Shopify collections; click one to open it |
-| **Onboarding Agent** | `#/onboarding` | The full policy-driven intake described below |
+| **Onboarding Agent** | `#/onboarding` | The Department Onboarding Agent described below |
 
 Onboarding is what you run *once* to stand up a new department. Browsing, reviewing customer submissions, and editing live Shopify collections are the everyday tasks.
 
@@ -120,9 +120,7 @@ From there:
 | `PATCH` | `/api/products/:id` | Update supplied fields only; `price` repriced across all variants |
 | `POST` | `/api/collections/:id/products` | Create a product (multipart; SSE progress) |
 
-## Onboarding workflow
-
-### Customer intake link
+## Customer intake link (New Stores)
 
 Send customers `/intake`. They fill a fixed-field store request based on the FNS form draft: store setup, logo upload, decoration size/placement, and repeated category choices for shirts, sweatshirts, jackets, polos, shorts, sweatpants, Class B items, belts, and hats.
 
@@ -131,64 +129,97 @@ On submit, the app saves the request JSON and logos to Azure Blob Storage (conta
 The internal queue is open by default while the platform is in testing; set `FN_REQUIRE_ADMIN_TOKEN=1` together with `FN_ADMIN_TOKEN` to require a token. With the gate on, the console (`/`) and `/setup` pages themselves also require the token — open `/?admin=<FN_ADMIN_TOKEN>` once and a cookie keeps you signed in for 30 days; everyone else is redirected to `/intake`. The customer link never needs a token, and customers never see internal errors — submit failures that aren't form-validation problems return a generic retry message and log the real cause server-side.
 
 From **New Stores**, open a store request to review or edit the customer answers, open the Shopify collection, and watch build progress. Ready submissions start building automatically on submit — products are created as **DRAFT**, so nothing is customer-visible until an operator publishes them in Shopify admin. Use **Build store now** / **Re-run build** on the store page to kick or re-run a build; re-runs are additive: products Shopify still has are skipped, and any that were deleted in Shopify admin (or lost with their collection) are rebuilt. If a store's collection or products disappear from Shopify, the store page says so in **The store so far** instead of going quiet.
-The onboarding view accepts a department name, logo images, policy documents, and
-optional follow-up answers from the department. Onboarding runs in **two phases
-with a review gate in between — nothing is published to Shopify without explicit
-approval.**
 
-### Phase 1 — analyze & generate (steps 1–7)
+## Department Onboarding Agent
 
-1. Create or reuse the Google Drive department folder inside `GDRIVE_PARENT_FOLDER_ID`, with `Logos` and `Product Images` subfolders.
-2. Upload logos, policy docs, and follow-up docs to Drive.
-3. Analyze each logo with GPT-4o Vision.
-4. Extract products, garment details, and logo assignments from the policy + follow-up text. **Strict no-invention rule:** details not stated in the documents stay empty instead of being guessed.
-5. **Check policy completeness.** Anything a production run needs but the policy doesn't state (placement, garment color, brand/style, sizes, decoration method, logo assignments, personalization rules) is reported as a gap, and a ready-to-send **email draft** asking the department for those details is generated and saved to Drive.
-6. Source each blank garment (supplier photo where possible — see [Where the blank garment comes from](#where-the-blank-garment-comes-from)) and composite the exact logo onto it — see [No gibberish on product images](#no-gibberish-on-product-images).
-7. Write fact-only product descriptions, the production manual Google Doc, and the gap email draft doc.
+`#/onboarding` builds a new fire department's private store in Shopify by the
+rules in **FN Simple Uniforms — Department Onboarding Agent, Build Spec (MVP)**.
+The full contract — record schema, phases, HTTP API, invariants — is in
+[docs/department-onboarding-agent.md](docs/department-onboarding-agent.md).
 
-### Review gate
+The agent does the repetitive, rules-based work. Dan keeps every judgement
+call: pricing, cost per item, Easify options, final review, setting products
+Active, and sending the store link to the department.
 
-The UI then shows everything for approval: every product image, a gap report
-with confidence level, the email draft (copyable), and per-product detail chips
-color-coded as **stated by policy (green)** vs **fallback default (amber)**.
+### Rules live in code, not in the model
 
-- **Approve & publish** → phase 2 runs.
-- **Discard run** → Drive assets are kept, nothing reaches Shopify.
-- Got answers back from the department? Paste them into "Department follow-up
-  answers" (or attach the reply doc) and re-run — the gaps close.
+`onboardingRules.js` owns everything where spelling, order and punctuation
+matter — SKU format, size and colour codes, decoration codes, department-code
+proposals, folder and collection names, tags, Vendor values, the description
+structure, and Appendix B's standard text. It is pure and unit-tested. The
+model is used only for reading messy policies, drafting the rep email, and
+rendering mockups.
 
-### Phase 2 — publish to Shopify (steps 8–10, after approval)
+A SKU is `STYLE-SIZE-COLOR-CODE-DECORATIONS`, e.g. `NL3600-L-NVY-VAC-F01/B01`,
+`R112-OSFA-NVY-VAC-E01`. An item is either **all print** (`F##`/`B##`/`RS##`/
+`LS##`) or **all embroidery** (`E##`) — a mixed item is a custom order and is
+rejected rather than built.
 
-8. Create or reuse a Shopify manual collection and set its image from the first uploaded logo.
-9. Create products via the **GraphQL Admin API**: one product per garment with
-   **Front Logo × Size** options. **Logo assignments stated by the department
-   are honoured** — if the policy or follow-up answers say which logo code goes
-   on which style number, that garment gets only those logos. When nothing is
-   stated, every uploaded logo is offered on that product, and the review panel
-   labels it "no assignment stated" so the fallback is never silent.
-   GraphQL supports up to 2048 variants per product, so 30+ logos × 7 sizes
-   (default XS–3XL) fit on a single product like the store's real listings.
-   Each logo's mockup image is uploaded through staged uploads and attached to
-   exactly that logo's variants, so the product photo changes with the selected
-   Front Logo. Titles follow the store convention (garment name with brand when
-   known, e.g. "Next Level Cotton T-Shirt"); the department lives in the
-   collection and tags. Descriptions include brand/style, spec bullets, and a
-   size chart table whenever the policy or follow-ups provide one.
-10. Add products to the collection and show Drive, manual, collection, and product links.
+### Source-of-truth tables
 
-### Undo a published run (cleanup)
+Four reference tables live in the `platform-config` blob container and are
+edited from `#/onboarding/reference`:
 
-After publishing, the summary shows a **"Delete run assets…"** option (available
-for 24 hours, while the server keeps the run manifest in memory). It:
+| Table | Seeded from | Used for |
+| --- | --- | --- |
+| Department codes | the `Department-ID-Agency-List` Google Doc (California MACS ids, ~1000 agencies) plus codes already in use | looking a department up, proposing a code for out-of-state departments, refusing a code another agency owns |
+| Color codes | Appendix A | the COLOR segment of every SKU |
+| Blank library | the `FN Simple Stores Menu_Detailed` doc, then remembered per style as it is used | brand, type, fulfilment and description data per style number |
+| Standard text | Appendix B | the logo disclaimer and the Non-Stock Item Notice |
 
-- deletes the Shopify products created by that run,
-- deletes the Shopify collection for that run,
-- moves the department's Drive folder to trash (recoverable from Drive's trash
-  for ~30 days).
+New department and colour codes are **proposals** until Dan approves them; an
+unapproved code never reaches a SKU.
 
-If the option has expired (or the server restarted, e.g. an Azure deploy),
-delete the products/collection in Shopify admin and the folder in Drive
-manually.
+The department code list imports itself: the first setup that finds no
+imported agencies reads `DEPARTMENT_CODE_LIST_DOC_ID` from Drive, so §2.1's
+"search the Department ID Agency List" is never quietly skipped on a fresh
+platform. `#/onboarding/reference` can re-import it at any time.
+
+### How a run flows
+
+1. **Packet** — Dan uploads the department name, contact list, uniform policy
+   and artwork.
+2. **Setup** — the agent looks the department code up, proposes one when the
+   department is not on the list, and waits for approval. Then it creates both
+   Drive folders (`Departments > Vacaville Fire Department (VAC)` and
+   `Omni Printer > (VAC) Vacaville Fire Department`), reads the policy, and
+   drafts the email to the department rep listing everything missing. **It
+   never sends the email.**
+3. **Build inputs** — Dan fills in the product list (brand, style number,
+   colours, sizes, decoration method and codes, Styles, fulfilment, Class B),
+   plus blank garment photos per colour and embroidery proofs. Every row is
+   validated live: SKUs previewed, decoration codes matched against the file
+   names in the Omni Printer folder, unknown colours turned into proposals.
+4. **Build** — mockups (2000×2000, front and back, every colour and Style),
+   the collection (title `1. <Department>`, 3584×2048 banner, the Non-Stock
+   Item Notice as its description), the Locksmith lock, then every product as
+   **Draft** with SKUs, variants, images bound to the matching Color/Style, and
+   a Section 11 description.
+5. **Shared settings** — Mega Menu, Shopify Flow and Helium Customer Fields are
+   only ever *proposed*. Nothing is saved to a shared setting without Dan's
+   explicit approval, and where the API cannot write it, the agent hands Dan
+   the exact checklist instead.
+6. **Report** — four sections: Completed (including the secret link), Needs
+   Dan, Missing information, Warnings. A run is never reported complete while
+   anything is unresolved.
+
+### What the agent never does
+
+- Touch production print files — it works only on copies.
+- Invent a department code, colour code, product spec or logo placement.
+- Save a shared setting (menu, Flow, Helium) without approval.
+- Publish a product: everything stays **Draft** until Dan prices it.
+- Change or remove another department's settings.
+
+### Integrations and their limits
+
+| Integration | How |
+| --- | --- |
+| Shopify products/collections | Admin GraphQL. The source product for a style is the `Master Reference` draft when one exists, else the most recently created product with that style number; it is duplicated and never edited. |
+| Locksmith | Admin API (`LOCKSMITH_ACCESS_TOKEN`). The secret-link key shape is **learned** from an existing lock on the store rather than guessed, and a guessed shape is dry-run first. Without a token the agent produces the lock checklist. |
+| Helium Customer Fields | No write API exists. The agent **reads** the public registration form JSON, reports whether the department tag is present and exactly where it belongs alphabetically, and Dan makes the edit in all three forms. |
+| Shopify Flow | No API. Checklist only. |
+| Mega Menu | `menuUpdate` needs `write_online_store_navigation`, which this app's token does not carry today, so the agent computes the exact position and hands Dan a checklist. Grant the scope and it applies the change itself after approval. |
 
 ## No gibberish on product images
 
@@ -280,7 +311,13 @@ Set `GDRIVE_PARENT_FOLDER_ID` to the parent Drive folder where department folder
 
 ```env
 GDRIVE_PARENT_FOLDER_ID=1NotimWFnxitY67QLt20is3IwifNXfgnp
+GDRIVE_OMNI_PRINTER_FOLDER_ID=1ALf84uwPJ2wjfWsKyq_9Pfce8ibO8NbW
 ```
+
+`GDRIVE_OMNI_PRINTER_FOLDER_ID` is `FN Simple Uniforms > Omni Printer`, where
+Dan places print-ready files as `(CODE) Department Name > CODE-F01.png`. The
+onboarding agent reads that folder to check every decoration code has its file
+and downloads **copies** to build mockups; it never writes there.
 
 > When changing this, remember to update it in **both** the local `.env` and the
 > Container App's environment variables in Azure.
@@ -306,6 +343,20 @@ The lookup adds roughly 15–25 seconds and a few cents per distinct style on th
 first run; results are cached per style+colour for the life of the process, so
 re-running after a review-gate rejection costs nothing extra.
 
+## Tests
+
+```bash
+npm test
+```
+
+`node --test` over `test/*.test.js`: the onboarding rules (SKUs, codes, names,
+descriptions), the reference-table parsers, the blob-backed onboarding store,
+the Shopify layer, Locksmith, Helium, mockups, the policy review, and the
+agent orchestrator. They run offline — no API keys, no network, no blob
+storage. The scripts that DO spend credits or touch production
+(`test/submit-test-stores.js`, `test/sleeve-print-examples.js`,
+`test/test-supplier-search.js`) are run by hand and are not part of `npm test`.
+
 ## Running on Azure (ephemeral filesystem)
 
 Production runs as the **`fn-platform` Azure Container App** (resource group
@@ -327,9 +378,10 @@ things "disappear" in production:
   `GOOGLE_*`, `GDRIVE_PARENT_FOLDER_ID`, `OPENAI_API_KEY`, `AZURE_OPENAI_*`).
   The in-app Connect buttons write to `.env`, which does not survive a restart
   in a container.
-- **Approve or discard a run promptly.** Pending review runs are held in server
-  memory for 60 minutes; a deploy or restart drops them. Drive assets are never
-  lost — re-running with "Use existing" reuses the folder.
+- **Long-running work survives a restart.** Onboarding records, their assets
+  and their build progress live in Azure Blob Storage (`department-onboardings`),
+  and a watchdog resumes builds a deploy interrupted — the same design the
+  customer-intake queue uses.
 - Generated images, manuals, and email drafts are always saved to Google Drive
   and Shopify, never to the server disk, so nothing durable lives in the
   container.

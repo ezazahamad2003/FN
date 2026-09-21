@@ -1,0 +1,1204 @@
+/* =============================================================================
+   FN Onboarding — Department Onboarding Agent console view
+   -----------------------------------------------------------------------------
+   Loaded after /styles.css, which owns the design system. Nothing here
+   introduces a colour, a radius, a duration, or a spacing value: every rule
+   reads the tokens defined on :root there, so this view flips with the theme
+   toggle exactly like the rest of the console.
+
+   What is NOT here, because styles.css already has it and public/onboarding.js
+   reuses the markup: .card/.card-pad/.card-head, .btn*, .field/.hint/
+   .field-error, .dropzone/.thumbs/.thumb/.file-remove, .banner, .modal-overlay/
+   .modal/.modal-head/.modal-body/.modal-actions, .icon-btn, .spinner,
+   .state-block, .status-chip, .crumbs, .hero, .store-card*, .store-detail-head,
+   .wizard-rail (the phase stepper), .progress*, .build-steps, .rail-card,
+   .drive-files, .gap-report/.gap-list, .email-draft, .m-chip, .code-input,
+   .category-edit-grid, .variant-remove, .status-list, .toggle-field.
+
+   Everything below is one of:
+     • a layout this view needs (the two-column detail page, the panel stack),
+     • a component styles.css has no equivalent for (capability strip, code
+       chip, product row, mockup gallery, reference table, build log),
+     • a small extension of an existing component (the 5-column stepper).
+   Colour is the signal throughout: info = running, ok = done, warn = needs
+   attention, danger = failed — the same [data-tone] contract as styles.css.
+   Checked at 1280 / 768 / 375.
+   ========================================================================== */
+
+/* =============================================================================
+   Page scaffolding
+   ========================================================================== */
+.onboarding-root {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.ob-list,
+.ob-detail,
+.ob-reference {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+/* Single-column grids state their column explicitly as minmax(0, 1fr).
+   A grid item's automatic minimum size is its MIN-CONTENT width, so one wide
+   descendant — the reference table, a long SKU, a mockup row — would widen the
+   column and push the whole page into a horizontal scroll at 375px. This lets
+   those children shrink and scroll inside their own box instead. */
+.onboarding-root,
+.ob-list,
+.ob-detail,
+.ob-reference,
+.ob-main,
+.ob-rail,
+.ob-panel,
+.ob-review,
+.ob-questions,
+.ob-kind-group,
+.ob-products,
+.ob-product,
+.ob-slots,
+.ob-styles,
+.ob-style-list,
+.ob-validation,
+.ob-prodfiles,
+.ob-mockup-groups,
+.ob-mockup-group,
+.ob-shared,
+.ob-report-block,
+.ob-needs-list,
+.ob-contacts,
+.ob-filelist {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ob-panel-actions,
+.ob-head-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ob-subhead {
+  margin-top: var(--space-4);
+}
+
+.ob-banner {
+  margin: 0;
+}
+
+/* =============================================================================
+   List view — capability strip
+   -----------------------------------------------------------------------------
+   Six services, each ok or needing attention. It sits above the queue because
+   "Locksmith has no token" explains a checklist-only run before the operator
+   starts one, not after.
+   ========================================================================== */
+.ob-caps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--space-3);
+}
+
+.ob-cap {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.ob-cap b {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.ob-cap small {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.ob-cap-dot {
+  grid-row: 1 / span 2;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--text-subtle);
+}
+
+.ob-cap[data-tone="ok"] { border-left-color: var(--success); }
+.ob-cap[data-tone="ok"] .ob-cap-dot { background: var(--success); box-shadow: 0 0 0 4px var(--success-soft); }
+.ob-cap[data-tone="warn"] { border-left-color: var(--warn); }
+.ob-cap[data-tone="warn"] .ob-cap-dot { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+
+.ob-caps-loading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.ob-caps-loading[data-tone="warn"] { color: var(--warn); }
+
+/* =============================================================================
+   List view — onboarding cards (extends .store-card)
+   ========================================================================== */
+.ob-card .ob-card-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin: var(--space-1) 0;
+}
+
+.ob-phase-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-style: normal;
+  font-weight: 700;
+}
+
+/* ---- Department code chip ------------------------------------------------
+   The code is the one value everything else is named from, so it reads as a
+   monospace badge whose tone says whether it may be used yet. */
+.ob-code-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  white-space: nowrap;
+}
+
+.ob-code-chip b {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.ob-code-chip small {
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+}
+
+.ob-code-chip[data-tone="ok"] { border-color: var(--success-border); background: var(--success-soft); color: var(--success); }
+.ob-code-chip[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); color: var(--warn); }
+.ob-code-chip[data-tone="ok"] small,
+.ob-code-chip[data-tone="warn"] small { color: inherit; opacity: 0.85; }
+
+/* =============================================================================
+   Detail view — layout
+   ========================================================================== */
+.ob-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.ob-main {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.ob-rail {
+  display: grid;
+  gap: var(--space-4);
+  position: sticky;
+  top: var(--space-4);
+}
+
+.ob-panel {
+  display: grid;
+  gap: var(--space-4);
+  scroll-margin-top: var(--space-5);
+}
+
+.ob-panel .card-head { margin-bottom: 0; }
+
+/* The panel whose approval is outstanding is bordered like any other
+   attention state in the console. */
+.ob-code-card[data-state="attention"] { border-color: var(--warn-border); }
+.ob-code-card[data-state="done"] { border-color: var(--success-border); }
+
+/* ---- Phase stepper (extends .wizard-rail: five phases, not four) --------- */
+.ob-stepper {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+
+.ob-stepper li[data-state="todo"] button { opacity: 0.78; }
+
+/* =============================================================================
+   Detail view — department code approval
+   ========================================================================== */
+.ob-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--space-2);
+}
+
+.ob-candidate {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+
+.ob-candidate b {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-lg);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.ob-candidate small {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.ob-candidate:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.ob-candidate:active { transform: translateY(0); }
+.ob-candidate:focus-visible { outline: none; box-shadow: var(--ring); }
+.ob-candidate[data-tone="ok"] { border-color: var(--success-border); background: var(--success-soft); }
+.ob-candidate[data-tone="ok"] b { color: var(--success); }
+.ob-candidate[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); }
+.ob-candidate[data-tone="warn"] b { color: var(--warn); }
+.ob-candidate[data-picked="true"] { border-color: var(--brand); box-shadow: var(--shadow-sm); }
+.ob-candidate[data-picked="true"] b { color: var(--brand); }
+
+.ob-code-form {
+  display: grid;
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr) auto auto;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.ob-code-form .field { margin-bottom: 0; }
+
+/* =============================================================================
+   Detail view — packet files
+   ========================================================================== */
+.ob-addfiles {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ob-addfiles select { width: auto; min-width: 200px; }
+
+/* A file input styled as a button: the input keeps its own keyboard
+   behaviour (Enter opens the picker), the label carries the button look. */
+.ob-upload {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.ob-upload input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.ob-upload:focus-within {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.ob-upload input[type="file"]:disabled { cursor: not-allowed; }
+.ob-upload:has(input[type="file"]:disabled) { opacity: 0.6; cursor: not-allowed; }
+
+.ob-upload-inline {
+  min-height: 30px;
+  padding: 0 var(--space-2);
+  font-size: var(--fs-xs);
+}
+
+.ob-kind-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-files {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-3);
+}
+
+.ob-file {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ob-file figcaption {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ob-file b {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ob-file small { color: var(--text-subtle); font-size: var(--fs-xs); }
+.ob-file a { color: var(--info); font-size: var(--fs-xs); font-weight: 700; }
+.ob-file a:hover { text-decoration: underline; }
+.ob-file .file-remove { position: absolute; top: var(--space-2); right: var(--space-2); }
+.ob-file select { min-height: 34px; font-size: var(--fs-xs); }
+
+/* ---- Thumbnail with a filename fallback ---------------------------------
+   The asset route is admin-gated; when the image cannot be fetched the tile
+   must still say WHICH file it is, never render as a broken image. */
+.ob-thumb {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+}
+
+.ob-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ob-thumb-fallback {
+  display: none;
+  padding: 0 var(--space-1);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.ob-thumb[data-broken="true"] .ob-thumb-fallback { display: block; }
+.ob-thumb:not(:has(img)) .ob-thumb-fallback { display: none; }
+.ob-file-glyph { color: var(--text-subtle); }
+
+.ob-notes { margin-bottom: 0; }
+
+/* =============================================================================
+   Detail view — setup and policy review
+   ========================================================================== */
+.ob-folders .status-line a { color: var(--info); font-weight: 700; }
+.ob-folders .status-line a:hover { text-decoration: underline; }
+
+.ob-review {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ob-questions {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+/* =============================================================================
+   Detail view — product rows
+   ========================================================================== */
+.ob-products {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ob-product {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.ob-product[data-tone="ok"] { border-left-color: var(--success); }
+.ob-product[data-tone="danger"] { border-left-color: var(--danger); }
+
+.ob-product-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ob-product-title {
+  padding: 0;
+  font-size: var(--fs-base);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.ob-product-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ob-product-meta a { color: var(--info); font-size: var(--fs-xs); font-weight: 700; }
+.ob-product-meta a:hover { text-decoration: underline; }
+.ob-product-head .variant-remove { margin-left: auto; }
+.ob-product .hint { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+.ob-styles {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+
+.ob-style-list {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.ob-style {
+  display: grid;
+  grid-template-columns: auto minmax(0, 260px) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ob-style-name {
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ---- Blank photo / proof slots ------------------------------------------ */
+.ob-slots {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-2);
+}
+
+.ob-slot {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  text-align: center;
+}
+
+.ob-slot[data-tone="ok"] { border-style: solid; border-color: var(--success-border); background: var(--success-soft); }
+
+.ob-slot-label {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ob-slot .hint { font-size: var(--fs-xs); }
+.ob-slot .file-remove { position: absolute; top: var(--space-1); right: var(--space-1); }
+
+/* ---- Validation --------------------------------------------------------- */
+.ob-validation {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ob-validation[data-tone="ok"] { border-color: var(--success-border); background: var(--success-soft); }
+.ob-validation[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); }
+.ob-validation[data-tone="danger"] { border-color: var(--danger-border); background: var(--danger-soft); }
+
+.ob-validation-title {
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.ob-validation[data-tone="ok"] .ob-validation-title { color: var(--success); }
+.ob-validation[data-tone="warn"] .ob-validation-title { color: var(--warn); }
+.ob-validation[data-tone="danger"] .ob-validation-title { color: var(--danger); }
+
+.ob-issues {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--fs-sm);
+}
+
+.ob-issues[data-tone="danger"] { color: var(--danger); }
+.ob-issues[data-tone="warn"] { color: var(--warn); }
+.ob-issues[data-tone="muted"] { color: var(--text-muted); }
+
+.ob-skus summary {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ob-skus summary:focus-visible { outline: none; box-shadow: var(--ring); border-radius: var(--radius-sm); }
+
+.ob-sku-list {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+.ob-sku-list code {
+  padding: 2px var(--space-2);
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-xs);
+}
+
+/* ---- Production files --------------------------------------------------- */
+.ob-prodfiles {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ob-prodfiles[data-tone="warn"] { border-color: var(--warn-border); }
+.ob-prodfiles[data-tone="ok"] { border-color: var(--success-border); }
+
+.ob-prodfiles-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ob-prodfile-codes {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* =============================================================================
+   Detail view — build
+   ========================================================================== */
+.ob-build-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ob-build-actions .hint { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+.ob-mockup-groups {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ob-mockup-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-mockups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
+
+.ob-mockup {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.ob-mockup .ob-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.ob-mockup figcaption {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: center;
+  text-align: center;
+  min-width: 0;
+}
+
+.ob-mockup b { font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.ob-mockup a { color: var(--info); font-size: var(--fs-xs); font-weight: 700; }
+.ob-mockup a:hover { text-decoration: underline; }
+.ob-mockup-note { color: var(--warn); font-size: var(--fs-xs); line-height: 1.45; }
+
+.ob-badges {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.ob-badge {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+}
+
+.ob-badge[data-tone="ok"] { border-color: var(--success-border); background: var(--success-soft); color: var(--success); }
+.ob-badge[data-tone="info"] { border-color: var(--info-border); background: var(--info-soft); color: var(--info); }
+.ob-badge[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); color: var(--warn); }
+
+/* =============================================================================
+   Detail view — shared settings and the lock
+   ========================================================================== */
+.ob-shared-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.ob-shared {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ob-shared[data-tone="ok"] { border-top-color: var(--success); }
+.ob-shared[data-tone="info"] { border-top-color: var(--info); }
+.ob-shared[data-tone="warn"] { border-top-color: var(--warn); }
+.ob-shared[data-tone="danger"] { border-top-color: var(--danger); }
+
+.ob-shared-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.ob-shared-head b { font-size: var(--fs-base); font-weight: 800; }
+.ob-shared-sub { color: var(--text-muted); font-size: var(--fs-xs); line-height: 1.5; }
+
+.ob-proposal {
+  padding: var(--space-3);
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-sm);
+  background: var(--info-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ob-checklist {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.ob-form-list {
+  display: grid;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ob-form-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--fs-xs);
+}
+
+.ob-form-list li[data-tone="ok"] { color: var(--success); }
+.ob-form-list li[data-tone="warn"] { color: var(--warn); }
+.ob-form-list li[data-tone="muted"] { color: var(--text-subtle); }
+.ob-form-list b { color: var(--text); }
+
+.ob-shared-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-1);
+}
+
+.ob-lock { grid-column: 1 / -1; }
+
+.ob-secret {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ob-secret input {
+  flex: 1 1 260px;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-xs);
+}
+
+.ob-lock-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.ob-lock-form .field { margin-bottom: 0; }
+
+/* =============================================================================
+   Detail view — report
+   ========================================================================== */
+.ob-report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.ob-report-block {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ob-report-block[data-tone="ok"] { border-color: var(--success-border); background: var(--success-soft); }
+.ob-report-block[data-tone="info"] { border-color: var(--info-border); background: var(--info-soft); }
+.ob-report-block[data-tone="warn"] { border-color: var(--warn-border); background: var(--warn-soft); }
+.ob-report-block[data-tone="danger"] { border-color: var(--danger-border); background: var(--danger-soft); }
+
+.ob-report-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: 800;
+}
+
+.ob-report-title span {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+}
+
+.ob-report-block[data-tone="ok"] .ob-report-title { color: var(--success); }
+.ob-report-block[data-tone="info"] .ob-report-title { color: var(--info); }
+.ob-report-block[data-tone="warn"] .ob-report-title { color: var(--warn); }
+.ob-report-block[data-tone="danger"] .ob-report-title { color: var(--danger); }
+
+/* =============================================================================
+   Detail view — right rail
+   ========================================================================== */
+.ob-needs .ob-operator { margin: var(--space-2) 0 var(--space-3); }
+.ob-needs .ob-operator input { min-height: 38px; }
+
+.ob-needs-count {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+}
+
+.ob-needs-count[data-tone="warn"] { background: var(--warn-soft); color: var(--warn); }
+.ob-needs-count[data-tone="ok"] { background: var(--success-soft); color: var(--success); }
+
+.ob-needs-list {
+  display: grid;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ob-needs-list li {
+  display: grid;
+  gap: var(--space-1);
+  justify-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.ob-needs-list b { font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.ob-needs-list span { color: var(--text-muted); font-size: var(--fs-xs); line-height: 1.45; overflow-wrap: anywhere; }
+
+/* The build log is a tail, not a transcript: it scrolls, it is reachable by
+   keyboard, and it never pushes the rail past the viewport. */
+.ob-log {
+  display: grid;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ob-log:focus-visible { outline: none; box-shadow: var(--ring); }
+.ob-links li a span { white-space: normal; }
+
+/* =============================================================================
+   Reference tables
+   ========================================================================== */
+.ob-tabs {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.ob-tab {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast), border-color var(--t-fast);
+}
+
+.ob-tab:hover { color: var(--text); background: var(--surface-2); }
+.ob-tab:focus-visible { outline: none; box-shadow: var(--ring); }
+.ob-tab[aria-selected="true"] {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+  border-bottom-color: var(--brand);
+}
+
+.ob-ref-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.ob-ref-toolbar .search-field { flex: 1 1 260px; }
+.ob-ref-toolbar .hint { color: var(--text-subtle); font-size: var(--fs-xs); }
+
+.ob-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.ob-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.ob-table th {
+  position: sticky;
+  top: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  color: var(--text-subtle);
+  font-size: var(--fs-xs);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ob-table td {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  vertical-align: top;
+}
+
+.ob-table tbody tr:hover td { background: var(--surface-2); color: var(--text); }
+.ob-table .ob-mono {
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.ob-table .ob-wide { min-width: 320px; white-space: pre-line; }
+
+.ob-proposals {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+}
+
+.ob-proposal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ob-proposal-row > div { display: grid; gap: 2px; min-width: 0; }
+.ob-proposal-row b {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: var(--fs-sm);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+.ob-proposal-row span { color: var(--text-muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.ob-proposal-row small { color: var(--text-subtle); font-size: var(--fs-xs); }
+.ob-proposal-row a { color: var(--info); font-size: var(--fs-xs); font-weight: 700; }
+.ob-proposal-row a:hover { text-decoration: underline; }
+.ob-proposal-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+.ob-addrow { margin-top: var(--space-4); }
+.ob-addrow .field-label { margin-bottom: var(--space-3); }
+
+/* =============================================================================
+   New onboarding modal
+   ========================================================================== */
+.ob-modal { width: min(760px, 100%); }
+.ob-modal .modal-head { padding: var(--space-5) var(--space-5) 0; }
+.ob-modal .modal-head > div:not(.m-glyph) { flex: 1 1 auto; min-width: 0; }
+.ob-modal .modal-body { max-height: min(68vh, 680px); }
+
+.ob-form .ob-fieldset {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.ob-form .ob-fieldset legend {
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.ob-contacts {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.ob-contact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.ob-contact .category-edit-grid { flex: 1; }
+
+.ob-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.ob-upload-grid .dropzone { padding: var(--space-4); }
+
+.ob-filelist {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ob-picked {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+}
+
+.ob-picked-thumb {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--text-subtle);
+}
+
+.ob-picked-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.ob-picked-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.ob-picked small { margin-left: auto; color: var(--text-subtle); flex: none; }
+.ob-picked .file-remove { position: static; flex: none; }
+
+.ob-form .req { color: var(--danger); }
+
+/* =============================================================================
+   Responsive — 1280 / 768 / 375
+   ========================================================================== */
+@media (max-width: 1160px) {
+  /* The rail stops being a sidebar before the product grid starts wrapping
+     its own fields. */
+  .ob-layout { grid-template-columns: minmax(0, 1fr); }
+  .ob-rail {
+    position: static;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    align-items: start;
+  }
+  .ob-stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 860px) {
+  .ob-code-form { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .ob-code-form .btn { width: 100%; }
+  .ob-upload-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 620px) {
+  .ob-stepper { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ob-rail { grid-template-columns: minmax(0, 1fr); }
+  .ob-caps { grid-template-columns: minmax(0, 1fr); }
+  .ob-files { grid-template-columns: minmax(0, 1fr); }
+  .ob-mockups { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+  .ob-slot-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .ob-style { grid-template-columns: minmax(0, 1fr) auto; }
+  .ob-style-name { grid-column: 1 / -1; }
+  .ob-contact { grid-template-columns: minmax(0, 1fr); }
+  .ob-contact .variant-remove { justify-self: end; }
+  .ob-shared-actions .btn { flex: 1; }
+  .ob-prodfiles-head { align-items: flex-start; flex-direction: column; }
+  .ob-proposal-row { align-items: stretch; flex-direction: column; }
+  .ob-proposal-actions .btn { flex: 1; }
+  .ob-addfiles select { min-width: 0; width: 100%; }
+  .ob-tab { padding: var(--space-2) var(--space-3); }
+  .ob-modal .modal-head { padding: var(--space-4) var(--space-4) 0; }
+}
+
+/* Motion is already globally reduced by styles.css; the two places this view
+   scrolls programmatically read prefers-reduced-motion in JS as well. */
+@media (prefers-reduced-motion: reduce) {
+  .ob-candidate:hover { transform: none; }
+}

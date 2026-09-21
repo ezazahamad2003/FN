@@ -97,7 +97,7 @@ function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, image
 async function renderGarment(prompt) {
   const openai = client();
   const response = await openai.images.generate({
-    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare",
     size: "1024x1024",
     quality: "medium",
     n: 1,

@@ -1,0 +1,3137 @@
+﻿CALIFORNIA MACS IDS 02_10_22
+MACS-ID 
+	AGENCY 
+	CITY
+	ABL 
+	Arrowbear Lake FD 
+	Arrowbear Lake
+	ABR 
+	Auburn VFD 
+	Auburn
+	ACF 
+	Alameda County FD 
+	Dublin
+	ACP 
+	Alpine FPD 
+	Alpine
+	ACY 
+	American Canyon FPD 
+	American Canyon
+	ADI 
+	Adin FPD 
+	Adin
+	ADP 
+	Alderpoint VFD 
+	Alderpoint
+	ADR 
+	FWS, Antioch Dunes NWR 
+	Antioch
+	AEU 
+	CDF Amador-El Dorado 
+	Camino
+	AFD 
+	Anderson FPD 
+	Anderson
+	AFP 
+	Alta FPD 
+	Alta
+	AGL 
+	Angels Camp FD 
+	Angels Camp
+	AIR 
+	Alturas Indian Rancheria Tribal FS 
+	Alturas
+	ALA 
+	City of Alameda FD 
+	Alameda
+	ALB 
+	Albany FD 
+	Albany
+	ALF 
+	Alturas Rural FPD 
+	Alturas
+	ALH 
+	Alhambra FD 
+	Alhambra
+	ALP 
+	Alpine CFD 
+	Camino
+	ALR 
+	Albion-Little River FPD 
+	Albion
+	ALT 
+	Altaville-Melones FPD 
+	Altaville
+	ALV 
+	Alturas City FD 
+	Alturas
+	AMC 
+	Amador FPD 
+	Jackson
+	ANA 
+	Anaheim Fire & Rescue 
+	Anaheim
+	AND 
+	San Andreas FPD 
+	San Andreas
+	ANF 
+	USFS Angeles NF 
+	Arcadia
+	ANG 
+	Air National Guard FD 
+	Fresno
+	ANT 
+	Antelope Valley FPD 
+	Coleville
+	APP 
+	Apple Valley FPD 
+	Apple Valley
+	ARB 
+	Arbuckle-College City FPD 
+	Arbuckle
+	ARC 
+	Arcadia FD 
+	Arcadia
+	ARF 
+	Arcata FPD 
+	McKinleyville
+	ART 
+	Artois FPD 
+	Artois
+	ASC 
+	Alpine Meadows FPD 
+	Tahoe City
+	ASP 
+	Aspendell Fire Company 
+	Bishop
+	ATA 
+	Atascadero City FD 
+	Atascadero
+	ATC 
+	Aromas Tri-County FPD 
+	Monterey
+	ATS 
+	Atascadero State Hospital FD 
+	Atascadero
+	ATW 
+	Atwater FD 
+	Atwater
+	AUB 
+	Auberry VFD 
+	Auberry
+	AVA 
+	Avalon FD 
+	Avalon
+	AVI 
+	Avila Beach FPD 
+	Avila Beach
+	AVP 
+	CDCR - Avenal State Prison FD 
+	Sacramento
+	AVY 
+	Anderson Valley CSD FD 
+	Boonville
+	AZ-RMY 
+	Rural-Metro FD 
+	Yuma
+	AZ-YCS 
+	Yuma Marine Corps Air Station FD 
+	Mcas -yuma
+	AZ-YMA 
+	Yuma FD 
+	Yuma
+	BAR 
+	Barstow FPD 
+	Barstow
+	BAY 
+	Bayliss FPD 
+	Glenn
+	BBB 
+	Barona Band of Mission Indians FD 
+	Lakeside
+	BCL 
+	Briceland VFD 
+	Redway
+	BCR 
+	Big Creek VFD 
+	Big Creek
+	BCS 
+	Brooktrails CSD FD 
+	Willits
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+BDB 
+	Bodega Bay FPD 
+	Bodega Bay
+	BDC 
+	San Bernardino County FD 
+	San Bernardino
+	BDF 
+	USFS San Bernardino NF 
+	San Bernardino
+	BDU 
+	CDF San Bernardino 
+	San Bernardino
+	BDY 
+	Mt. Baldy FD 
+	Mt. Baldy
+	BEC 
+	Beckwourth Fire District 
+	Beckwourth
+	BEC 
+	Ben Lomond FPD 
+	Ben Lomond
+	BEQ 
+	Beale AFB FD 
+	Beale AFB
+	BER 
+	Berkeley Fire Department 
+	Berkeley
+	BEU 
+	CDF San Benito-Monterey 
+	Monterey
+	BFA 
+	Big Bear FA 
+	Big Bear Lake
+	BFS 
+	San Mateo Consolidated FD 
+	Foster City
+	BGO 
+	Borrego Springs FPD 
+	Borrego Springs
+	BGP 
+	Big Pine FPD 
+	Big Pine
+	BGV 
+	Big Valley FPD 
+	Bieber
+	BHL 
+	Beverly Hills FD 
+	Beverly Hills
+	BIG 
+	Biggs FD 
+	Oroville
+	BIV 
+	Bear Valley-Indian Valley FD 
+	Stonyford
+	BKF 
+	Bakersfield FD 
+	Bakersfield
+	BKL 
+	Bucks Lake Fire Department 
+	Meadow Valley
+	BKS 
+	Warner Brothers FD 
+	Burbank
+	BLD 
+	Bald Mountain VFD 
+	Auberry
+	BLR 
+	FWS, Blue Ridge NWR 
+	Springville
+	BLU 
+	Blue Lake FPD 
+	Blue Lake
+	BLY 
+	Blythe FD 
+	Blythe
+	BMT 
+	Beaumont FD RRU 
+	Perris
+	BNC 
+	Benicia FD 
+	Benicia
+	BNP 
+	NPS Lava Beds NM 
+	Tulelake
+	BOB 
+	Camp Roberts Fire Department 
+	Camp Roberts
+	BOD 
+	Bodega VFD 
+	Bodega
+	BOH 
+	Bohemian Grove FD 
+	Monte Rio
+	BOL 
+	Bolinas FPD 
+	Bolinas
+	BON 
+	Bonita-Sunnyside FPD 
+	Bonita
+	BOU 
+	Boulder Creek FPD 
+	Boulder Creek
+	BPC 
+	British Petroleum Carson FD 
+	Carson
+	BRB 
+	Burbank Paradise FPD 
+	Modesto
+	BRE 
+	City of Brea FD 
+	Brea
+	BRG 
+	Fort Bragg FP 
+	Fort Bragg
+	BRI 
+	Bridgeport FPD 
+	Bridgeport
+	BRK 
+	Burbank FD 
+	Burbank
+	BRN 
+	Branciforte FPD 
+	Santa Cruz
+	BRR 
+	FWS, Bitter Creek NWR 
+	Maricopa
+	BRV 
+	Bear Valley FD 
+	Bear Valley
+	BRW 
+	Brawley FD 
+	Brawley
+	BSF 
+	Big Sur Volunteer Fire Brigade 
+	Big Sur
+	BSH 
+	Bishop FD 
+	Bishop
+	BSR 
+	FWS, Butte Sink WMA 
+	Colusa
+	BTC 
+	Butte County FD 
+	Oroville
+	BTE 
+	Butte Valley FPD 
+	MacDoel
+	BTU 
+	CDF Butte 
+	Oroville
+	BUF 
+	Burney FPD 
+	Burney
+	BUV 
+	Buena Vista Fire Department 
+	Ione
+	CAC 
+	California City FD 
+	Bishop
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+CAL 
+	Calistoga FD 
+	California City
+	CAM 
+	Cameron Park FD 
+	Calistoga
+	CAN 
+	Canby Volunteer Fire Department 
+	Cameron Park
+	CAR 
+	Carlotta CSD 
+	Carlotta
+	CAZ 
+	Cazadero Community Services Dist. 
+	Cazadero
+	CBD 
+	Carlsbad FD 
+	Carlsbad
+	CBF 
+	Clarksburg FPD 
+	Clarksburg
+	CBI 
+	Cahuilla Band of Indians FD 
+	Anza
+	CBK 
+	Campo Reservation FPD 
+	Campo
+	CCA 
+	BIA Central California Agency 
+	Sacramento
+	CCC 
+	California Conservation Corps 
+	Sacramento
+	CCD 
+	Columbia College FD Station 79 
+	Sonora
+	CCE 
+	East Contra Costa FPD 
+	Brentwood
+	CCF 
+	Central Calaveras FRPD 
+	Mokelumne Hill
+	CCI 
+	CDCR - California Correctional Inst. 
+	Sacramento
+	CCL 
+	Salmon River VFR 
+	Forks Of The 
+Salmon
+	CCN 
+	Calaveras Consolidated FA 
+	Valley Springs
+	CCO 
+	CDCR - California Correctional Center Fire
+	Sacramento
+	CCP 
+	CDCR - Corcoran State Prison 
+	Sacramento
+	CCV 
+	Coffee Creek VFC 
+	Trinity Center
+	CDC 
+	CDCR - OCS Headquarters 
+	Sacramento
+	CDD 
+	BLM, California Desert District 
+	Moreno Valley
+	CDR 
+	Cathedral City FD 
+	Cathedral City
+	CDV 
+	Cedarville FPD 
+	Cedarville
+	CEN 
+	Central County FD 
+	Burlingame
+	CEP 
+	CDCR - Centinela State Prison 
+	Sacramento
+	CES 
+	City of Ceres Fire Department 
+	Ceres
+	CFA 
+	CDF Fire Academy 
+	Ione
+	CFC 
+	Cachagua FPD 
+	Carmel Valley
+	CFD 
+	Cordelia FPD 
+	Fairfield
+	CFR 
+	Coast Side FPD 
+	Felton
+	CFS 
+	San Mateo County Fire Department 
+	Felton
+	CFX 
+	Colfax FD 
+	Colfax
+	CGT 
+	US Coast Guard FD Two Rock 
+	Petaluma
+	CGV 
+	Collegeville FPD 
+	Stockton
+	CHE 
+	Chester FD-PUD 
+	Chester
+	CHF 
+	Carmel Highlands FPD 
+	Monterey
+	CHI 
+	City of Chico FD 
+	Chico
+	CHO 
+	Chino Valley Independent FD 
+	Chino Hills
+	CHP 
+	California Highway Patrol 
+	Sacramento
+	CHU 
+	Santa Ynez Band of Chumash Indians FD
+	Santa Ynez
+	CHV 
+	Chula Vista FD 
+	Chula Vista
+	CHW 
+	Chowchilla VFD 
+	Chowchilla
+	CIM 
+	CDCR - California Institution for Men 
+	Sacramento
+	CIW 
+	CDCR - California Institution for 
+	Sacramento
+	CLB 
+	Columbia FPD 
+	Columbia
+	CLC 
+	Clear Creek CSD FD 
+	Clear Creek
+	CLD 
+	Cloverdale FPD 
+	Cloverdale
+	CLE 
+	Clements Rural FPD 
+	Clements
+	CLF 
+	Courtland FPD 
+	Courtland
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+CLG 
+	Coalinga FD 
+	Coalinga
+	CLM 
+	Colma FPD 
+	Colma
+	CLP 
+	CDCR - Calipatria State Prison 
+	Sacramento
+	CLR 
+	FWS, Clear Lake NWR 
+	Tulelake
+	CLS 
+	Colusa FD 
+	Colusa
+	CLV 
+	Clovis Fire Department 
+	Clovis
+	CLX 
+	Calexico FD 
+	Calexico
+	CMB 
+	Cambria CSD FD 
+	Cambria
+	CMC 
+	CDCR - California Men’s Colony 
+	Sacramento
+	CMD 
+	Central Marin Fire Authority 
+	Corte Madera
+	CMF 
+	CDCR - California Medical Facility 
+	Sacramento
+	CMP 
+	City of Compton Fire Department 
+	Compton
+	CMR 
+	FWS, Coleman National Fish 
+	Anderson
+	CMS 
+	City of Calimesa FD 
+	Calimesa
+	CMT 
+	Comptche CSD VFD 
+	Comptche
+	CMV 
+	Maple Creek VFC 
+	Korbel
+	CNA 
+	California National Guard 
+	Sacramento
+	CND 
+	BLM Central California District 
+	Bakersfield
+	CNF 
+	USFS Cleveland NF 
+	Rancho Bernardo
+	CNG 
+	Corning VFD 
+	Corning
+	CNH 
+	C & H Sugar Company FD 
+	Crockett
+	CNP 
+	NPS Channel Islands NP 
+	Ventura
+	CNR 
+	CDF CA No. Region Command 
+	Redding
+	CNT 
+	Santa Clara County FD 
+	Los Gatos
+	COA 
+	Coachella FPD RRU 
+	Perris
+	COC 
+	Copco Lake FPD 
+	Montague
+	COL 
+	Colton FD 
+	Colton
+	CON 
+	Contra Costa County FPD 
+	Concord
+	COP 
+	Copperopolis FPD 
+	Copperopolis
+	COR 
+	Corona FD 
+	Corona
+	COS 
+	Costa Mesa FD 
+	Costa Mesa
+	COT 
+	Cottonwood FPD 
+	Cottonwood
+	CPD 
+	Castella FPD 
+	Castella
+	CPR 
+	Conoco-Phillips Refinery 
+	Rodeo
+	CPT 
+	Calipatria FD 
+	Calipatria
+	CPV 
+	California Pines FD 
+	Alturas
+	CPY 
+	Capay FPD 
+	Brooks
+	CRC 
+	CDCR - California Rehabilitation Ctr 
+	Sacramento
+	CRD 
+	Coronado FD 
+	Coronado
+	CRK 
+	Crockett-Carquinez FPD 
+	Crockett
+	CRM 
+	Crescent Mills FPD 
+	Crescent Mills
+	CRP 
+	Carpinteria-Summerland FPD 
+	Carpinteria
+	CRR 
+	FWS, Castle Rock NWR 
+	Crescent City
+	CRS 
+	Crescent City VFD 
+	Crescent City
+	CRT 
+	Crescent FPD 
+	Crescent City
+	CRZ 
+	Santa Cruz County FD 
+	Felton
+	CSD 
+	C Road CSD 
+	Blairsden
+	CSM 
+	Cosumnes CSD 
+	Elk Grove
+	CSO 
+	BLM California State Office 
+	Sacramento
+	CSP 
+	California State Parks 
+	Sacramento
+	CSR 
+	CDF CA So Region Command 
+	Riverside
+	CSR1 
+	CDF CA So Region Admn 
+	Fresno
+	CTF 
+	CDCR - Correctional Training Facility 
+	Sacramento
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+CTL 
+	Central FPD 
+	Santa Cruz
+	CTN 
+	Camptonville VFD 
+	Camptonville
+	CUL 
+	Culver City FD 
+	Culver City
+	CUR 
+	FWS, Colusa NWR 
+	Colusa
+	CVL 
+	Covelo FPD 
+	Covelo
+	CVN 
+	Chevron Refinery FD 
+	El Segundo
+	CVP 
+	CDCR - Chuckawalla Valley State Prison
+	Sacramento
+	CVR 
+	FWS, Coachella Valley NWR 
+	Thousand Palms
+	CVV 
+	Chalfant Valley FD 
+	Chalfant Valley
+	CWF 
+	CDCR - Central CA Women’s Facility Sacramento
+	
+
+	CYN 
+	Canyon Lake FD 
+	Perris
+	CYP 
+	Cypress FPD 
+	Monterey
+	CZU 
+	CDF San Mateo-Santa Cruz 
+	Felton
+	DAG 
+	Daggett Fire Department 
+	Daggett
+	DAV 
+	Davis Creek FPD 
+	Davis Creek
+	DBR 
+	FWS, San Diego Bay NWR 
+	Chula Vista
+	DCB 
+	Dry Creek Rancheria FD 
+	Geyserville
+	DCR 
+	Dry Creek VFPD 
+	Roseville
+	DEN 
+	Denair FPD 
+	Denair
+	DIN 
+	Dinuba FD 
+	Dinuba
+	DIX 
+	Dixon Fire Department 
+	Dixon
+	DLA 
+	Defense Logistics Agency FD 
+	Stockton
+	DLR 
+	FWS, Delevan NWR 
+	Maxwell
+	DLT 
+	Delta FPD 
+	Rio Vista
+	DMR 
+	City of Del Mar Fire Department 
+	Del Mar
+	DNN 
+	Dunnigan FPD 
+	Dunnigan
+	DNY 
+	City of Downey Fire Department 
+	Downey
+	DOF 
+	Dobbins-Oregon House FPD 
+	Oregon House
+	DOR 
+	Dorris FD 
+	Dorris
+	DOS 
+	Dos Palos VFD 
+	Dos Palos
+	DOT 
+	California Department Of 
+	Sacramento
+	DOU 
+	Douglas City VFD 
+	Douglas City
+	DOW 
+	Dow Chemical Co. FD 
+	Pittsburg
+	DOY 
+	Doyle FPD 
+	Doyle
+	DPH 
+	California Department of Public 
+	Sacramento
+	DRV 
+	Downriver VFC 
+	Big Bar
+	DSF 
+	Deer Springs FD 
+	Escondido
+	DSH 
+	Desert Hot Springs FD RRU 
+	Perris
+	DSP 
+	Diamond Springs-El Dorado FPD 
+	Diamond Springs
+	DUN 
+	Dunsmuir Fire Department 
+	Dunsmuir
+	DUT 
+	Dutch Flat VFD 
+	Dutch Flat
+	DVF 
+	Furnace Creek VFD 
+	Death Valley
+	DVI 
+	CDCR - Deuel Vocational Institution 
+	Sacramento
+	DVP 
+	NPS Death Valley NP 
+	Death Valley
+	DVS 
+	Davis Fire Department 
+	Davis
+	DWN 
+	Downieville FPD 
+	Downieville
+	EAG 
+	Eagleville FPD 
+	Eagleville
+	EBB 
+	Ebbetts Pass FPD 
+	Arnold
+	EBY 
+	East Bay Regional Parks FD 
+	Castro Valley
+	ECF 
+	El Dorado County FPD 
+	Camino
+	ECN 
+	El Centro FD 
+	El Centro
+	ECR 
+	El Cerrito FD 
+	El Cerrito
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+EDF 
+	East Davis FPD 
+	Davis
+	EDH 
+	El Dorado Hills FD 
+	El Dorado Hills
+	EDI 
+	East Diablo FPD 
+	Brentwood
+	EFD 
+	Eastern Alpine Fire Department 
+	Woodfords
+	EGL 
+	Spalding VFD-Eagle Lake 
+	Susanville
+	EHF 
+	Elkhorn VFD 
+	West Sacramento
+	EKR 
+	FWS, Marin Island NWR 
+	San Rafael
+	EKV 
+	Elk Community Services District 
+	Elk
+	ELC 
+	El Cajon FD 
+	El Cajon
+	ELK 
+	Elk Creek FPD 
+	Elk Creek
+	ELS 
+	El Segundo FD 
+	El Segundo
+	EMD 
+	El Medio FPD 
+	Oroville
+	ENC 
+	City of Encinitas FD 
+	Encinitas
+	ENF 
+	USFS Eldorado National Forest 
+	Placerville
+	EPR 
+	Eastern Plumas Rural FPD 
+	Portola
+	ESC 
+	Escondido FD 
+	Escondido
+	ESL 
+	Escalon Consolidated FPD 
+	Escalon
+	ESP 
+	Esparto FPD 
+	Esparto
+	ESR 
+	FWS, Ellicott Slough NWR 
+	Watsonville
+	ETN 
+	Etna FD 
+	Etna
+	EVL 
+	Eastvale FD 
+	Perris
+	EXE 
+	Exeter FD 
+	Farmersville
+	EYO 
+	West Sacramento FD 
+	West Sacramento
+	FAL 
+	Fall River Mills FD 
+	Fall River Mills
+	FAR 
+	Farmington Rural FPD 
+	Farmington
+	FBR 
+	Fieldbrook FD 
+	Fieldbrook
+	FCO 
+	Fresno County FPD 
+	Sanger
+	FDA 
+	Fresno Airport FD 
+	Fresno
+	FDK 
+	Fort Dick FPD 
+	Fort Dick
+	FEL 
+	Felton FPD 
+	Felton
+	FEN 
+	Ferndale FPD 
+	Ferndale
+	FFD 
+	Navy Fire & Emergency Services 
+	San Diego
+	FFT 
+	233rd Fire Fighting Team CNA 
+	Roseville
+	FFV 
+	Federal FD 
+	Point Mugu
+	FHF 
+	Foresthill FPD 
+	Foresthill
+	FHL 
+	Fort Hunter Ligget FD 
+	Jolon
+	FIV 
+	Five Cities Fire Authority 
+	Arroyo Grande
+	FKU 
+	CDF Fresno-Kings 
+	Sanger
+	FLL 
+	Fallen Leaf FD 
+	South Lake Tahoe
+	FLM 
+	Fillmore Fire Department 
+	Fillmore
+	FLR 
+	FWS, Farallon NWR 
+	San Francisco
+	FLV 
+	Fruitland VFC 
+	Myers Flat
+	FMV 
+	Farmersville FD 
+	Farmersville
+	FOL 
+	City of Folsom FD 
+	Folsom
+	FOW 
+	Fowler FD 
+	Fowler
+	FPB 
+	Edwards AFB FPD 
+	Edwards AFB
+	FRB 
+	Firebaugh FD 
+	Firebaugh
+	FRC 
+	French Camp-McKinley Rural FPD 
+	French Camp
+	FRE 
+	Fremont FD 
+	Fremont
+	FRF 
+	Fairfield FD 
+	Fairfield
+	FRG 
+	Calaveras County FD 
+	San Andreas
+	FRN 
+	Fresno City FD 
+	Fresno
+	FRT 
+	Fortuna FPD 
+	Fortuna
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+FSP 
+	CDCR - Folsom State Prison 
+	Sacramento
+	FTB 
+	Fort Bidwell FD 
+	Fort Bidwell
+	FTJ 
+	Fort Jones FD 
+	Fort Jones
+	FTL 
+	Foothill FPD 
+	Brownsville
+	FUL 
+	Fullerton FD 
+	Fullerton
+	FVY 
+	Fountain Valley FD 
+	Fountain Valley
+	FWR 
+	FWS, Don Edwards San Francisco Bay NWR
+	Fremont
+	FWS 
+	Fish and Wildlife Service, California 
+	Sacramento
+	GAR 
+	Garberville FPD 
+	Garberville
+	GAS 
+	Gasquet FPD 
+	Gasquet
+	GAZ 
+	Gazelle FPD 
+	Gazelle
+	GCF 
+	Glenn-Codora FPD 
+	Glenn
+	GCS 
+	Groveland CSD FD 
+	Groveland
+	GEO 
+	Georgetown FPD 
+	Georgetown
+	GFD 
+	Gold Ridge FPD 
+	Sebastopol
+	GHC 
+	Greenhorn Creek FD 
+	Quincy
+	GIL 
+	City of Gilroy Fire Department 
+	Gilroy
+	GLC 
+	Butte City FD 
+	Butte City
+	GLE 
+	Glen Ellen FPD 
+	Glen Ellen
+	GLN 
+	City of Glendale FD 
+	Glendale
+	GND 
+	Grenada FPD 
+	Grenada
+	GNP 
+	NPS Golden Gate NRA 
+	Sausalito
+	GNR 
+	FWS, Guadalupe-Nipomo Dunes 
+	Santa Maria
+	GNZ 
+	Gonzales VFD 
+	Gonzales
+	GRA 
+	Graeagle FPD 
+	Graeagle
+	GRD 
+	Gridley FD 
+	Oroville
+	GRN 
+	Greenfield FPD 
+	Greenfield
+	GRR 
+	FWS, Grasslands WMA 
+	Los Banos
+	GRS 
+	Grass Valley FD 
+	Grass Valley
+	GRV 
+	Garden Valley FPD 
+	Garden Valley
+	GTN 
+	Graton FPD 
+	Graton
+	GUA 
+	City of Guadalupe FD 
+	Guadalupe
+	GUS 
+	Gustine VFD 
+	Gustine
+	GWR 
+	Greenwood Ridge FD 
+	Elk
+	HAM 
+	Hamilton City FPD 
+	Hamilton City
+	HAN 
+	Hanford FD 
+	Hanford
+	HAP 
+	Happy Camp FPD 
+	Happy Camp
+	HAY 
+	Hayward FD 
+	Hayward
+	HBA 
+	Burbank Glendale Pasadena Airport Authority Fire Dept
+	Burbank
+	HBF 
+	Hamilton Branch FPD 
+	Lake Almanor
+	HBR 
+	FWS, Humboldt Bay NWR 
+	Eureka
+	HBV 
+	Hawkins Bar VFD 
+	Salyer
+	HCF 
+	Hearst Castle FD 
+	San Simeon
+	HCS 
+	Hallwood CSD 10 
+	Marysville
+	HEA 
+	Healdsburg FD 
+	Healdsburg
+	HER 
+	Herald FPD 
+	Herald
+	HFR 
+	Hume Lake VFRC 
+	Hume Lake
+	HGF 
+	Higgins Area FP District 
+	Auburn
+	HGS 
+	Hughson FPD 
+	Hughson
+	HIA 
+	BIA Hoopa Valley Tribal FD 
+	Hoopa
+	HLT 
+	Holtville FD 
+	Holtville
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+HLV 
+	Huntington Lake VFD 
+	Fresno
+	HMM 
+	Hammond Ranch, County of Siskiyou 
+	Yreka
+	HMT 
+	Hemet FD 
+	Hemet
+	HOL 
+	Hollister FD 
+	Hollister
+	HOO 
+	Hoopa VFD 
+	Hoopa
+	HOP 
+	Hopland Fire Protection District 
+	Hopland
+	HOR 
+	Hornbrook, FPD 
+	Hornbrook
+	HPR 
+	FWS, Hopper Mountain NWR 
+	Fillmore
+	HRL 
+	Herlong VFD 
+	Herlong
+	HRT 
+	Heartland FR 
+	La Mesa
+	HTB 
+	Huntington Beach FD 
+	HuntingtonBeach
+	HTL 
+	Heartland Communications Facility Authority
+	El Cajon
+	HUM 
+	Humboldt Bay Fire JPA 
+	Eureka
+	HUU 
+	CDF Humboldt-Del Norte 
+	Fortuna
+	HVF 
+	Happy Valley FPD 
+	Anderson
+	HYF 
+	Hayfork FPD 
+	Hayfork
+	HYM 
+	Hyampom FD 
+	Hyampom
+	IDL 
+	Idyllwild FPD 
+	Idyllwild
+	IDP 
+	Independence FPD 
+	Independence
+	IMB 
+	City of Imperial Beach FD 
+	Imperial Beach
+	IMP 
+	Imperial County FD 
+	Heber
+	IMR 
+	Imperial FD 
+	Heber
+	IND 
+	Indio FD RRU 
+	Perris
+	INF 
+	USFS Inyo NF 
+	Bishop
+	INV 
+	Inverness PUD (IFD) 
+	Inverness
+	INW 
+	Indian Wells FD RRU 
+	Perris
+	ION 
+	Ione FD 
+	Ione
+	IRW 
+	Fort Irwin FD 
+	Fort Irwin
+	ISL 
+	Isleton FD 
+	Isleton
+	IVL 
+	Indian Valley Community Service 
+	Greenville
+	JCF 
+	Junction City FPD 
+	Junction City
+	JCK 
+	Jackson Valley FPD 
+	Ione
+	JKS 
+	Jackson Fire Department 
+	Jackson
+	JNV 
+	Janesville FPD 
+	Janesville
+	JPL 
+	Jet Propulsion Laboratory FD 
+	Pasadena
+	JST 
+	Jamestown FPD 
+	Jamestown
+	JTP 
+	NPS Joshua Tree NP 
+	Twentynine Palms
+	JUN 
+	June Lake FPD 
+	June Lake
+	KAN 
+	Kanawha FPD 
+	Willows
+	KCF 
+	Kings Co. FD 
+	Hanford
+	KEE 
+	Keeler FC 
+	Keeler
+	KEY 
+	Keyes FPD 
+	Keyes
+	KFD 
+	Kneeland FPD 
+	Kneeland
+	KIN 
+	King City FD 
+	King City
+	KJC 
+	KJC Operating Co. Emergency Response
+	Boron
+	KLA 
+	Klamath FPD 
+	Klamath
+	KLR 
+	Klamath River Fire Company 
+	Klamath River
+	KLS 
+	Kelseyville FPD 
+	Kelseyville
+	KMC 
+	American Chemical 
+	Trona
+	KNF 
+	USFS Klamath NF 
+	Yreka
+	KNG 
+	Kingsburg FD 
+	Kingsburg
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+KNI 
+	Knights Landing VFD 
+	Knights Landing
+	KNP 
+	NPS Sequoia-Kings Canyon NP 
+	Three Rivers
+	KNT 
+	Kentfield FPD 
+	Kentfield
+	KRK 
+	Kirkwood VFD 
+	Kirkwood
+	KRN 
+	Kern County FD 
+	Bakersfield
+	KRR 
+	FWS, Kern NWR 
+	Delano
+	KWD 
+	Kenwood Fire District 
+	Kenwood
+	LAB 
+	Laguna Beach FD 
+	Laguna Beach
+	LAC 
+	Los Angeles County FD 
+	Los Angeles
+	LAQ 
+	La Quinta Fire Department 
+	Perris
+	LAT 
+	Laton FPD 
+	Laton
+	LAV 
+	Lake Valley FPD 
+	South Lake Tahoe
+	LBN 
+	Los Banos FD 
+	Los Banos
+	LCC 
+	Lytle Creek Station 20 
+	San Bernardino
+	LCI 
+	Federal Correctional Complex, FD 
+	Lompoc
+	LEE 
+	Lee Vining VFD 
+	Lee Vining
+	LEG 
+	Leggett Valley FPD 
+	Leggett
+	LEM 
+	Lemoore VFD 
+	Lemoore
+	LEW 
+	Lewiston FD 
+	Lewiston
+	LFD 
+	Los Angeles FD 
+	Los Angeles
+	LFP 
+	Lockwood FPD 
+	Volcano
+	LFV 
+	Lake Forest FPD 
+	Susanville
+	LGR 
+	Local Government Resources
+	
+
+	LGV 
+	City of Lemon Grove 
+	Lemon Grove
+	LHH 
+	La Habra Heights FD 
+	La Habra Heights
+	LHM 
+	Lockheed Missile-Space FD 
+	Santa Cruz
+	LIB 
+	Liberty Rural County FPD 
+	Acampo
+	LIK 
+	Likely FPD 
+	Likely
+	LJR 
+	La Jolla Reservation Fire 
+	Pauma Valley
+	LKC 
+	Lake City FPD 
+	Lake City
+	LKP 
+	Lakeport FPD 
+	Lakeport
+	LKR 
+	FWS, Lower Klamath NWR 
+	Tulelake
+	LKS 
+	Lakeside FPD 
+	Lakeside
+	LMD 
+	Lathrop-Manteca FPD 
+	Lathrop
+	LMF 
+	Loomis FPD 
+	Loomis
+	LMP 
+	Lompoc FD 
+	Lompoc
+	LMS 
+	La Mesa FD 
+	La Mesa
+	LMU 
+	CDF Lassen-Modoc 
+	Susanville
+	LNA 
+	Linda FPD 
+	Marysville
+	LNC 
+	Lincoln FD 
+	Lincoln
+	LNF 
+	USFS Lassen NF 
+	Susanville
+	LNG 
+	Long Valley FPD 
+	Crowley Lake
+	LNP 
+	NPS Lassen Volcanic NP 
+	Mineral
+	LNS 
+	Lindsay FD 
+	Lindsay
+	LNU 
+	CDF Lake Napa-Sonoma 
+	Saint Helena
+	LOB 
+	Long Beach FD 
+	Long Beach
+	LOD 
+	Lodi FD 
+	Lodi
+	LOL 
+	Loleta FPD 
+	Loleta
+	LOM 
+	Loma Linda FD 
+	Loma Linda
+	LOO 
+	Lookout FPD 
+	Lookout
+	LOS 
+	Los Alamitos JFTB 
+	Los Alamitos
+	LOY 
+	Loyalton FD 
+	Loyalton
+	LPE 
+	Linden-Peters Rural FPD 
+	Linden
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+LPF 
+	USFS Los Padres NF 
+	Santa Barbara
+	LPN 
+	Lone Pine FPD 
+	Lone Pine
+	LPR 
+	La Porte FPD 
+	La Porte
+	LRB 
+	Loma Rica-Browns Valley CSD 
+	Marysville
+	LSH 
+	Lake County FPD 
+	Clearlake
+	LSN 
+	Lake Elsinore FD 
+	Perris
+	LST 
+	Lake Shastina CSD 
+	Weed
+	LTB 
+	Latrobe FPD 
+	Shingle Springs
+	LTL 
+	Little Lake FPD 
+	Willits
+	LUR 
+	FWS, San Luis NWR 
+	Los Banos
+	LVF 
+	Long Valley FPD 
+	Laytonville
+	LVG 
+	Livingston FD 
+	Atwater
+	LVL 
+	Long Valley FD 
+	Cromberg
+	LVN 
+	La Verne FD 
+	La Verne
+	LVV 
+	Little Valley CSD FD 
+	Little Valley
+	MAD 
+	Madeline FPD 
+	Madeline
+	MAF 
+	Sacramento Cty Dept. of Airport FD 
+	Sacramento
+	MAM 
+	Mammoth Lakes FPD 
+	Mammoth Lakes
+	MAN 
+	Manteca FD 
+	Manteca
+	MAQ 
+	March Air Reserve Base FD 
+	March Air Reserve
+	MAR 
+	Marina FD 
+	Marina
+	MAX 
+	Maxwell FPD 
+	Maxwell
+	MAY 
+	Marysville FD 
+	Marysville
+	MCA 
+	McArthur FPD 
+	Mc Arthur
+	MCB 
+	Marine Corps Logistics Base FD 
+	Barstow
+	MCC 
+	Mid-Coast Fire Brigade 
+	Carmel
+	MCF 
+	Monterey Co. Reg’l FPD 
+	Salinas
+	MCM 
+	Mountain Training Warfare Center USMC
+	Bridgeport
+	MCP 
+	Camp Pendleton Fire and Emergency Services
+	Camp Pendleton
+	MCR 
+	FWS, Merced NWR 
+	Merced
+	MCT 
+	Combat Center FD USMC 
+	Twenty-Nine 
+Palms
+	MCU 
+	McCloud FD 
+	McCloud
+	MDA 
+	Madera City FD 
+	Madera
+	MDC 
+	Madera County FD 
+	Madera
+	MDF 
+	USFS Modoc NF 
+	Alturas
+	MDN 
+	Meridian FPD 
+	Meridian
+	MDR 
+	FWS, Modoc NWR 
+	Alturas
+	MDS 
+	Madison FPD 
+	Madison
+	MDT 
+	South Lake County FPD 
+	Middletown
+	MEK 
+	Meeks Bay FPD 
+	Tahoma
+	MEN 
+	Mendota FD 
+	Sanger
+	MER 
+	Merced FD 
+	Merced
+	MEU 
+	CDF Mendocino 
+	Willits
+	MFE 
+	Menifee FD RRU 
+	Perris
+	MFR 
+	Mountain FR 
+	Mountain Ranch
+	MFW 
+	Mendocino Co. Fire Warden 
+	Willits
+	MGO 
+	Morongo Valley CSD 
+	Morongo Valley
+	MGR 
+	Mesa Grande Reservation FD 
+	Santa Ysabel
+	MHB 
+	Manhattan Beach FD 
+	Manhattan Beach
+	MIL 
+	Millbrae FD 
+	Millbrae
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+MIR 
+	Miranda CSD 
+	Miranda
+	MKE 
+	Mokelumne Rural FD 
+	Lockford
+	MLF 
+	Milford FPD 
+	Milford
+	MLP 
+	Milpitas FD 
+	Milpitas
+	MLV 
+	Mill Valley FD 
+	Mill Valley
+	MMU 
+	CDF Madera-Mariposa-Merced 
+	Mariposa
+	MND 
+	Mendocino FPD 
+	Mendocino
+	MNF 
+	USFS Mendocino NF 
+	Willows
+	MNL 
+	Menlo Park FPD 
+	Menlo Park
+	MNP 
+	NPS Mojave NP 
+	Barstow
+	MNT 
+	Monterey FD 
+	Monterey
+	MOE 
+	City of Moreno Valley 
+	Moreno Valley
+	MOK 
+	Mokelumne Hill FPD 
+	Mokelumne Hill
+	MON 
+	Mono City FPD 
+	Lee Vining
+	MOR 
+	Moraga-Orinda FPD 
+	Moraga
+	MOS 
+	Mid-Peninsula Regional Open Space District
+	Los Altos
+	MPA 
+	Mariposa County FD 
+	Mariposa
+	MPK 
+	Monterey Park FD 
+	Monterey Park
+	MQT 
+	Mosquito FPD 
+	Placerville
+	MRA 
+	Mountains Rec and Conservation Authority
+	Los Angeles
+	MRB 
+	Morro Bay FD 
+	Morro Bay
+	MRC 
+	Martinez Refining Company FD 
+	Martinez
+	MRD 
+	Merced County FD 
+	Atwater
+	MRF 
+	Morongo Indian Reservation FD 
+	Banning
+	MRG 
+	Morgan Hill City FD 
+	Morgan Hill
+	MRI 
+	Mariposa PUD FD 
+	Mariposa
+	MRN 
+	Marin County FD 
+	Woodacre
+	MRO 
+	Monte Rio FPD 
+	Monte Rio
+	MRP 
+	Murphys FPD 
+	Murphys
+	MRV 
+	Monrovia FD 
+	Monrovia
+	MRW 
+	Marinwood FD 
+	San Rafael
+	MSH 
+	Mount Shasta FPD 
+	Mt. Shasta
+	MSM 
+	MCAS Miramar FD 
+	San Diego
+	MST 
+	Modesto FD 
+	Modesto
+	MSV 
+	Mt. Shasta Vista 
+	Yreka
+	MTB 
+	Montebello FD 
+	Montebello
+	MTC 
+	Montclair FD 
+	Montclair
+	MTF 
+	Montague FPD 
+	Montague
+	MTG 
+	Montgomery Creek VFC 
+	Montgomery Creek
+	MTN 
+	Mayten Fire District 
+	Montague
+	MTO 
+	Montecito FPD 
+	Santa Barbara
+	MTR 
+	Mooretown Rancheria VFD 
+	Oroville
+	MTS 
+	Mt. Shasta FD 
+	Mt. Shasta
+	MTV 
+	Mountain View FD 
+	Mountain View
+	MTZ 
+	Montezuma FPD 
+	Rio Vista
+	MUI 
+	Muir Beach VFD 
+	Muir Beach
+	MUP 
+	CDCR - Mule Creek State Prison 
+	Sacramento
+	MUR 
+	Murrieta FPD 
+	Murrieta
+	MVF 
+	Meadow Valley FD 
+	Meadow Valley
+	MVL 
+	Millville FPD 
+	Millville
+	MVU 
+	CDF, San Diego Unit 
+	EL Cajon
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+MVW 
+	Mountain View FPD 
+	Crows Landing
+	MVY 
+	Mountain Valley FD 
+	Dunlap
+	MWD 
+	Marin Municipal Water District 
+	Corte Madera
+	MYR 
+	Myers Flat FPD 
+	Myers Flat
+	MZP 
+	NPS Manzanar NHS 
+	Independence
+	NAF 
+	Federal FD 
+	San Diego
+	NAG 
+	Northrop Grumman FD 
+	Palmdale
+	NAP 
+	Napa City FD 
+	Napa
+	NAT 
+	National City FD 
+	National City
+	NBF 
+	North Bay Fire 
+	Sebastopol
+	NBY 
+	Newberry Springs FD 
+	Newberry Springs
+	NCA 
+	BIA Northern California Agency 
+	Redding
+	NCC 
+	Nevada County Consolidated FD 
+	Nevada City
+	NCD 
+	North County FPD of Monterrey 
+	Castroville
+	NCF 
+	North County FPD 
+	Fallbrook
+	NCJ 
+	North Co. Dispatch JPA 
+	Rancho Sante Fe
+	NCL 
+	East Nicolaus Volunteer FD 
+	Yuba City
+	NCN 
+	North Central FPD 
+	Kerman
+	NCO 
+	Nevada County FD 
+	Auburn
+	NCY 
+	Northern California Youth Authority 
+	Stockton
+	NED 
+	Needles FD 
+	San Bernardino
+	NEU 
+	CDF, Nevada-Yuba-Placer 
+	Auburn
+	NEV 
+	Nevada City FD 
+	Nevada City
+	NEW 
+	Newcastle FPD 
+	Newcastle
+	NFA 
+	North County Fire Authority 
+	Daly City
+	NKP 
+	CDCR - North Kern State Prison 
+	Sacramento
+	NLE 
+	NAS Lemoore FD 
+	San Diego
+	NOD 
+	BLM Northern California District 
+	Susanville
+	NOR 
+	Norco FD 
+	Norco
+	NOV 
+	Novato FPD 
+	Novato
+	NPA 
+	Napa County FD 
+	Napa
+	NPB 
+	Newport Beach FD 
+	Newport Beach
+	NRS 
+	Northstar FD 
+	Truckee
+	NSC 
+	North Sonoma Coast FPD 
+	The Sea Ranch
+	NSD 
+	Northshore FPD 
+	Lucerne
+	NSH 
+	State Hospital - Napa 
+	Napa
+	NSJ 
+	North San Juan FPD 
+	North San Juan
+	NSP 
+	Newhall FPD 
+	Tulelake
+	NTF 
+	North Tahoe FPD 
+	Tahoe City
+	NV-AAUX 
+	Airport Authority of Washoe County 
+	Reno
+	NV-CARX 
+	Carlin VFD 
+	Carlin
+	NV-CCFX 
+	Carson City FD 
+	Carson City
+	NV-CLAX HEN
+	Henderson FD 
+	Henderson
+	NV-CLAX- LVS
+	Las Vegas FR 
+	Las Vegas
+	NV-CLCX 
+	Central Lyon County FPD 
+	Dayton
+	NV-CLRX 
+	Clark County FD 
+	Las Vegas
+	NV-ECFX 
+	Elko County Fire Protection District 
+	Elko
+	NV-EFKX 
+	East Fork FPD 
+	Minden
+	NV-ELKX 
+	Elko FD 
+	Elko
+	NV-FALX 
+	Fallon FD 
+	Fallon
+	NV-LYOX 
+	Fernley FD 
+	Fernley
+	NV-MINX 
+	Mineral FD 
+	Mineral
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+NV-NASX 
+	Naval Air Station Fallon 
+	San Diego
+	NV-NDFX 
+	Nevada Div Of Forestry 
+	Carson City
+	NV-NELX 
+	Nellis Air Force Base FD 
+	Las Vegas
+	NV-NLCX 
+	North Lyon County FPD 
+	Fernley
+	NV-NLTX 
+	North Lake Tahoe FPD 
+	Incline Village
+	NV-NLVX 
+	North Las Vegas FD 
+	North Las Vegas
+	NV-NTSX 
+	Nevada Test Site 
+	North Las Vegas
+	NV-PAHX 
+	Pahrump Valley FRS 
+	Pahrump
+	NV-PERX LOV
+	Lovelock FD 
+	Lovelock
+	NVR 
+	FWS, North Central Valley WMA 
+	Willows
+	NV-RNOX 
+	City of Reno FD 
+	Reno
+	NV-SFDX 
+	Sierra FPD 
+	Reno
+	NV-SPKX 
+	Sparks FD 
+	Sparks
+	NV-STOX 
+	Storey County Fire Protection District 
+	Virginia City
+	NV-TDOX 
+	Tahoe Douglas FPD 
+	Zephyr Cove
+	NV-TMFX 
+	Truckee Meadows Fire Protection 
+	Reno
+	NV-TOFX 
+	USFS Toiyabe-Humboldt NF 
+	Sparks
+	NVW 
+	Naval Weapons Station FD Seal 
+	Ely
+	NV-WHIX 
+	Ely FD
+	
+
+	NV-XYZ 
+	Future Nevada Fire Department 
+	Yerington
+	NWC 
+	NAWS China Lake FD 
+	San Diego
+	NWL 
+	Northwest Lassen FD 
+	McArthur
+	NWM 
+	Newman VFD 
+	Newman
+	OCD 
+	Occidental Fire - Community Svcs 
+	Occidental
+	OCF 
+	Orange Cove FPD 
+	Orange Cove
+	OCS 
+	Oceanside FD 
+	Oceanside
+	OES 
+	Gov’s Office of Emergency Services 
+	Mather
+	OIL 
+	Chevron FD 
+	Richmond
+	OKL 
+	City of Oakland FD 
+	Oakland
+	OLC 
+	Olancha-Cartago FD 
+	Olancha
+	OLI 
+	Olivehurst PUD 
+	Olivehurst
+	OLN 
+	Orleans VFD 
+	Orleans
+	OLV 
+	Olympic Valley Fire Department 
+	Olympic Valley
+	ONC 
+	N. CA Geographic Area Coord. Cntr 
+	Redding
+	OPH 
+	Ophir Hill FPD 
+	Cedar Ridge
+	ORC 
+	Orange County Fire Authority 
+	Irvine
+	ORD 
+	Ord Bend FPD 
+	Glenn
+	ORG 
+	Orange City FD 
+	Orange
+	ORK 
+	Orick CSD 
+	Orick
+	ORL 
+	Orland FPD 
+	Orland
+	ORN 
+	Orland Fire Department 
+	Orland
+	ORO 
+	Oroville FD 
+	Oroville
+	OSC 
+	S. CA Geographic Area Coord. Cntr 
+	Riverside
+	OTO 
+	City of Ontario FD 
+	Ontario
+	OXD 
+	Oxnard FD 
+	Oxnard
+	PAA 
+	BIA Pacific Regional Office 
+	Sacramento
+	PAF 
+	Palo Alto FD 
+	Palo Alto
+	PAJ 
+	Pajaro Valley Fire District 
+	Felton
+	PAL 
+	Pala FD-Pala Band of Mission Indians Pala
+	
+
+	PAR 
+	Parlier FD 
+	Sanger
+	PAS 
+	Pasadena FD 
+	Pasadena
+	PAT 
+	Patterson FD 
+	Patterson
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+PAY 
+	Capay Valley FPD 
+	Brooks
+	PBP 
+	CDCR - Pelican Bay State Prison 
+	Sacramento
+	PCF 
+	Placer County FD 
+	Auburn
+	PCP 
+	Peardale-Chicago Park FPD 
+	Chicago Park
+	PDF 
+	Painted Cave VFD 
+	Santa Barbara
+	PDS 
+	Palm Desert Fire RRU 
+	Perris
+	PEB 
+	Pebble Beach CSD 
+	Pebble Beach
+	PEF 
+	Plumas Eureka FD 
+	Blairsden
+	PER 
+	Perris FD RRU 
+	Perris
+	PET 
+	Petrolia FPD 
+	Petrolia
+	PFD 
+	Pechanga FD 
+	Temecula
+	PHF 
+	Placer Hills FPD 
+	Meadow Vista
+	PHL 
+	Phillipsville FPD 
+	Phillipsville
+	PIE 
+	City of Piedmont FD 
+	Piedmont
+	PIO 
+	Pioneer FPD 
+	Somerset
+	PIP 
+	NPS Pinnacles NM 
+	Paicines
+	PLA 
+	Placentia Fire Department 
+	Placentia
+	PLG 
+	Pleasant Grove FD 
+	Yuba City
+	PLN 
+	Air Force Plant 42-Pyramid Svc Inc 
+	Palmdale
+	PLR 
+	FWS, Pixley NWR 
+	Pixley
+	PLW 
+	Platina-Wildwood VFC 
+	Wildwood
+	PLY 
+	Plymouth FD 
+	Plymouth
+	PMA 
+	Monterey Peninsula Airport District 
+	Monterey
+	PMT 
+	Post Mountain VFD 
+	Hayfork
+	PNF 
+	USFS Plumas NF 
+	Quincy
+	PNS 
+	Peninsula FPD 
+	Lake Almanor
+	PNV 
+	Penn Valley FPD 
+	Penn Valley
+	POE 
+	Pinole FD 
+	Pinole
+	POM 
+	Presido Of Monterey FD 
+	Seaside
+	POR 
+	Portola FD 
+	Portola
+	POT 
+	Potter Valley CSD 
+	Potter Valley
+	POW 
+	Poway FD 
+	Poway
+	PRA 
+	Paradise FD 
+	Oroville
+	PRC 
+	Piercy FPD 
+	Piercy
+	PRD 
+	Paradise FPD 
+	Bishop
+	PRF 
+	City of Paso Robles Dept of 
+Emergency Services 
+	Paso Robles
+	PRG 
+	Pine Ridge VFD 
+	Shaver Lake
+	PRK 
+	DOD - Parks RFTA FES 
+	Dublin
+	PRN 
+	Princeton Volunteer FD 
+	Princeton
+	PRS 
+	Pliocene Ridge CSD 
+	Pike City
+	PRT 
+	Prattville-Almanor FD 
+	Chester
+	PSC 
+	San Mateo Co Public Safety Comm 
+	Redwood City
+	PSM 
+	Pismo Beach FD 
+	San Luis Obispo
+	PSP 
+	Palm Springs FD 
+	Palm Springs
+	PSS 
+	Unocal-Moly Corp 
+	Mountain Pass
+	PTA 
+	Redwood Coast VFD 
+	Point Arena
+	PTL 
+	Petaluma FD 
+	Petaluma
+	PVF 
+	Pleasant Valley Fire 
+	Yreka
+	PVL 
+	Porterville FD 
+	Porterville
+	PVP 
+	CDCR - Pleasant Valley State Prison 
+	Sacramento
+	PVT 
+	Reserved PRIVATE RESOURCES
+	
+
+	PYR 
+	Pauma Fire Department 
+	Pauma Valley
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+QUI 
+	Quincy FPD 
+	Quincy
+	R8R 
+	U.S. Fish and Wildlife Service (FWS), California
+	Sacramento
+	RAD 
+	Rancho Adobe FPD 
+	Penngrove
+	RAM 
+	Ramona FD 
+	Ramona
+	RAR 
+	Rough and Ready FPD 
+	Rough & Ready
+	RBC 
+	Ramona Band of Cahuilla FD 
+	Anza
+	RBU 
+	Red Bluff FD 
+	Red Bluff
+	RCF 
+	Rancho Cucamonga FPD 
+	Rancho 
+Cucamonga
+	RCR 
+	Rincon Reservation FD 
+	Valley Center
+	RCV 
+	Redcrest VFC 
+	Redcrest
+	RDB 
+	Redondo Beach FD 
+	Redondo Beach
+	RDN 
+	Redding FD 
+	Redding
+	RDO 
+	Rodeo-Hercules FPD 
+	Hercules
+	RDW 
+	Redway FPD 
+	Redway
+	RED 
+	Redlands FD 
+	Redlands
+	REE 
+	Reedley FD 
+	Reedley
+	RES 
+	Rescue FPD 
+	Rescue
+	RFA 
+	Modesto Regional FA 
+	Modesto
+	RFB 
+	Santa Ysabel Reservation FD 
+	Santa Ysabal
+	RIA 
+	Rialto FD 
+	Rialto
+	RID 
+	River Delta FPD 
+	Rio Vista
+	RIN 
+	Rincon Valley FPD 
+	Windsor
+	RIO 
+	Rio Dell FPD 
+	Rio Dell
+	RIP 
+	Ripon Consolidated Fire District 
+	Ripon
+	RIV 
+	City of Riverside FD 
+	Riverside
+	RJD 
+	CDCR - Richard J Donovan Corr’l Fac Sacramento
+	
+
+	RMD 
+	Richmond FD 
+	Richmond
+	RMG 
+	Rancho Mirage FD RRU 
+	Perris
+	RNP 
+	NPS Point Reyes National Seashore 
+	Point Reyes
+	ROH 
+	Rohnert Park DPS FD 
+	Rohnert Park
+	ROK 
+	City of Rocklin FD 
+	Rocklin
+	RRU 
+	CDF, Riverside County Fire Dept. 
+	Perris
+	RSF 
+	Rancho Santa Fe FPD 
+	Rancho Santa Fe
+	RSP 
+	Running Springs FD 
+	Running Springs
+	RSV 
+	Roseville City Fire Department 
+	Roseville
+	RVC 
+	Riverside County FD 
+	Perris
+	RVF 
+	Redwood Valley-Calpella FPD 
+	Redwood Valley
+	RVS 
+	Rio Vista FD 
+	Rio Vista
+	RVY 
+	Ross Valley FD 
+	San Anselmo
+	RWO 
+	Redwood City FD 
+	Redwood City
+	RWP 
+	NPS Redwood NP 
+	Crescent City
+	RYN 
+	Penryn Fire District 
+	Penryn
+	RYR 
+	Ryer Island FPD 
+	Rio Vista
+	SAC 
+	Sacramento Metropolitan Fire District 
+	Mather
+	SAD 
+	Sierra Army Depot Fire Department 
+	Herlong
+	SAM 
+	Samoa Peninsula FD 
+	Samoa
+	SAN 
+	Sanger FD 
+	Sanger
+	SAR 
+	Saratoga FPD 
+	Saratoga
+	SAV 
+	San Ardo VFC 
+	San Ardo
+	SBA 
+	Soboba Reservation Fire Department 
+	San Jacinto
+	SBC 
+	Santa Barbara County FD 
+	Santa Barbara
+	SBF 
+	Sutter Basin FPD 
+	Robbins
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+SBG 
+	Stones Bengard CSD 
+	Susanville
+	SBR 
+	San Bruno FD 
+	San Bruno
+	SBY 
+	South Bay FD 
+	San Luis Obispo
+	SCA 
+	BIA Southern California Agency 
+	Riverside
+	SCC 
+	South Santa Clara County FD 
+	Morgan Hill
+	SCD 
+	Solano County Sheriff’s Dept 
+	Fairfield
+	SCF 
+	South Coast FPD 
+	Gualala
+	SCH 
+	Schell-Vista FPD 
+	Sonoma
+	SCN 
+	Northern Sonoma County Fire Protection District
+	Geyserville
+	SCO 
+	Scotts Valley FPD 
+	Scotts Valley
+	SCP 
+	CDCR - Sierra Conservation Center 
+	Sacramento
+	SCR 
+	Sacramento FD 
+	Sacramento
+	SCT 
+	Scotia VFC 
+	Scotia
+	SCU 
+	CDF, Santa Clara 
+	Morgan Hill
+	SCV 
+	Salmon Creek VFC 
+	Miranda
+	SCY 
+	Sonoma County Fire District 
+	Windsor
+	SCZ 
+	Santa Cruz FD 
+	Santa Cruz
+	SDF 
+	San Diego County Fire Authority 
+	San Diego
+	SEA 
+	Seaside FD 
+	Seaside
+	SEB 
+	Sebastopol FD 
+	Sebastopol
+	SEI 
+	Seiad Valley FD 
+	Seiad Valley
+	SER 
+	Sierra County FPD 
+	Sierraville
+	SFP 
+	Smartsville FPD 
+	Smartville
+	SFR 
+	San Francisco FD 
+	San Francisco
+	SFS 
+	Santa Fe Springs FD 
+	Santa Fe Springs
+	SFW 
+	Stanislaus County Fire Warden 
+	Modesto
+	SGB 
+	San Gabriel FD 
+	San Gabriel
+	SGR 
+	FWS, Seal Beach NWR 
+	Seal Beach
+	SHA 
+	Shasta Fire Department 
+	Shasta
+	SHC 
+	Shasta College FD 
+	Redding
+	SHE 
+	Shelter Cove CSD 
+	Whitehorn
+	SHF 
+	USFS Shasta-Trinity NF 
+	Redding
+	SHL 
+	Shaver Lake VFD 
+	Shaver Lake
+	SHS 
+	Shasta County FD 
+	Redding
+	SHU 
+	CDF, Shasta-Trinity 
+	Redding
+	SIE 
+	Sierra Valley FPD 
+	Chilcoot
+	SIR 
+	FWS, Salinas River NWR 
+	Castroville
+	SIS 
+	Siskiyou County FD 
+	Yreka
+	SIT 
+	Sausalito FD 
+	Sausalito
+	SJB 
+	San Juan Bautista FD 
+	San Juan Bautista
+	SJC 
+	South San Joaquin County Fire 
+	Tracy
+	SJR 
+	FWS, San Joaquin River NWR 
+	Vernalis
+	SJS 
+	City of San Jose FD 
+	San Jose
+	SJT 
+	San Jacinto FD RRU 
+	Perris
+	SKR 
+	FWS, Stone Lakes NWR 
+	Elk Grove
+	SKU 
+	CDF, Siskiyou 
+	Yreka
+	SKY 
+	Skywalker Ranch Fire Brigade 
+	San Francisco
+	SLA 
+	Salida FPD 
+	Salida
+	SLC 
+	San Luis Obispo, County of DBA FD 
+	San Luis Obispo
+	SLD 
+	City of Soledad 
+	Soledad
+	SLF 
+	Shasta Lake FPD 
+	Shasta Lake
+	SLM 
+	Selma FD 
+	Selma
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+SLO 
+	San Luis Obispo FD 
+	San Luis Obispo
+	SLS 
+	Salinas FD 
+	Salinas
+	SLT 
+	South Lake Tahoe FD 
+	South Lake Tahoe
+	SLU 
+	CDF, San Luis Obispo 
+	San Luis Obispo
+	SLV 
+	Salyer VFD 
+	Salyer
+	SMA 
+	Santa Monica FD 
+	Santa Monica
+	SMC 
+	San Marcos FD 
+	San Marcos
+	SMD 
+	Sierra Madre FD 
+	Sierra Madre
+	SMF 
+	San Miguel FD 
+	San Miguel
+	SMG 
+	San Miguel Consolidated FPD 
+	Spring Valley
+	SMI 
+	San Manuel Band of Msn Indians FD 
+	Highland
+	SMM 
+	San Marcos Pass VFD 
+	Santa Barbara
+	SMP 
+	NPS Santa Monica Mtns NRA 
+	Thousand Oaks
+	SMR 
+	Santa Maria FD 
+	Santa Maria
+	SMT 
+	Smith River FPD 
+	Smith River
+	SMV 
+	Santa Margarita FPD 
+	Santa Margarita
+	SMY 
+	South Monterey County FPD 
+	Monterey
+	SNB 
+	Stinson Beach FPD 
+	Stinson Beach
+	SNC 
+	Santa Clara FD 
+	Santa Clara
+	SND 
+	San Diego FRD 
+	San Diego
+	SNF 
+	USFS Sierra NF 
+	Fresno
+	SNM 
+	San Marino FD 
+	San Marino
+	SNO 
+	San Onofre FD 
+	San Clemente
+	SNR 
+	San Rafael FD 
+	San Rafael
+	SNT 
+	Santee FD 
+	Santee
+	SNY 
+	City of Sunnyvale, Dept of Public 
+	Sunnyvale
+	SOF 
+	Sonora FD 
+	Sonora
+	SOL 
+	Solana Beach FD 
+	Encinitas
+	SOM 
+	Southern Marin FPD 
+	Sausalito
+	SON 
+	Sonoma Valley FRA 
+	Sonoma
+	SOR 
+	FWS, Sonny Bono Salton Sea NWR 
+	Calipatria
+	SOT 
+	South Trinity VFD 
+	Mad River
+	SPA 
+	Santa Paula FD 
+	Santa Paula
+	SPI 
+	San Pasqual Band of Mission 
+Indians FD 
+	Valley Center
+	SPK 
+	Spreckels VFD 
+	Spreckels
+	SPL 
+	South Placer FPD 
+	Granite Bay
+	SPR 
+	FWS, San Pablo Bay NWR 
+	Petaluma
+	SPS 
+	South Pasadena FD 
+	South Pasadena
+	SPV 
+	Spring Valley VFD 
+	Milpitas
+	SQF 
+	USFS Sequoia NF 
+	Porterville
+	SQP 
+	CDCR - San Quentin State Prison 
+	Sacramento
+	SRA 
+	Sierra City FPD 
+	Sierra City
+	SRC 
+	Sac. Reg’l Fire EMS Comm Center 
+	Sacramento
+	SRF 
+	USFS Six Rivers NF 
+	Eureka
+	SRM 
+	San Ramon Valley FPD 
+	San Ramon
+	SRR 
+	FWS, Sacramento River NWR 
+	Chico
+	SRS 
+	Santa Rosa FD 
+	Santa Rosa
+	SRV 
+	Sacramento River FPD 
+	Colusa
+	SSF 
+	South San Francisco FD 
+	South San 
+Francisco
+	SSL 
+	Stanislaus Consolidated FPD 
+	Riverbank
+	SSM 
+	Shingle Springs Band of Miwok 
+	Shingle Springs
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+SSN 
+	Susan River FPD 
+	Susanville
+	SSR 
+	Sonoma County FES 
+	Santa Rosa
+	STB 
+	Santa Barbara City FD 
+	Santa Barbara
+	STC 
+	Sutter County FD 
+	Yuba City
+	STF 
+	USFS Stanislaus NF 
+	Sonora
+	STH 
+	St. Helena FD 
+	St. Helena
+	STL 
+	Standish Litchfield FPD 
+	Standish
+	STO 
+	Stockton FD 
+	Stockton
+	STR 
+	FWS, Sutter NWR 
+	Sutter
+	STW 
+	Strawberry VFD 
+	Strawberry
+	SUC 
+	Suisun City FD 
+	Suisun City
+	SUI 
+	Suisun FPD 
+	Fairfield
+	SYC 
+	Sycuan FD 
+	El Cajon
+	SYR 
+	South Yreka FPD 
+	Yreka
+	TBR 
+	FWS, Tulare Basin WMA 
+	Delano
+	TCC 
+	Trinity Center CSD 
+	Trinity Center
+	TCR 
+	Tehama County FD 
+	Red Bluff
+	TCU 
+	CDF Tuolumne-Calaveras 
+	San Andreas
+	TEL 
+	Telegraph Ridge VFC 
+	Redway
+	TEM 
+	Templeton Fire and Emergency 
+	Templeton
+	TEN 
+	Tennant FD 
+	Tennant
+	TGU 
+	CDF, Tehama-Glenn 
+	Red Bluff
+	THC 
+	Tehachapi FD 
+	Tehachapi
+	THO 
+	Thornton FPD 
+	Thornton
+	TIA 
+	Tule River Indian Reservation FD 
+	Porterville
+	TIB 
+	Tiburon FPD 
+	Tiburon
+	TIM 
+	Timber Cove FPD 
+	Cazadero
+	TJR 
+	FWS, Tijuana Slough NWR 
+	Imperial Beach
+	TKR 
+	FWS, Tule Lake NWR 
+	Tulelake
+	TLC 
+	Tulare County FD 
+	Visalia
+	TLR 
+	Tulare FD 
+	Tulare
+	TLU 
+	Tuolumne County FD 
+	Sonora
+	TMC 
+	Temecula FD RRU 
+	Temecula
+	TMI 
+	Tuolumne Rancheria FD 
+	Tuolumne
+	TMU 
+	USFS Lake Tahoe Basin Mgmt Unit 
+	South Lake Tahoe
+	TNF 
+	USFS Tahoe NF 
+	Nevada City
+	TNR 
+	FWS, San Diego NWR 
+	Jamul
+	TNT 
+	Mil. Ocean Terminal Concord Motco FFD
+	Concord
+	TOM 
+	Tomales VFC 
+	Tomales
+	TOR 
+	Torrance FD 
+	Torrance
+	TRK 
+	Truckee FPD 
+	Truckee
+	TRL 
+	Turlock Rural FPD 
+	Turlock
+	TRN 
+	Trinidad VFD 
+	Trinidad
+	TRQ 
+	Travis Air Force Base 
+	Travis AFB
+	TSH 
+	Southern Inyo FPD 
+	Tecopa
+	TUL 
+	Tulelake Multi-County Fire District 
+	Tulelake
+	TUO 
+	Tuolumne FPD 
+	Tuolumne
+	TUR 
+	Turlock FD 
+	Turlock
+	TUU 
+	CDF Tulare 
+	Visalia
+	TWA 
+	Twain Harte Fire & Rescue 
+	Twain Harte
+	UCB 
+	UC Campus Fire Marshal 
+	Berkeley
+	UCD 
+	UC Davis FD 
+	Davis
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22
+UCI 
+	UC Irvine, Campus Fire Marshal 
+	Irvine
+	UCL 
+	UCLA Campus Fire Marshal 
+	Los Angeles
+	UCR 
+	UC Campus Fire Marshal 
+	Riverside
+	UCZ 
+	UC Santa Cruz FPS 
+	Santa Cruz
+	UKH 
+	Ukiah FD 
+	Ukiah
+	UKV 
+	Ukiah Valley Fire District 
+	Ukiah
+	UNU 
+	Union City FD 
+	San Leandro
+	USB 
+	UC Campus Fire Marshal 
+	Santa Barbara
+	USF 
+	USFS Pacific SW Reg’l Office 
+	Vallejo
+	UTC 
+	United Technology Corp 
+	San Jose
+	VAC 
+	City of Vacaville FD 
+	Vacaville
+	VAQ 
+	Vandenberg AFB FD 
+	Vandenberg AFB
+	VCF 
+	Valley Center FPD 
+	Valley Center
+	VCV 
+	Victorville FD 
+	Victorville
+	VEN 
+	Ventura FD 
+	Ventura
+	VFC 
+	Whale Gulch VFC 
+	Whitethorn
+	VJS 
+	Viejas Reservation FD 
+	Alpine
+	VLJ 
+	Vallejo FD 
+	Vallejo
+	VLO 
+	Valero Refinery Company FD 
+	Benicia
+	VNC 
+	Ventura County FD 
+	Camarillo
+	VSA 
+	City of Visalia FD 
+	Visalia
+	VTA 
+	City of Vista FD 
+	Vista
+	VVF 
+	Vacaville FPD 
+	Vacaville
+	WAC 
+	West Almanor CSD 
+	Chester
+	WAF 
+	Washington VFD 
+	Washington
+	WAL 
+	Walnut Grove FD 
+	Walnut Grove
+	WCR 
+	Willow Creek Volunteer Fire 
+	Willow Creek
+	WCV 
+	West Covina FD 
+	West Covina
+	WDL 
+	Woodland FD 
+	Woodland
+	WDR 
+	Wildomar FD RRU 
+	Perris
+	WEA 
+	Weaverville Fire Protection District 
+	Weaverville
+	WED 
+	Weed FD 
+	Weed
+	WEO 
+	Weott VFD 
+	Weott
+	WFA 
+	Wheatland Fire Authority 
+	Wheatland
+	WFD 
+	Winters FD 
+	Winters
+	WHT 
+	Whitehorn VFD 
+	Whitehorn
+	WIL 
+	Williams Fire Protection Authority 
+	Williams
+	WLA 
+	Woodland Avenue FPD 
+	Salida
+	WLF 
+	Woodlake FD 
+	Woodlake
+	WLL 
+	Willows FD 
+	Willows
+	WLO 
+	Willows Rural FPD 
+	Willows
+	WLR 
+	FWS, Willow Creek-Lurline WMA 
+	Willows
+	WLT 
+	Wilton FPD 
+	Wilton
+	WMG 
+	Mountain Gate Fire Protection District 
+	Redding
+	WML 
+	Westmorland FD 
+	Westmorland
+	WMR 
+	Waterloo-Morada FPD 
+	Stockton
+	WMT 
+	White Mountain FPD 
+	Benton
+	WNP 
+	NPS Whiskeytown NRA 
+	Whiskeytown
+	WOD 
+	Woodside FPD 
+	Woodside
+	WOF 
+	Willow Oak FPD 
+	Woodland
+	WOO 
+	Woodbridge FPD 
+	Woodbridge
+	WPF 
+	Westport FD 
+	Modesto
+	WPL 
+	West Plainfield FPD 
+	Davis
+	
+
+
+
+CALIFORNIA MACS IDS 02_10_22 
+WPT 
+	West Point FPD 
+	West Point
+	WPV 
+	Westport VFD 
+	Westport
+	WRP 
+	NPS Pacific West Region 
+	Oakland
+	WSF 
+	West Stanislaus County FPD 
+	Patterson
+	WSP 
+	CDCR - Wasco St Prison Reception 
+	Sacramento
+	WSR 
+	Warner Springs Ranch FD 
+	Warner Springs
+	WTS 
+	Watsonville FD 
+	Watsonville
+	WUK 
+	Mi-Wuk-Sugar Pine FPD 
+	Mi Wuk Village
+	WVF 
+	Westhaven VFD 
+	Trinidad
+	WWO 
+	Westwood FD 
+	Westwood
+	WWR 
+	Willow Ranch FPD 
+	New Pine Creek
+	YDF 
+	Yocha Dehe Fire Department 
+	Brooks
+	YER 
+	Yermo CSD 
+	Yermo
+	YIA 
+	Yurok Indian Agency 
+	Weitchpec
+	YNP 
+	NPS Yosemite NP 
+	Yosemite
+	YOL 
+	Yolo FPD 
+	Yolo
+	YRE 
+	Yreka VFD 
+	Yreka
+	YUB 
+	Yuba City FD 
+	Yuba City
+	YUC 
+	Yucaipa Fire Department 
+	Yucaipa
+	ZAM 
+	Zamora FPD 
+	Zamora
+	ZAY 
+	Zayante FPD 
+	Felton
+	ZUM 
+	Montezuma FPD 
+	Stockton
+	
+
+
+
+02_10_22

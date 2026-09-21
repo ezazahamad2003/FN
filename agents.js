@@ -27,13 +27,16 @@ INTERNAL FLOW
 - Builds create products as DRAFT in Shopify - nothing is customer-visible until an operator publishes it in Shopify admin. Re-running a build is additive and skips already-built products.
 - Product images: the build first tries to find the supplier's own flat-front photo of the exact blank garment (searching the customer's named vendor first); a vision check verifies garment, colour, no decoration, flat front. If nothing usable is found it generates a lookalike image instead - each product shows "supplier photo" or "generated lookalike" plus an "order this blank" source link when one exists.
 - Google Drive: needed only during builds. When connected, each department gets a Drive folder (Logos + Product Images) and the intake document is archived there. Submissions and the queue work fine without Drive.
-- Onboarding view (#/onboarding): the older policy-document-driven onboarding flow with a review gate before anything is pushed to Shopify.
+- Department Onboarding Agent (#/onboarding): builds a NEW department's private store to the FN Simple build spec. Phases: packet upload -> setup (department code looked up on the Department ID Agency List or proposed for approval, both Drive folders created, uniform policy reviewed, rep email drafted for Dan to send) -> build inputs (product rows, blank photos, embroidery proofs, validated live: SKUs previewed, decoration codes matched to the files in the Omni Printer folder, unknown colours proposed) -> build (2000x2000 front and back mockups per colour and Style, collection with a 3584x2048 banner and the Non-Stock Item Notice, Locksmith lock, every product as DRAFT with SKUs STYLE-SIZE-COLOR-CODE-DECORATIONS) -> report.
+- What that agent never does: touch production print files (it works on copies), invent a department code, colour code or placement, save a shared setting (Mega Menu, Shopify Flow, Helium Customer Fields) without Dan approving the exact change, or publish a product. Dan always keeps pricing, cost, Easify options, final review, setting products Active, and sending the store link.
+- Shared settings today: the app's Shopify token has no navigation scope, so the Mega Menu position is computed and handed to Dan as a checklist; Shopify Flow has no API (checklist); Helium Customer Fields has no write API, so the agent reads the public registration form, reports whether the department tag is present and exactly where it belongs alphabetically, and Dan edits all three forms. With LOCKSMITH_ACCESS_TOKEN set the collection lock is created through the Locksmith Admin API, otherwise the agent hands over the lock checklist.
+- Source-of-truth tables (#/onboarding/reference): department codes, colour codes, the blank library, and the standard text. New department and colour codes are proposals until Dan approves them; an unapproved code never reaches a SKU.
 - Departments view (#/departments): browse Shopify collections and edit products.
 
 CONNECTIONS AND OPERATIONS
 - /setup connects Shopify (OAuth) and Google Drive (OAuth; the Google app may show an "unverified app" warning - continue past it).
 - Runs on Azure Container Apps (app "fn-platform", resource group "FN", region westus3). Deploys: az acr build to registry fnacr0ded0e58, then az containerapp update with the new image tag.
-- AI runs on Azure OpenAI (chat + gpt-image-2 for images) with an OpenAI API fallback for supplier search.
+- Chat, transcription and speech run on Azure OpenAI; images (mockups, banners, blanks) run on direct OpenAI GPT-Image-2.5; supplier search uses the OpenAI Responses API.
 - Intake records live in Azure Blob Storage; legacy pre-migration records in Drive under "Customer Store Intakes" remain readable when Drive is connected.`;
 
 function agentHarness() {
@@ -45,7 +48,8 @@ function agentHarness() {
       "Report Shopify, Google Drive, GenAI, Storage, and Key Vault status.",
       "Summarize the New Stores queue: counts, statuses, and recent submissions.",
       "Summarize Shopify collection and product counts when Shopify is connected.",
-      "Explain how any part of the platform works and what to check or do next."
+      "Explain how any part of the platform works and what to check or do next.",
+      "Explain the department onboarding rules: SKU format, colour and decoration codes, folder and collection naming, what needs Dan's approval."
     ],
     cannotDoWithoutUserAction: [
       "Modify Shopify products or collections from the chat.",
@@ -66,7 +70,7 @@ function agentHarness() {
       { label: "Dashboard", route: "#/dashboard", surface: "company brain chat and platform status" },
       { label: "New Stores", route: "#/new-stores", surface: "customer intake queue, builds, and store pages" },
       { label: "Departments", route: "#/departments", surface: "Shopify collection browser and product editor" },
-      { label: "Onboarding Agent", route: "#/onboarding", surface: "review-gated new department onboarding" }
+      { label: "Onboarding Agent", route: "#/onboarding", surface: "department onboarding: code, Drive folders, policy review, mockups, collection, lock, draft products, report" }
     ]
   };
 }

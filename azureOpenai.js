@@ -180,7 +180,7 @@ async function reason({ messages, temperature = 0.2, maxTokens = 900, jsonObject
 async function openAIGenerateImage({ prompt, size = "1024x1024", quality = "medium" }) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const response = await openai.images.generate({
-    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare",
     size,
     quality,
     n: 1,
@@ -309,7 +309,7 @@ async function postImageEdit({ url, headers, model, cacheKey, images, prompt, si
 }
 
 async function openAIEditImage(options) {
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare";
   return postImageEdit({
     ...options,
     url: "https://api.openai.com/v1/images/edits",

@@ -232,6 +232,47 @@ async function uploadGeneratedImage(filename, buffer, folderId) {
   );
 }
 
+/*
+ * Export a NATIVE Google Doc/Sheet as text. files.get(alt=media) rejects native
+ * documents, so the Department Code List (a Google Doc) and any policy that
+ * arrives as a Doc must come through files.export. Tables export as one cell
+ * per line ("\n\t" between cells) — see referenceTables.docCells.
+ */
+async function exportFileText(fileId, mimeType = "text/plain") {
+  return withDrive(async (drive) => {
+    const res = await drive.files.export({ fileId, mimeType }, { responseType: "text" });
+    return typeof res.data === "string" ? res.data : String(res.data || "");
+  });
+}
+
+/*
+ * Download an uploaded (non-native) file's bytes: print-ready artwork from the
+ * Omni Printer folder, policy PDFs, logos. The agent only ever works on these
+ * copies — the source files are never modified.
+ */
+async function downloadFileBuffer(fileId) {
+  return withDrive(async (drive) => {
+    const meta = await drive.files.get({ fileId, fields: "id,name,mimeType,size,webViewLink,parents,modifiedTime" });
+    const res = await drive.files.get({ fileId, alt: "media" }, { responseType: "arraybuffer" });
+    return {
+      id: meta.data.id,
+      name: meta.data.name,
+      mimeType: meta.data.mimeType,
+      size: Number(meta.data.size || 0),
+      webViewLink: meta.data.webViewLink,
+      modifiedTime: meta.data.modifiedTime,
+      buffer: Buffer.from(res.data)
+    };
+  });
+}
+
+async function getFileMeta(fileId) {
+  return withDrive(async (drive) => {
+    const res = await drive.files.get({ fileId, fields: "id,name,mimeType,size,webViewLink,parents,createdTime,modifiedTime,trashed" });
+    return res.data;
+  });
+}
+
 async function uploadHtmlDocument(name, html, folderId) {
   return withDrive(async (drive) => {
     const res = await drive.files.create({
@@ -252,8 +293,11 @@ async function uploadHtmlDocument(name, html, folderId) {
 
 module.exports = {
   createDepartmentFolders,
+  downloadFileBuffer,
   ensureSubfolder,
+  exportFileText,
   findFolder,
+  getFileMeta,
   listFilesInFolder,
   readFileText,
   trashFile,
