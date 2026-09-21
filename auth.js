@@ -221,7 +221,13 @@ function shopifyScopes() {
     .split(",")
     .map((scope) => scope.trim())
     .filter(Boolean);
-  return scopes.includes("write_products") ? "write_products" : DEFAULT_ENV.SHOPIFY_SCOPES;
+  // Request every configured scope. Returning a subset here would SHRINK the
+  // grant on the next install, and Shopify applies a reduction without
+  // prompting anyone - the app just silently loses the access. write_products
+  // is the one the platform cannot run without, so it is added if the
+  // configured list forgets it.
+  if (!scopes.includes("write_products")) scopes.push("write_products");
+  return scopes.join(",");
 }
 
 function shopifyRedirectUri(origin) {
