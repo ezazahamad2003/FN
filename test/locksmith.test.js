@@ -29,7 +29,8 @@ function bishopLock() {
         lock_id: 101,
         resource_type: "custom_collection",
         resource_id: BISHOP_COLLECTION_ID,
-        resource_options: { _cache: 1, protect_products: true }
+        // Real locks carry {} here; an arbitrary key proves pass-through and stripping.
+        resource_options: { _cache: 1, theme_scope: "dawn" }
       }
     ],
     options: { hide_links_to_resource: true, hide_resource: true, hide_resource_from_sitemaps: false, manual: false, noindex: true, _theme: "dawn" },
@@ -49,7 +50,7 @@ function bishopLock() {
         lock_id: 101,
         options: { customer_autotag: "Bishop Fire Department", force_open: false, redirect_url: "", inverse: false },
         conditions: [
-          { id: 2, _id: "c2", key_id: 901, type: "secret_link", inverse: false, options: { secret_link: OLD_CODE, _compiled: `ls=${OLD_CODE}` } }
+          { id: 2, _id: "c2", key_id: 901, type: "secret_link", inverse: false, options: { secret_link_code: OLD_CODE, customer_remember: true, automatic_timeout: "", _compiled: `ls=${OLD_CODE}` } }
         ]
       }
     ]
@@ -65,7 +66,7 @@ function riponLock() {
   lock.resources[0].resource_id = 277777777001;
   lock.keys[0].conditions[0].options.customer_tag = "Ripon Fire Department";
   lock.keys[1].options.customer_autotag = "Ripon Fire Department";
-  lock.keys[1].conditions[0].options.secret_link = "riponCODE";
+  lock.keys[1].conditions[0].options.secret_link_code = "riponCODE";
   return lock;
 }
 
@@ -160,11 +161,11 @@ test("learnKeyTemplates picks the newest collection lock with both keys and stri
   const t = locksmith.learnKeyTemplates(allLocks());
   assert.equal(t.fromLockId, 101, "Bishop (2026-03) beats Ripon (2025-06); product and tag-only locks are skipped");
   assert.deepEqual(t.customerTag, { type: "customer_tag", inverse: false, options: { customer_tag: "Bishop Fire Department" } });
-  assert.deepEqual(t.secretLink, { type: "secret_link", inverse: false, options: { secret_link: OLD_CODE } });
+  assert.deepEqual(t.secretLink, { type: "secret_link", inverse: false, options: { secret_link_code: OLD_CODE, customer_remember: true, automatic_timeout: "" } });
   assert.deepEqual(t.keyOptions, { customer_autotag: "", force_open: false, redirect_url: "", inverse: false });
   assert.deepEqual(t.secretKeyOptions, { customer_autotag: "Bishop Fire Department", force_open: false, redirect_url: "", inverse: false });
   assert.deepEqual(t.lockOptions, { hide_links_to_resource: true, hide_resource: true, hide_resource_from_sitemaps: false, manual: false, noindex: true });
-  assert.deepEqual(t.resourceOptions, { protect_products: true });
+  assert.deepEqual(t.resourceOptions, { theme_scope: "dawn" });
   const json = JSON.stringify(t);
   assert.ok(!/"_/.test(json), "no underscore keys survive");
   assert.ok(!/"(id|key_id|lock_id)"/.test(json), "no ids survive");
@@ -199,14 +200,14 @@ test("buildCollectionLock from a learned template swaps the other department's c
   assert.equal(body.name, "1. Vacaville Fire Department");
   assert.equal(body.enabled, true);
   assert.equal(body.resource_type, "custom_collection");
-  assert.deepEqual(body.resources, [{ resource_type: "custom_collection", resource_id: 299999999001, resource_options: { protect_products: true } }]);
+  assert.deepEqual(body.resources, [{ resource_type: "custom_collection", resource_id: 299999999001, resource_options: { theme_scope: "dawn" } }]);
   // The spec's settings win over the template (Bishop had sitemaps unhidden).
   assert.deepEqual(body.options, { hide_links_to_resource: true, hide_resource: true, hide_resource_from_sitemaps: true, manual: false, noindex: true });
   assert.equal(body.keys.length, 2);
   const [tagKey, secretKey] = body.keys;
   assert.deepEqual(tagKey.conditions, [{ type: "customer_tag", inverse: false, options: { customer_tag: "Vacaville Fire Department" } }]);
   assert.deepEqual(tagKey.options, { customer_autotag: "", force_open: false, redirect_url: "", inverse: false });
-  assert.deepEqual(secretKey.conditions, [{ type: "secret_link", inverse: false, options: { secret_link: "NEWcode_ABCDEFGHIJKLMN" } }]);
+  assert.deepEqual(secretKey.conditions, [{ type: "secret_link", inverse: false, options: { secret_link_code: "NEWcode_ABCDEFGHIJKLMN", customer_remember: true, automatic_timeout: "" } }]);
   // Bishop's autotag would have tagged Vacaville members as Bishop.
   assert.equal(secretKey.options.customer_autotag, "Vacaville Fire Department");
   assert.ok(!JSON.stringify(body).includes(OLD_CODE), "the template's code never leaks");
@@ -233,7 +234,7 @@ test("buildCollectionLock without a template guesses the secret-link shape and f
   assert.equal(body._guessedSecretShape, true);
   assert.deepEqual(body.keys[1], {
     options: { customer_autotag: "", force_open: false, redirect_url: "", inverse: false },
-    conditions: [{ type: "secret_link", inverse: false, options: { secret_link: "abc" } }]
+    conditions: [{ type: "secret_link", inverse: false, options: { secret_link_code: "abc", customer_remember: true } }]
   });
   assert.deepEqual(body.keys[0].conditions[0].options, { customer_tag: "Vacaville Fire Department" });
   assert.deepEqual(body.options, locksmith.SPEC_LOCK_OPTIONS);
@@ -428,7 +429,7 @@ test("createCollectionLock with a template creates directly (no dry run) and ret
     assert.equal(result.templateLockId, 101);
     assert.match(result.secretCode, /^[A-Za-z0-9_-]{22}$/);
     assert.equal(result.secretLink, `https://fnsimple.com/collections/1-vacaville-fire-department?ls=${result.secretCode}`);
-    assert.equal(fetch.calls[1].body.keys[1].conditions[0].options.secret_link, result.secretCode);
+    assert.equal(fetch.calls[1].body.keys[1].conditions[0].options.secret_link_code, result.secretCode);
     assert.equal(fetch.calls[1].body.keys[0].conditions[0].options.customer_tag, "Vacaville Fire Department");
     assert.equal(fetch.calls[1].body._guessedSecretShape, undefined);
     assert.ok(logs.some((m) => /learned from lock 101/.test(m)));

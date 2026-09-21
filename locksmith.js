@@ -231,13 +231,20 @@ function stripPrivate(value) {
   return out;
 }
 
+/*
+ * The API returns a lock's own id and timestamps underscore-prefixed — _id,
+ * _created_at, _updated_at — because they are backend-generated and must not
+ * be sent back in a create body. Reading only the bare names found nothing on
+ * every real lock: ids came back null, so a created lock could not be re-read
+ * and verified, and "newest lock" sorting was a no-op.
+ */
 function lockTimestamp(lock) {
-  const t = Date.parse(lock && (lock.created_at || lock.updated_at || ""));
+  const t = Date.parse((lock && (lock._created_at || lock.created_at || lock._updated_at || lock.updated_at)) || "");
   return Number.isFinite(t) ? t : 0;
 }
 
 function lockNumericId(lock) {
-  const n = Number(lock && lock.id);
+  const n = Number(lock && (lock.id != null ? lock.id : lock._id));
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -380,7 +387,11 @@ function buildCollectionLock({ collectionLegacyId, collectionTitle, departmentTa
     if (typeof secretCondition.inverse !== "boolean") secretCondition.inverse = false;
   } else {
     guessed = true;
-    secretCondition = { type: "secret_link", inverse: false, options: { secret_link: code } };
+    /* Only reached when the store has no lock to learn from. The option key is
+       secret_link_code, not secret_link — read off the 85 real secret_link
+       conditions on this store, where the type name we had guessed turned out
+       to be right and the option key did not. */
+    secretCondition = { type: "secret_link", inverse: false, options: { secret_link_code: code, customer_remember: true } };
   }
   const secretKey = {
     options: { ...DEFAULT_KEY_OPTIONS, ...substituteOptions(t.secretKeyOptions || t.keyOptions, replacements) },
@@ -542,7 +553,9 @@ function inspectLock(lock, { departmentTag = "" } = {}) {
 }
 
 function lockId(lock) {
-  return lock && lock.id != null ? lock.id : null;
+  if (!lock) return null;
+  if (lock.id != null) return lock.id;
+  return lock._id != null ? lock._id : null;
 }
 
 /* ---------------------------------------------------------------------------
