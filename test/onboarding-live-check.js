@@ -167,7 +167,7 @@ async function main() {
 
   await check("Image model configured", async () => {
     if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
-    return `OPENAI_IMAGE_MODEL = ${process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare (default)"}`;
+    return `OPENAI_IMAGE_MODEL = ${process.env.OPENAI_IMAGE_MODEL || require("../azureOpenai").DEFAULT_IMAGE_MODEL + " (default)"}`;
   });
 
   const failed = results.filter((r) => r.state === "fail");

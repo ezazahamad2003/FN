@@ -1,5 +1,5 @@
 const { PDFParse } = require("pdf-parse");
-const { generateImage, reason } = require("./azureOpenai");
+const { generateImage, imageModel, reason } = require("./azureOpenai");
 
 // Provider-agnostic stand-in for the OpenAI SDK client this file used to build
 // directly.
@@ -97,7 +97,7 @@ function blankGarmentPrompt(productPrompt, garmentColor, brandStyle, spec, image
 async function renderGarment(prompt) {
   const openai = client();
   const response = await openai.images.generate({
-    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare",
+    model: imageModel(),
     size: "1024x1024",
     quality: "medium",
     n: 1,

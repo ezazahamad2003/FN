@@ -207,7 +207,7 @@ async function capabilities() {
     storage: Boolean(store().storeConfigured()),
     shopify: Boolean(shopCore().shopifyConnected()),
     drive: Boolean(auth().googleConnected()),
-    imageModel: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare",
+    imageModel: require("./azureOpenai").imageModel(),
     locksmith: { configured: Boolean(locksmith().configured()) },
     helium: { forms },
     megaMenu,

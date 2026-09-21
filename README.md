@@ -42,7 +42,7 @@ The dashboard voice agent records short browser mic turns, sends them to Azure O
 
 `AZURE_OPENAI_VOICE_DEPLOYMENT` still works as a legacy alias for the transcription deployment.
 
-Image generation AND the decorated-product edit renderer run on **direct OpenAI** (`OPENAI_API_KEY`, model `OPENAI_IMAGE_MODEL`, default `gpt-image-2.5-flare`; `gpt-image-2.5-sunburst` is the slower, more precise edit model). There is deliberately no Azure image path any more: production always ran on the OpenAI fallback (the Azure image env vars were never set on the Container App), so the Azure-first code was removed on 2026-09-01 instead of being kept as an untraveled branch. Chat, transcription, and speech stay on Azure.
+Image generation AND the decorated-product edit renderer run on **direct OpenAI** (`OPENAI_API_KEY`, model `OPENAI_IMAGE_MODEL`, default `gpt-image-2.5-sunburst`, measured against `-flare` on 2026-09-21: same generation speed, ~38% slower edits, and more faithful on both — it renders a trucker cap's mesh back as mesh and keeps a crest's rings concentric). There is deliberately no Azure image path any more: production always ran on the OpenAI fallback (the Azure image env vars were never set on the Container App), so the Azure-first code was removed on 2026-09-01 instead of being kept as an untraveled branch. Chat, transcription, and speech stay on Azure.
 
 `OPENAI_API_KEY` is therefore required: images, the supplier blank web search (no Azure equivalent), and the chat-reasoning fallback.
 

@@ -1,6 +1,24 @@
 const fetch = require("node-fetch");
 const OpenAI = require("openai");
 
+/*
+ * The image model, in one place. It used to be spelled out at four call sites,
+ * which is one missed edit away from generating blanks on one model and
+ * compositing logos onto them with another.
+ *
+ * sunburst over flare, measured rather than assumed (2026-09-21, direct
+ * OpenAI): on a Richardson 112 it renders the contrasting mesh back as actual
+ * mesh where flare renders it flat, and on a 2000x2000 composite it keeps the
+ * crest's rings concentric where flare skews them into the lettering.
+ * Generation costs the same; edits run ~38% slower (42s vs 30s), which is
+ * noise against a five-minute build and worth it for §5 accuracy.
+ */
+const DEFAULT_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+
+function imageModel() {
+  return String(process.env.OPENAI_IMAGE_MODEL || "").trim() || DEFAULT_IMAGE_MODEL;
+}
+
 function cleanEndpoint(value) {
   return String(value || "").replace(/\/+$/, "");
 }
@@ -180,7 +198,7 @@ async function reason({ messages, temperature = 0.2, maxTokens = 900, jsonObject
 async function openAIGenerateImage({ prompt, size = "1024x1024", quality = "medium" }) {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const response = await openai.images.generate({
-    model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare",
+    model: imageModel(),
     size,
     quality,
     n: 1,
@@ -309,7 +327,7 @@ async function postImageEdit({ url, headers, model, cacheKey, images, prompt, si
 }
 
 async function openAIEditImage(options) {
-  const model = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2.5-flare";
+  const model = imageModel();
   return postImageEdit({
     ...options,
     url: "https://api.openai.com/v1/images/edits",
@@ -397,6 +415,8 @@ async function azureTextToSpeech({ text, voice, speed = 1.04, format = "mp3" }) 
 }
 
 module.exports = {
+  DEFAULT_IMAGE_MODEL,
+  imageModel,
   editImage,
   azureTextToSpeech,
   azureTranscribeAudio,

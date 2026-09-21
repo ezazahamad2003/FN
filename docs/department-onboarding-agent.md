@@ -44,7 +44,7 @@ only for reading messy policies, drafting the rep email, and rendering mockups.
   print files `CODE-F01.png`.
 - `Department-ID-Agency-List` Google Doc id `1XVhmHvuhI-MdimOO4uSn2W303GMBW5p3CyDixhP3reo`
   (California MACS ids; exported as text/plain it is one table cell per line).
-- OpenAI images: newest model `gpt-image-2.5-flare` (also `-sunburst`);
+- OpenAI images: `gpt-image-2.5-sunburst` (default; `-flare` is the faster, less faithful sibling);
   custom sizes WIDTHxHEIGHT, multiples of 16, 655,360–8,294,400 px, so
   2000×2000 and 3584×2048 are valid requests. Quality low/medium/high/xhigh/max/auto.
 
@@ -228,7 +228,7 @@ DEPARTMENT_CODE_LIST_DOC_ID=1XVhmHvuhI-MdimOO4uSn2W303GMBW5p3CyDixhP3reo
 LOCKSMITH_ACCESS_TOKEN=            # from Locksmith settings → access tokens (optional; checklist when unset)
 HELIUM_FORMS=K7tlqn:Registration   # comma list of formId:Label; forms whose JSON is public are verified
 SHOPIFY_STOREFRONT_DOMAIN=fnsimple.com
-OPENAI_IMAGE_MODEL=gpt-image-2.5-flare
+OPENAI_IMAGE_MODEL=gpt-image-2.5-sunburst
 ONBOARDING_MOCKUP_SIZE=2000
 ONBOARDING_MOCKUP_VERIFY=on
 ```
