@@ -237,7 +237,13 @@ test("summarize: the list-view shape with counts", () => {
   record.packet.files = [{ assetId: "a" }, { assetId: "b" }];
   record.products = [{ mockups: [{}, {}] }, { mockups: [{}] }, {}];
   record.collection.url = "https://admin.shopify.com/c/1";
-  record.build = { ...record.build, state: "complete", finishedAt: "2026-09-21T00:30:00.000Z" };
+  record.build = {
+    ...record.build,
+    state: "complete",
+    startedAt: "2026-09-21T00:20:00.000Z",
+    finishedAt: "2026-09-21T00:30:00.000Z",
+    steps: [{ state: "complete" }, { state: "complete" }, { state: "failed" }]
+  };
   record.report.generatedAt = "2026-09-21T00:31:00.000Z";
   assert.deepEqual(store.summarize(record), {
     id: record.id,
@@ -249,7 +255,16 @@ test("summarize: the list-view shape with counts", () => {
     department: { name: NAME, tag: NAME, code: { value: "VAC", approved: true, source: "list" } },
     counts: { products: 3, mockups: 3, packetFiles: 2 },
     collection: { title: `1. ${NAME}`, url: "https://admin.shopify.com/c/1" },
-    build: { state: "complete", finishedAt: "2026-09-21T00:30:00.000Z", error: null },
+    // The summary carries step COUNTS, not the step array: the queue card
+    // draws its progress bar from them without downloading every record.
+    build: {
+      state: "complete",
+      startedAt: "2026-09-21T00:20:00.000Z",
+      finishedAt: "2026-09-21T00:30:00.000Z",
+      error: null,
+      stepsDone: 2,
+      stepsTotal: 3
+    },
     report: { generatedAt: "2026-09-21T00:31:00.000Z" }
   });
   assert.deepEqual(store.summarize(null).counts, { products: 0, mockups: 0, packetFiles: 0 });

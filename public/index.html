@@ -178,7 +178,11 @@
 
         <!-- ═════════════════ View: Department Onboarding Agent ═════════════════ -->
         <section class="view" id="viewOnboarding" hidden>
-          <div id="onboardingBody" class="onboarding-root" aria-live="polite"></div>
+          <div id="onboardingBody" class="onboarding-root"></div>
+          <!-- One small status region for the onboarding view. The whole
+               container used to be aria-live, so every five-second build poll
+               re-announced the entire page. -->
+          <p class="sr-only" id="onboardingStatus" role="status" aria-live="polite" aria-atomic="true"></p>
         </section><!-- /viewOnboarding -->
       </main>
     </div>

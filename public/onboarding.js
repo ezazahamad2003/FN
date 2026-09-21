@@ -168,9 +168,14 @@
     refTab: REFERENCE_TABS[0].key,
     refFilter: "",
     refData: null,
+    // Capabilities are read on the list view but needed on the detail view too
+    // (the lock card offers to create a lock only when Locksmith is reachable).
+    caps: null,
     pollTimer: null
   };
   const objectUrls = new Set();
+  // asset URL -> object URL, so a repaint reuses what was already fetched.
+  const assetObjectUrls = new Map();
   let modalState = null;
 
   /* =========================================================================
@@ -404,11 +409,21 @@
         img.src = url;
         return;
       }
+      /* The build panel repaints every 5 seconds, and each repaint re-emits
+         every mockup. Fetching each one again would leak a blob URL per image
+         per poll — a long build with a dozen mockups holds tens of megabytes
+         by the end. One object URL per asset, reused, released on unmount. */
+      const cached = assetObjectUrls.get(url);
+      if (cached) {
+        img.src = cached;
+        return;
+      }
       adminFetch(url)
         .then((res) => (res.ok ? res.blob() : Promise.reject(new Error("asset unavailable"))))
         .then((blob) => {
           const objectUrl = URL.createObjectURL(blob);
           objectUrls.add(objectUrl);
+          assetObjectUrls.set(url, objectUrl);
           img.src = objectUrl;
         })
         .catch(() => markImageBroken(img));
@@ -424,6 +439,7 @@
   function releaseObjectUrls() {
     objectUrls.forEach((url) => URL.revokeObjectURL(url));
     objectUrls.clear();
+    assetObjectUrls.clear();
   }
 
   /* =========================================================================
@@ -541,6 +557,7 @@
     holder.innerHTML = `<p class="ob-caps-loading muted">Checking what the agent can reach…</p>`;
     try {
       const payload = await api(`${API}/capabilities`);
+      state.caps = payload;
       if (!isCurrent("list")) return;
       holder.innerHTML = capabilityCards(payload);
     } catch (error) {
@@ -557,6 +574,10 @@
     if (node == null) return false;
     if (typeof node === "boolean") return node;
     if (typeof node === "string") return Boolean(node);
+    // capabilities() reports Helium as { forms: [...] } with no ok/configured
+    // flag, so the ?? chain below would read the whole card as "not ready"
+    // even with every form configured.
+    if (Array.isArray(node.forms)) return node.forms.length > 0;
     const value = node.ok ?? node.connected ?? node.configured ?? node.available ?? node.readable ?? node.writable;
     return Boolean(value);
   }
@@ -662,13 +683,15 @@
     const tone = statusTone(summary?.status);
     const counts = summary?.counts || {};
     const build = summary?.build || {};
-    const steps = list(build.steps);
-    const done = steps.filter((step) => step?.state === "complete").length;
-    const pct = steps.length ? Math.round((done / steps.length) * 100) : build.state === "complete" ? 100 : 0;
+    // The list payload carries counts, not the step array (a summary stays
+    // small), so the bar reads those.
+    const done = Number(build.stepsDone || 0);
+    const total = Number(build.stepsTotal || 0);
+    const pct = total ? Math.round((done / total) * 100) : build.state === "complete" ? 100 : 0;
     const progress = build.state
       ? `<span class="store-card-progress" data-tone="${esc(buildTone(build.state))}">
           <span class="scp-bar"><span style="width:${pct}%"></span></span>
-          <small>${esc(build.state === "running" ? `Building — ${done} of ${steps.length || "?"} steps` : `Build ${build.state}${build.finishedAt ? ` · ${day(build.finishedAt)}` : ""}`)}</small>
+          <small>${esc(build.state === "running" ? `Building — ${done} of ${total || "?"} steps` : `Build ${build.state}${build.finishedAt ? ` · ${day(build.finishedAt)}` : ""}`)}</small>
         </span>`
       : `<span class="store-card-progress" data-tone="muted"><small>Not built yet</small></span>`;
     const meta = [
@@ -1369,8 +1392,13 @@
     const tone = validation.ok === true ? "ok" : validation.ok === false ? "danger" : "muted";
     return `
       <fieldset class="ob-product" data-ob-product="${esc(id)}" data-tone="${esc(tone)}">
+        ${/* The legend has to be the fieldset's FIRST child or the browser
+              parses it as a generic element and the group ends up with no
+              accessible name. The visible heading stays in the head row; this
+              one names the group for assistive tech. */""}
+        <legend class="sr-only">${esc(product?.title || [product?.brand, product?.styleNumber].filter(Boolean).join(" ") || `Product ${index + 1}`)}</legend>
         <div class="ob-product-head">
-          <legend class="ob-product-title">${esc(product?.title || [product?.brand, product?.styleNumber].filter(Boolean).join(" ") || `Product ${index + 1}`)}</legend>
+          <p class="ob-product-title" aria-hidden="true">${esc(product?.title || [product?.brand, product?.styleNumber].filter(Boolean).join(" ") || `Product ${index + 1}`)}</p>
           <span class="ob-product-meta">
             ${chip(validation.ok === true ? "valid" : validation.ok === false ? "has errors" : "not validated", tone)}
             ${product?.buildState ? chip(product.buildState, product.buildState === "created" ? "ok" : product.buildState === "failed" ? "danger" : "muted") : ""}
@@ -1387,7 +1415,7 @@
           <label class="span-2"><span>Sizes</span><input type="text" data-ob-field="sizes" value="${esc(csv(product?.sizes))}" placeholder="S, M, L, XL, 2XL, 3XL"></label>
           <label><span>Decoration method</span><select data-ob-field="decorationMethod">${optionsHtml(DECORATION_METHODS, product?.decorationMethod)}</select></label>
           <label><span>Decoration codes</span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="F01/B01"></label>
-          <label><span>Fulfillment (Vendor field)</span><select data-ob-field="fulfillment">${optionsHtml(["", ...FULFILLMENTS], product?.fulfillment)}</select></label>
+          <label><span>Fulfillment (Vendor field)</span><select data-ob-field="fulfillment">${optionsHtml([{ key: "", label: "—" }, ...FULFILLMENTS.map((v) => ({ key: v, label: v }))], product?.fulfillment)}</select></label>
           <label class="toggle-field"><input type="checkbox" data-ob-field="classB" ${product?.classB ? "checked" : ""}> <span>Class B uniform item</span></label>
           <label class="span-2"><span>Notes</span><input type="text" data-ob-field="notes" value="${esc(product?.notes || "")}"></label>
         </div>
@@ -1597,14 +1625,20 @@
   function buildBodyHtml(record) {
     const build = record.build || {};
     const blockers = buildBlockers(record);
-    const running = build.state === "running" || build.state === "interrupted";
+    const running = build.state === "running";
     const steps = list(build.steps);
     const done = steps.filter((step) => step?.state === "complete").length;
     const pct = steps.length ? Math.round((done / steps.length) * 100) : build.state === "complete" ? 100 : 0;
-    const label = running ? "Building…" : build.state ? "Re-run build" : "Build store";
+    /* "interrupted" is what a deploy or a restart leaves behind. Treating it
+       as "still running" disabled the button and polled forever, so the only
+       way out was to edit the record by hand. It is a resumable state, not a
+       live one. */
+    const interrupted = build.state === "interrupted";
+    const label = running ? "Building…" : interrupted ? "Resume build" : build.state ? "Re-run build" : "Build store";
     return `
       <div class="ob-build-actions">
         <button class="${btnClass(record, "build")}" type="button" data-ob="build" ${blockers.length || running ? "disabled" : ""} ${blockers.length ? `title="${esc(`Blocked: ${blockers.join(", ")}`)}"` : ""}>${esc(label)}</button>
+        ${interrupted ? `<span class="hint" data-tone="warn">The last run stopped before it finished — resuming picks up where it left off.</span>` : ""}
         ${build.state ? chip(build.state, buildTone(build.state)) : chip("not started", "muted")}
         ${build.startedAt ? `<span class="hint">started ${esc(when(build.startedAt))}</span>` : ""}
         ${build.finishedAt ? `<span class="hint">finished ${esc(when(build.finishedAt))}</span>` : ""}
@@ -1743,8 +1777,17 @@
           : ""}
         ${node.error ? `<p class="build-error">${esc(node.error)}</p>` : ""}
         <div class="ob-shared-actions">
-          <button class="btn btn-secondary btn-sm" type="button" data-ob="approve-shared" data-ob-kind="${esc(kind.key)}">Approve &amp; apply</button>
-          <button class="btn btn-ghost btn-sm" type="button" data-ob="confirm-shared" data-ob-kind="${esc(kind.key)}">I did this</button>
+          ${/* "Approve & apply" is only honest where the agent can actually
+                write the change. Shopify Flow has no API at all and Helium has
+                no write API, so for those two the only truthful button is the
+                one that records what Dan did by hand; offering "apply" there
+                marked the setting done with nothing applied. */
+            kind.key === "megaMenu" && state.caps?.megaMenu?.writable
+              ? `<button class="btn btn-secondary btn-sm" type="button" data-ob="approve-shared" data-ob-kind="${esc(kind.key)}">Approve &amp; apply</button>`
+              : ""}
+          <button class="btn btn-ghost btn-sm" type="button" data-ob="confirm-shared" data-ob-kind="${esc(kind.key)}">${esc(
+            kind.key === "megaMenu" && state.caps?.megaMenu?.writable ? "I did this" : "I did this — confirm"
+          )}</button>
           <button class="btn btn-ghost btn-sm" type="button" data-ob="copy" data-ob-copy-text="${esc(record.department?.tag || record.department?.name || "")}">Copy tag</button>
         </div>
         ${node.approvedBy || node.confirmedBy ? `<p class="hint">${esc(node.approvedBy ? `approved by ${node.approvedBy}` : `confirmed by ${node.confirmedBy}`)}${node.appliedAt ? ` · applied ${esc(when(node.appliedAt))}` : ""}${node.verifiedAt ? ` · verified ${esc(when(node.verifiedAt))}` : ""}</p>` : ""}
@@ -1805,7 +1848,12 @@
             <label for="obLockId">Locksmith lock id</label>
             <input id="obLockId" type="text" value="${esc(lock.locksmithLockId || "")}" autocomplete="off">
           </div>
-          <button class="btn btn-secondary btn-sm" type="button" data-ob="save-lock">Record lock</button>
+          <div class="ob-lock-actions">
+            <button class="btn btn-secondary btn-sm" type="button" data-ob="save-lock">Record lock</button>
+            ${state.caps?.locksmith?.configured
+              ? `<button class="btn btn-ghost btn-sm" type="button" data-ob="create-lock">Create the lock via Locksmith</button>`
+              : `<span class="hint">Locksmith has no access token here, so the lock is the checklist above.</span>`}
+          </div>
         </div>
       </div>`;
   }
@@ -1896,7 +1944,7 @@
     return `
       <section class="rail-card ob-log-card">
         <p class="rail-title">Build log</p>
-        <div class="ob-log" data-ob-log tabindex="0" role="log" aria-label="Build log">
+        <div class="ob-log" data-ob-log tabindex="0" role="group" aria-label="Build log">
           ${log.length ? log.map((line) => `<span>${esc(line)}</span>`).join("") : `<span class="hint">Nothing logged yet.</span>`}
         </div>
       </section>`;
@@ -2001,6 +2049,7 @@
     if (action === "approve-shared") return approveShared(trigger, false);
     if (action === "confirm-shared") return approveShared(trigger, true);
     if (action === "save-lock") return saveLock(trigger);
+    if (action === "create-lock") return createLock(trigger);
     if (action === "save-notes") return saveNotes(trigger);
     if (action === "save-products") return saveProducts(trigger);
     if (action === "build") return startBuild(trigger);
@@ -2095,6 +2144,22 @@
       page()?.querySelector("#obCodeValue")?.focus();
       return;
     }
+    /* §2.3: a code another department already owns must never be reused — it
+       would collide in every SKU, tag, folder and print-file name, and once
+       products are built it cannot be undone. The agent already worked out
+       which candidates are taken; an amber tint is not enough of a guard, so
+       the owner has to be said out loud and confirmed. */
+    const code = state.record?.department?.code || {};
+    const taken =
+      list(code.candidates).find((c) => c && c.code === value && c.inUse) ||
+      list(code.matches).find((m) => m && m.code === value && m.agency);
+    if (taken) {
+      const owner = taken.agency || "another department";
+      if (!window.confirm(`${value} is already used by ${owner}. Reusing a code collides in every SKU, tag and file name for both departments. Approve it anyway?`)) {
+        page()?.querySelector("#obCodeValue")?.focus();
+        return;
+      }
+    }
     return runSimple(button, "Approving…", "/code", { code: value, by: currentOperator() });
   }
 
@@ -2110,7 +2175,23 @@
   function saveLock(button) {
     const secretLink = page()?.querySelector("#obLockLink")?.value.trim() || "";
     const locksmithLockId = page()?.querySelector("#obLockId")?.value.trim() || "";
+    /* Posting an empty body takes the server's "create the lock" branch, which
+       calls Locksmith for real and is not idempotent — a second click would
+       make a second lock on the same collection. Recording what Dan already
+       built is a different action from asking for a new one, so this button
+       only ever records. */
+    if (!secretLink && !locksmithLockId) {
+      fail("Paste the secret link or the Locksmith lock id to record the lock, or use \u201cCreate the lock\u201d to have the agent make one.");
+      page()?.querySelector("#obLockLink")?.focus();
+      return;
+    }
     return runSimple(button, "Saving…", "/lock", { secretLink, locksmithLockId });
+  }
+
+  // The explicit, deliberate path: ask Locksmith to create the lock.
+  function createLock(button) {
+    if (!window.confirm("Create the Locksmith lock for this collection now? This makes a real lock in Locksmith.")) return;
+    return runSimple(button, "Creating…", "/lock", {});
   }
 
   function saveNotes(button) {
@@ -2304,7 +2385,10 @@
   function maybePoll() {
     stopPolling();
     const buildState = state.record?.build?.state;
-    if (buildState !== "running" && buildState !== "interrupted") return;
+    /* Only a live build is worth polling. An interrupted one is waiting for
+       somebody to press Resume — polling it forever just repainted the same
+       page every five seconds and re-announced it to a screen reader. */
+    if (buildState !== "running") return;
     const id = state.record.id;
     state.pollTimer = window.setTimeout(async () => {
       if (!isCurrent("detail", id)) return;
@@ -2315,7 +2399,7 @@
         if (next) {
           const wasRunning = state.record?.build?.state;
           state.record = next;
-          const nowRunning = next.build?.state === "running" || next.build?.state === "interrupted";
+          const nowRunning = next.build?.state === "running";
           if (nowRunning) {
             repaintBuild();
             maybePoll();
@@ -2334,6 +2418,16 @@
         if (isCurrent("detail", id) && !/admin token/i.test(String(error?.message || ""))) maybePoll();
       }
     }, POLL_MS);
+  }
+
+  // The one place the view speaks to a screen reader: short, and only when the
+  // step actually changes.
+  let lastAnnounced = "";
+  function announce(message) {
+    const node = document.getElementById("onboardingStatus");
+    if (!node || !message || message === lastAnnounced) return;
+    lastAnnounced = message;
+    node.textContent = message;
   }
 
   function repaintBuild() {
@@ -2358,6 +2452,16 @@
     }
     const stepper = scope.querySelector("[data-ob-stepper]");
     if (stepper) stepper.outerHTML = stepperHtml(record);
+    const steps = list(record.build?.steps);
+    const runningStep = steps.find((step) => step?.state === "running");
+    const done = steps.filter((step) => step?.state === "complete").length;
+    announce(
+      record.build?.state === "running" && steps.length
+        ? `${runningStep?.label || "Working"} — step ${Math.min(done + 1, steps.length)} of ${steps.length}`
+        : record.build?.state
+          ? `Build ${record.build.state}`
+          : ""
+    );
   }
 
   /* =========================================================================
@@ -2649,7 +2753,21 @@
     state.view = view;
     state.id = id || null;
     state.record = null;
-    if (view === "detail") loadDetail(id);
+    if (view === "detail") {
+      // A deep link opens the detail view without the list ever rendering, so
+      // the capabilities it reads (can Locksmith be called? is the menu
+      // writable?) are fetched here too. Failure is not fatal: the card falls
+      // back to the checklist wording.
+      if (!state.caps) {
+        api(`${API}/capabilities`)
+          .then((payload) => {
+            state.caps = payload;
+            if (isCurrent("detail", id) && state.record) renderDetail();
+          })
+          .catch(() => {});
+      }
+      loadDetail(id);
+    }
     else if (view === "reference") renderReference();
     else renderList();
   }

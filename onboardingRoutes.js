@@ -167,6 +167,22 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
       let onboarding = await store.updateOnboarding(req.params.id, (record) => {
         if (department && typeof department === "object") record.department = { ...record.department, ...department, code: record.department.code };
         if (packet && typeof packet === "object" && packet.notes !== undefined) record.packet.notes = String(packet.notes);
+        /* Artwork roles decide which logo becomes the collection banner
+           (§6.3: the department's pick, else the scramble, else the chest,
+           else the back), so the console has to be able to set them. Only the
+           role is taken, and only by assetId — the rest of a packet file is
+           the server's record of what was uploaded, not the client's to
+           rewrite. */
+        if (packet && typeof packet === "object" && Array.isArray(packet.files)) {
+          const roles = new Map(
+            packet.files
+              .filter((f) => f && typeof f === "object" && f.assetId)
+              .map((f) => [String(f.assetId), clean(f.role).toLowerCase()])
+          );
+          for (const file of record.packet.files) {
+            if (roles.has(String(file.assetId))) file.role = roles.get(String(file.assetId));
+          }
+        }
         store.appendEvent(record, { type: "edit", message: "Record edited from the console.", by: clean(by) });
         return record;
       });

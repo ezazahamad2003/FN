@@ -536,7 +536,16 @@ function summarize(record) {
       packetFiles: packetFiles.length
     },
     collection: { title: collection.title || "", url: collection.url || "" },
-    build: { state: build.state || "", finishedAt: build.finishedAt || null, error: build.error || null },
+    // stepsDone/stepsTotal, not the whole steps array: the queue card draws a
+    // progress bar from them, and without any step data it always read 0%.
+    build: {
+      state: build.state || "",
+      startedAt: build.startedAt || "",
+      finishedAt: build.finishedAt || null,
+      error: build.error || null,
+      stepsDone: (build.steps || []).filter((step) => step && step.state === "complete").length,
+      stepsTotal: (build.steps || []).length
+    },
     report: { generatedAt: report.generatedAt || "" }
   };
 }
