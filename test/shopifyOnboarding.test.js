@@ -1052,6 +1052,142 @@ test("applyMegaMenuInsert re-reads, inserts, and refuses a proposal the menu has
     return true;
   });
 });
+/* ---------------------------------------------------------------------------
+   §8a against the LIVE Mega Menu.
+
+   Every test above runs on a seven-entry fixture. The real menu is 108 entries
+   under "Store" — four with children of their own, one an HTTP link with no
+   resource — and `test/fixtures/megamenu-live.json` is a verbatim dump of it.
+   The insert is replayed here through a menuUpdate that enforces the real
+   MenuItemUpdateInput contract, because this is the one write in the agent
+   that no test had ever put through its own code path.
+   ------------------------------------------------------------------------- */
+
+const LIVE_MENU = require("./fixtures/megamenu-live.json");
+const liveMenu = () => JSON.parse(JSON.stringify(LIVE_MENU));
+
+// Not in the live menu — "Vacaville Fire Department" (NEW_STORE) already is,
+// which is the right answer for that name and the wrong test for this one.
+const LIVE_NEW_STORE = {
+  title: "Zol Test Fire Department",
+  collectionHandle: "1-zol-test-fire-department",
+  collectionGid: "gid://shopify/Collection/900700"
+};
+
+/*
+ * menuUpdate replaces the whole tree: an item sent back with its id keeps it,
+ * an item without one is created. The argument is [MenuItemUpdateInput!]!, so
+ * a stray key or a missing title is a schema error — assert the contract here
+ * rather than discovering it against the live store.
+ */
+const MENU_ITEM_INPUT_FIELDS = new Set(["title", "type", "resourceId", "url", "tags", "id", "items"]);
+const MENU_ITEM_TYPES = new Set([
+  "FRONTPAGE", "COLLECTION", "COLLECTIONS", "PRODUCT", "CATALOG", "PAGE",
+  "BLOG", "ARTICLE", "SEARCH", "SHOP_POLICY", "HTTP", "METAOBJECT", "CUSTOMER_ACCOUNT_PAGE"
+]);
+
+let nextMenuItemId = 900000;
+function applyMenuUpdateInput(items, path = "items") {
+  return (items || []).map((item, i) => {
+    const where = `${path}[${i}] "${item.title}"`;
+    for (const key of Object.keys(item)) {
+      assert.ok(MENU_ITEM_INPUT_FIELDS.has(key), `${where}: "${key}" is not a MenuItemUpdateInput field`);
+    }
+    assert.ok(typeof item.title === "string" && item.title.length > 0, `${where}: title is non-null in the schema`);
+    assert.ok(MENU_ITEM_TYPES.has(item.type), `${where}: "${item.type}" is not a MenuItemType`);
+    if ("tags" in item) assert.ok(Array.isArray(item.tags) && item.tags.every((t) => typeof t === "string"), `${where}: tags must be [String!]`);
+    return {
+      id: item.id || `gid://shopify/MenuItem/${nextMenuItemId++}`,
+      title: item.title,
+      type: item.type,
+      url: item.url ?? null,
+      resourceId: item.resourceId ?? null,
+      tags: item.tags || [],
+      items: applyMenuUpdateInput(item.items, `${where}.items`)
+    };
+  });
+}
+
+const storeItemOf = (menu) => menu.items.find((i) => i.type === "COLLECTIONS");
+
+test("the live 108-entry Mega Menu takes the insert before the public stores and loses nothing", async (t) => {
+  t.after(resetShopify);
+  let current = liveMenu();
+  const calls = stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [current] } }),
+    menuUpdate: (vars) => {
+      assert.equal(vars.id, current.id, "menuUpdate targets the menu that was read");
+      assert.equal(vars.title, current.title, "the menu keeps its own title");
+      current = { ...current, items: applyMenuUpdateInput(vars.items) };
+      return { menuUpdate: { menu: current, userErrors: [] } };
+    }
+  });
+
+  const before = liveMenu();
+  const storeBefore = storeItemOf(before);
+  assert.equal(storeBefore.items.length, 108, "the fixture is the live menu");
+
+  const read = await shopifyOnboarding.readMegaMenu();
+  const proposal = shopifyOnboarding.proposeMegaMenuInsert(read.menu, LIVE_NEW_STORE);
+  assert.equal(proposal.alreadyPresent, false);
+  assert.equal(proposal.index, 104);
+  assert.equal(proposal.insertAfter, "Ripon Fire District");
+  assert.equal(proposal.insertBefore, "FN Simple Merch");
+
+  const applied = await shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, {});
+  assert.equal(applied.applied, true);
+  assert.equal(applied.alreadyPresent, false);
+  assert.equal(applied.index, 104);
+  assert.ok(applied.menuItemId, "the new item's id comes back from the mutation, not from hope");
+
+  const storeAfter = storeItemOf(current);
+  assert.equal(storeAfter.items.length, 109);
+  assert.equal(storeAfter.items[104].title, LIVE_NEW_STORE.title);
+  assert.equal(storeAfter.items[104].resourceId, LIVE_NEW_STORE.collectionGid);
+  assert.equal(storeAfter.items[104].type, "COLLECTION");
+  assert.equal(storeAfter.items[104].id, applied.menuItemId);
+
+  // Every entry that was there is still there, in order, with its id: the
+  // HTTP login link, the four stores with children, the six top-level items.
+  const survived = flattenItems(storeAfter.items).filter((i) => i.title !== LIVE_NEW_STORE.title);
+  assert.deepEqual(survived, flattenItems(storeBefore.items));
+  assert.deepEqual(current.items.map((i) => i.title), before.items.map((i) => i.title));
+  assert.equal(flattenItems(current.items).length, flattenItems(before.items).length + 1);
+
+  // Pressing finish twice must not list the store twice.
+  const writes = callsNamed(calls, "menuUpdate").length;
+  const again = await shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, {});
+  assert.equal(again.alreadyPresent, true);
+  assert.equal(again.applied, true);
+  assert.equal(again.menuItemId, applied.menuItemId);
+  assert.equal(callsNamed(calls, "menuUpdate").length, writes, "a store already in the menu is never written again");
+});
+
+test("a live menu that moved under the approved proposal is refused, not inserted elsewhere", async (t) => {
+  t.after(resetShopify);
+  let current = liveMenu();
+  stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [current] } }),
+    menuUpdate: () => {
+      throw new Error("menuUpdate must not be called for a stale proposal");
+    }
+  });
+
+  const read = await shopifyOnboarding.readMegaMenu();
+  const proposal = shopifyOnboarding.proposeMegaMenuInsert(read.menu, LIVE_NEW_STORE);
+
+  // Another onboarding finished in between and its store took index 104.
+  current = liveMenu();
+  storeItemOf(current).items.splice(104, 0, collectionItem(880, "Tracy Fire Department", 900800, "1-tracy-fire-department"));
+
+  await assert.rejects(() => shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, {}), (error) => {
+    assert.equal(error.code, "STALE_PROPOSAL");
+    assert.match(error.message, /after "Ripon Fire District"/);
+    assert.match(error.message, /after "Tracy Fire Department"/);
+    return true;
+  });
+});
+
 
 test("verifyMegaMenu reports where the store ended up, or why it could not look", async (t) => {
   t.after(resetShopify);

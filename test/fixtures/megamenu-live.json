@@ -1,0 +1,1309 @@
+{
+  "id": "gid://shopify/Menu/191418204297",
+  "title": "MegaMenu",
+  "handle": "megamenu",
+  "items": [
+    {
+      "id": "gid://shopify/MenuItem/562551619721",
+      "title": "Home",
+      "type": "FRONTPAGE",
+      "url": "/",
+      "resourceId": null,
+      "tags": [],
+      "items": []
+    },
+    {
+      "id": "gid://shopify/MenuItem/443178844297",
+      "title": "Store",
+      "type": "COLLECTIONS",
+      "url": "/collections",
+      "resourceId": null,
+      "tags": [],
+      "items": [
+        {
+          "id": "gid://shopify/MenuItem/554285695113",
+          "title": "Blank Uniforms",
+          "type": "COLLECTION",
+          "url": "/collections/fn-simple-blank-uniforms",
+          "resourceId": "gid://shopify/Collection/308103151753",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/566195486857",
+          "title": "Gear & Accessories",
+          "type": "COLLECTION",
+          "url": "/collections/gear-accessories",
+          "resourceId": "gid://shopify/Collection/311204970633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/554431742089",
+          "title": "Marin County FD Line Personnel Store",
+          "type": "COLLECTION",
+          "url": "/collections/marin-county-fd",
+          "resourceId": "gid://shopify/Collection/300073287817",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/554431774857",
+          "title": "Marin County FD Staff Personnel Store",
+          "type": "COLLECTION",
+          "url": "/collections/marin-county-fd-everything-else-store",
+          "resourceId": "gid://shopify/Collection/306791350409",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/554431807625",
+          "title": "Marin County FD Off Duty Store",
+          "type": "COLLECTION",
+          "url": "/collections/marin-county-fd-off-duty-store",
+          "resourceId": "gid://shopify/Collection/307903758473",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/554431840393",
+          "title": "Marin County FD Tamalpais Fire Crew",
+          "type": "COLLECTION",
+          "url": "/collections/marin-county-fd-tamalpais-fire-crew",
+          "resourceId": "gid://shopify/Collection/307903594633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/443178352777",
+          "title": "Shop BCC",
+          "type": "COLLECTION",
+          "url": "/collections/butte-construction-company",
+          "resourceId": "gid://shopify/Collection/268195758217",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/446826446985",
+          "title": "Shop BRC",
+          "type": "COLLECTION",
+          "url": "/collections/butte-roofing-co",
+          "resourceId": "gid://shopify/Collection/276905001097",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/452484792457",
+          "title": "Shop Enklose",
+          "type": "COLLECTION",
+          "url": "/collections/enklose",
+          "resourceId": "gid://shopify/Collection/282004783241",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/476597944457",
+          "title": "Napa Fire Dept.",
+          "type": "COLLECTION",
+          "url": "/collections/napa-fire-department",
+          "resourceId": "gid://shopify/Collection/269630570633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/454965133449",
+          "title": "Sale Store NAP",
+          "type": "COLLECTION",
+          "url": "/collections/holiday-store-bnc-1",
+          "resourceId": "gid://shopify/Collection/283073085577",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/448164462729",
+          "title": "Contra Costa County Fire",
+          "type": "COLLECTION",
+          "url": "/collections/1-one-week-store-con",
+          "resourceId": "gid://shopify/Collection/279503667337",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/452484628617",
+          "title": "District Aide (CON)",
+          "type": "COLLECTION",
+          "url": "/collections/contra-costa-district-aide",
+          "resourceId": "gid://shopify/Collection/281104810121",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/448925401225",
+          "title": "Station Stores",
+          "type": "COLLECTION",
+          "url": "/collections/station-1-con",
+          "resourceId": "gid://shopify/Collection/295212941449",
+          "tags": [],
+          "items": [
+            {
+              "id": "gid://shopify/MenuItem/504251875465",
+              "title": "Station 1",
+              "type": "COLLECTION",
+              "url": "/collections/station-1-con",
+              "resourceId": "gid://shopify/Collection/295212941449",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/504251908233",
+              "title": "Station 2",
+              "type": "COLLECTION",
+              "url": "/collections/station-2-con",
+              "resourceId": "gid://shopify/Collection/295405420681",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/566473588873",
+              "title": "Station 5",
+              "type": "COLLECTION",
+              "url": "/collections/station-5-con",
+              "resourceId": "gid://shopify/Collection/310473097353",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/448923074697",
+              "title": "Station 6",
+              "type": "COLLECTION",
+              "url": "/collections/station-6",
+              "resourceId": "gid://shopify/Collection/280297242761",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/448925466761",
+              "title": "Station 9",
+              "type": "COLLECTION",
+              "url": "/collections/station-9",
+              "resourceId": "gid://shopify/Collection/280301043849",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/448963641481",
+              "title": "Station 10",
+              "type": "COLLECTION",
+              "url": "/collections/station-10",
+              "resourceId": "gid://shopify/Collection/280343478409",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/448938049673",
+              "title": "Station 70",
+              "type": "COLLECTION",
+              "url": "/collections/station-70",
+              "resourceId": "gid://shopify/Collection/280315756681",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/466316787849",
+              "title": "Station 81",
+              "type": "COLLECTION",
+              "url": "/collections/station-81",
+              "resourceId": "gid://shopify/Collection/287964692617",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/454821019785",
+              "title": "Station 82",
+              "type": "COLLECTION",
+              "url": "/collections/station-82-con",
+              "resourceId": "gid://shopify/Collection/283042349193",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/457639690377",
+              "title": "Station 83",
+              "type": "COLLECTION",
+              "url": "/collections/station-83",
+              "resourceId": "gid://shopify/Collection/283491336329",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/448938115209",
+              "title": "Station 84",
+              "type": "COLLECTION",
+              "url": "/collections/station-84",
+              "resourceId": "gid://shopify/Collection/280315920521",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/448938147977",
+              "title": "Station 85",
+              "type": "COLLECTION",
+              "url": "/collections/station-85",
+              "resourceId": "gid://shopify/Collection/280315953289",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/456094908553",
+              "title": "Station 86",
+              "type": "COLLECTION",
+              "url": "/collections/station-86",
+              "resourceId": "gid://shopify/Collection/283492221065",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/550620266633",
+              "title": "Station 88",
+              "type": "COLLECTION",
+              "url": "/collections/station-88-con",
+              "resourceId": "gid://shopify/Collection/307102875785",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/542204002441",
+              "title": "Station 92",
+              "type": "COLLECTION",
+              "url": "/collections/station-92-con",
+              "resourceId": "gid://shopify/Collection/304630595721",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/592600105097",
+              "title": "Station 93",
+              "type": "COLLECTION",
+              "url": "/collections/20-station-93",
+              "resourceId": "gid://shopify/Collection/318899257481",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/555940249737",
+              "title": "Station 95",
+              "type": "COLLECTION",
+              "url": "/collections/station-95-con",
+              "resourceId": "gid://shopify/Collection/308279312521",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/555940282505",
+              "title": "Station 99",
+              "type": "COLLECTION",
+              "url": "/collections/station-99-con",
+              "resourceId": "gid://shopify/Collection/308375552137",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/542594531465",
+              "title": "Hand Crew 12",
+              "type": "COLLECTION",
+              "url": "/collections/hand-crew-12-con",
+              "resourceId": "gid://shopify/Collection/304763076745",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/597259452553",
+              "title": "Air Ops",
+              "type": "COLLECTION",
+              "url": "/collections/21-contra-costa-co-air-ops",
+              "resourceId": "gid://shopify/Collection/321802961033",
+              "tags": [],
+              "items": []
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/MenuItem/443178385545",
+          "title": "Vacaville Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/vacaville-fire-department",
+          "resourceId": "gid://shopify/Collection/265379250313",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/453302452361",
+          "title": "Sale Store VAC",
+          "type": "COLLECTION",
+          "url": "/collections/cyber-week-sale-vac",
+          "resourceId": "gid://shopify/Collection/282341277833",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/448137134217",
+          "title": "Apprentices VAC",
+          "type": "COLLECTION",
+          "url": "/collections/4-apprentice-vac",
+          "resourceId": "gid://shopify/Collection/279486136457",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/443178647689",
+          "title": "VAC Dispatch",
+          "type": "COLLECTION",
+          "url": "/collections/vacaville-dispatch",
+          "resourceId": "gid://shopify/Collection/275009241225",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/469985198217",
+          "title": "Reserves CON",
+          "type": "COLLECTION",
+          "url": "/collections/contra-costa-reserves",
+          "resourceId": "gid://shopify/Collection/290116665481",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/526213087369",
+          "title": "Alameda City Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/alameda-city-fire-one-week-store",
+          "resourceId": "gid://shopify/Collection/299477237897",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/454965067913",
+          "title": "Sale Store CON",
+          "type": "COLLECTION",
+          "url": "/collections/holiday-store-con",
+          "resourceId": "gid://shopify/Collection/283073216649",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/512906494089",
+          "title": "Alameda County Fire",
+          "type": "COLLECTION",
+          "url": "/collections/alameda-county-fire-department",
+          "resourceId": "gid://shopify/Collection/296055144585",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/470614016137",
+          "title": "Milpitas Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/milpitas-fire-department",
+          "resourceId": "gid://shopify/Collection/286127161481",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/443178614921",
+          "title": "Benicia Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/benicia-fire-department",
+          "resourceId": "gid://shopify/Collection/271054307465",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/581130485897",
+          "title": "Benicia Off Duty",
+          "type": "COLLECTION",
+          "url": "/collections/2-benicia-off-duty",
+          "resourceId": "gid://shopify/Collection/315392721033",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/454965166217",
+          "title": "Sale Store BNC",
+          "type": "COLLECTION",
+          "url": "/collections/holiday-store-bnc",
+          "resourceId": "gid://shopify/Collection/283072954505",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/468036288649",
+          "title": "Anderson Fire",
+          "type": "COLLECTION",
+          "url": "/collections/anderson-fire-protection",
+          "resourceId": "gid://shopify/Collection/288557367433",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/447374295177",
+          "title": "Fairfield Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/fairfield-fire-department",
+          "resourceId": "gid://shopify/Collection/277335408777",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/449043431561",
+          "title": "Stations Store FRF",
+          "type": "COLLECTION",
+          "url": "/collections/station-gear",
+          "resourceId": "gid://shopify/Collection/280459116681",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/449073578121",
+          "title": "Reserves FRF ",
+          "type": "COLLECTION",
+          "url": "/collections/fairfield-fire-reserves",
+          "resourceId": "gid://shopify/Collection/280492900489",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/448135921801",
+          "title": "Explorers FRF",
+          "type": "COLLECTION",
+          "url": "/collections/3-explorers-frf",
+          "resourceId": "gid://shopify/Collection/279480074377",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/474096402569",
+          "title": "BCA Shirts FRF",
+          "type": "COLLECTION",
+          "url": "/collections/holiday-store-frf",
+          "resourceId": "gid://shopify/Collection/283073183881",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/454965100681",
+          "title": "Sale Store FRF",
+          "type": "COLLECTION",
+          "url": "/collections/sale-store-frf",
+          "resourceId": "gid://shopify/Collection/303442002057",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/566196732041",
+          "title": "Dispatchers FRF ",
+          "type": "COLLECTION",
+          "url": "/collections/fairfield-dispatchers",
+          "resourceId": "gid://shopify/Collection/310128214153",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/537342345353",
+          "title": "Hamilton City Fire & Rescue",
+          "type": "COLLECTION",
+          "url": "/collections/hamilton-city-fire-one-week-store",
+          "resourceId": "gid://shopify/Collection/303055405193",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/570917060745",
+          "title": "Milpitas Local 1699",
+          "type": "COLLECTION",
+          "url": "/collections/milpitas-local-1700",
+          "resourceId": "gid://shopify/Collection/312470503561",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/580608032905",
+          "title": "Milpitas Dispatch",
+          "type": "COLLECTION",
+          "url": "/collections/milpitas-dispatch",
+          "resourceId": "gid://shopify/Collection/315212267657",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/547918446729",
+          "title": "Chief Suisun City Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/3-chief-one-week-store-suc",
+          "resourceId": "gid://shopify/Collection/306117935241",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/546183872649",
+          "title": "Suisun City Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/suisun-city-fire",
+          "resourceId": "gid://shopify/Collection/304411017353",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/549988958345",
+          "title": "Suisun City Off-Duty",
+          "type": "COLLECTION",
+          "url": "/collections/suisun-city-off-duty",
+          "resourceId": "gid://shopify/Collection/306929926281",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/448651067529",
+          "title": "Calistoga Store",
+          "type": "COLLECTION",
+          "url": "/collections/calistoga-fire-department",
+          "resourceId": "gid://shopify/Collection/280061182089",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/476489023625",
+          "title": "Yuba City Station Store",
+          "type": "COLLECTION",
+          "url": "/collections/yuba-city-station-store",
+          "resourceId": "gid://shopify/Collection/293297258633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/547923755145",
+          "title": "Bahama Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/bahama-fire-department",
+          "resourceId": "gid://shopify/Collection/305407426697",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/547923787913",
+          "title": "Chief Bahama Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/chief-bahama-fire-department",
+          "resourceId": "gid://shopify/Collection/306184585353",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/536242651273",
+          "title": "Heavy Equipment Store",
+          "type": "COLLECTION",
+          "url": "/collections/heavy-equipment-store-con",
+          "resourceId": "gid://shopify/Collection/302948909193",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/470515220617",
+          "title": "CAL JAC EMT",
+          "type": "COLLECTION",
+          "url": "/collections/cal-jax-ems",
+          "resourceId": "gid://shopify/Collection/290435039369",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/512171212937",
+          "title": "Schell Vista Fire",
+          "type": "COLLECTION",
+          "url": "/collections/schell-vista-fire-protection",
+          "resourceId": "gid://shopify/Collection/293837340809",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/546948186249",
+          "title": "Alameda County One Week Store",
+          "type": "COLLECTION",
+          "url": "/collections/alameda-county-fire-department",
+          "resourceId": "gid://shopify/Collection/296055144585",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/555950407817",
+          "title": "Alameda Firefighters Local 689",
+          "type": "COLLECTION",
+          "url": "/collections/alameda-firefighters-local-689",
+          "resourceId": "gid://shopify/Collection/307902480521",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/546948513929",
+          "title": "Everything Else ALCO",
+          "type": "COLLECTION",
+          "url": "/collections/everything-else-alco",
+          "resourceId": "gid://shopify/Collection/306071437449",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/512171442313",
+          "title": "Sonoma Valley Store",
+          "type": "COLLECTION",
+          "url": "/collections/sonoma-valley-fire-district",
+          "resourceId": "gid://shopify/Collection/294873301129",
+          "tags": [],
+          "items": [
+            {
+              "id": "gid://shopify/MenuItem/565375139977",
+              "title": "Sonoma Valley Fire District",
+              "type": "COLLECTION",
+              "url": "/collections/sonoma-valley-fire-district",
+              "resourceId": "gid://shopify/Collection/294873301129",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/565374910601",
+              "title": "Sonoma Union 3593",
+              "type": "COLLECTION",
+              "url": "/collections/sonoma-union-3593",
+              "resourceId": "gid://shopify/Collection/310127034505",
+              "tags": [],
+              "items": []
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/MenuItem/512171475081",
+          "title": "NAHFF Store",
+          "type": "COLLECTION",
+          "url": "/collections/national-association-of-hispanic-fire-fighters",
+          "resourceId": "gid://shopify/Collection/295824490633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/454965198985",
+          "title": "Sierra Fly Girls",
+          "type": "COLLECTION",
+          "url": "/collections/sierra-fly-girls",
+          "resourceId": "gid://shopify/Collection/283096416393",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/538046005385",
+          "title": "MDA Store",
+          "type": "COLLECTION",
+          "url": "/collections/mda-store",
+          "resourceId": "gid://shopify/Collection/302309343369",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/451946119305",
+          "title": "Tahoe Truckee Fly Fishers",
+          "type": "COLLECTION",
+          "url": "/collections/tahoe-truckee-fly-fishers",
+          "resourceId": "gid://shopify/Collection/281640796297",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/565375271049",
+          "title": "Clark County Fire",
+          "type": "COLLECTION",
+          "url": "/collections/clark-county-fire",
+          "resourceId": "gid://shopify/Collection/308864286857",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/618683695241",
+          "title": "CCFD Movember",
+          "type": "COLLECTION",
+          "url": "/collections/ccfd-movember",
+          "resourceId": "gid://shopify/Collection/328063025289",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/589208289417",
+          "title": "Clark County Fire Rural Division",
+          "type": "COLLECTION",
+          "url": "/collections/1-clark-county-fire-rural-division",
+          "resourceId": "gid://shopify/Collection/317826662537",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/565375303817",
+          "title": "Sutter County FD",
+          "type": "COLLECTION",
+          "url": "/collections/sutter-county-fire-department",
+          "resourceId": "gid://shopify/Collection/309502115977",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/565375336585",
+          "title": "Public Safety Academy Uniforms",
+          "type": "COLLECTION",
+          "url": "/collections/public-safety-academy-uniforms",
+          "resourceId": "gid://shopify/Collection/309117681801",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/565375172745",
+          "title": "Reach Copter Store",
+          "type": "COLLECTION",
+          "url": "/collections/reach-copter-store",
+          "resourceId": "gid://shopify/Collection/309058666633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/577804042377",
+          "title": "Ross Valley Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-ross-valley-fire-department",
+          "resourceId": "gid://shopify/Collection/313950666889",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/577804075145",
+          "title": "Northstar FD",
+          "type": "COLLECTION",
+          "url": "/collections/northstar-fd",
+          "resourceId": "gid://shopify/Collection/314428063881",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/577804107913",
+          "title": "Manteca Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/manteca-fire-department",
+          "resourceId": "gid://shopify/Collection/314486063241",
+          "tags": [],
+          "items": [
+            {
+              "id": "gid://shopify/MenuItem/579115581577",
+              "title": "Manteca Fire Department",
+              "type": "COLLECTION",
+              "url": "/collections/manteca-fire-department",
+              "resourceId": "gid://shopify/Collection/314486063241",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/579115548809",
+              "title": "Manteca Local 1874",
+              "type": "COLLECTION",
+              "url": "/collections/manteca-union",
+              "resourceId": "gid://shopify/Collection/314949730441",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/602899873929",
+              "title": "Manteca Explorers",
+              "type": "COLLECTION",
+              "url": "/collections/3-manteca-explorers",
+              "resourceId": "gid://shopify/Collection/323231252617",
+              "tags": [],
+              "items": []
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/MenuItem/577961033865",
+          "title": "Santa Clara County FD",
+          "type": "COLLECTION",
+          "url": "/collections/santa-clara-county-fd",
+          "resourceId": "gid://shopify/Collection/314575716489",
+          "tags": [],
+          "items": [
+            {
+              "id": "gid://shopify/MenuItem/586871570569",
+              "title": "Santa Clara County FD",
+              "type": "COLLECTION",
+              "url": "/collections/santa-clara-county-fd",
+              "resourceId": "gid://shopify/Collection/314575716489",
+              "tags": [],
+              "items": []
+            },
+            {
+              "id": "gid://shopify/MenuItem/578806153353",
+              "title": "Santa Clara County FD Off Duty",
+              "type": "COLLECTION",
+              "url": "/collections/santa-clara-county-fd-off-duty",
+              "resourceId": "gid://shopify/Collection/314843496585",
+              "tags": [],
+              "items": []
+            }
+          ]
+        },
+        {
+          "id": "gid://shopify/MenuItem/577984200841",
+          "title": "Orange Cove Fire Protection District",
+          "type": "COLLECTION",
+          "url": "/collections/orange-cove-fire-protection-district",
+          "resourceId": "gid://shopify/Collection/314581057673",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/579953885321",
+          "title": "Twain Harte Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/twain-harte-fire-department",
+          "resourceId": "gid://shopify/Collection/315134083209",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/580470767753",
+          "title": "Selma Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-selma-fire-department",
+          "resourceId": "gid://shopify/Collection/315175239817",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/581525602441",
+          "title": "Winters Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-winters-fire-department",
+          "resourceId": "gid://shopify/Collection/315536375945",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/583541850249",
+          "title": "Granville Township Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-granville-township-fire-department",
+          "resourceId": "gid://shopify/Collection/315756216457",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/585717907593",
+          "title": "Willow Oak Fire Protection District",
+          "type": "COLLECTION",
+          "url": "/collections/1-willow-oak-fire-protection-district",
+          "resourceId": "gid://shopify/Collection/315795505289",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/586332438665",
+          "title": "Tracy Fire",
+          "type": "COLLECTION",
+          "url": "/collections/1-tracy-fire",
+          "resourceId": "gid://shopify/Collection/315998732425",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/586602053769",
+          "title": "Sacramento Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-sacramento-fire-department",
+          "resourceId": "gid://shopify/Collection/316109521033",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/589415252105",
+          "title": "Sacramento Fire Off Duty",
+          "type": "COLLECTION",
+          "url": "/collections/sacramento-fire-off-duty",
+          "resourceId": "gid://shopify/Collection/317889020041",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/587214651529",
+          "title": "El Cerrito Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-el-cerrito-fire-department",
+          "resourceId": "gid://shopify/Collection/316267462793",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/589311246473",
+          "title": "West Plainfield Fire",
+          "type": "COLLECTION",
+          "url": "/collections/west-plainfield-fire",
+          "resourceId": "gid://shopify/Collection/317857464457",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/590286782601",
+          "title": "Patterson Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-patterson-fire-department",
+          "resourceId": "gid://shopify/Collection/318188290185",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/591041265801",
+          "title": "West Stanislaus County FPD",
+          "type": "COLLECTION",
+          "url": "/collections/1-west-stanislaus-county-fpd",
+          "resourceId": "gid://shopify/Collection/318407016585",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/591612936329",
+          "title": "Woodbridge Fire District",
+          "type": "COLLECTION",
+          "url": "/collections/1-woodbridge-fire",
+          "resourceId": "gid://shopify/Collection/318575116425",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/595456196745",
+          "title": "Red Bluff Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-red-bluff-fire-department",
+          "resourceId": "gid://shopify/Collection/321392115849",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/588144214153",
+          "title": "Berkeley Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/berkeley-fire-department-1",
+          "resourceId": "gid://shopify/Collection/311145562249",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/597420114057",
+          "title": "City of Davis Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/city-of-davis-fire-department",
+          "resourceId": "gid://shopify/Collection/321846116489",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/600265654409",
+          "title": "Lake County Fire Protection District",
+          "type": "COLLECTION",
+          "url": "/collections/1-lake-county-fire-protection-district",
+          "resourceId": "gid://shopify/Collection/322611839113",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/600936382601",
+          "title": "Pueblo of Zuni Fire & EMS",
+          "type": "COLLECTION",
+          "url": "/collections/1-pueblo-of-zuni-fire-ems",
+          "resourceId": "gid://shopify/Collection/322756935817",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/602738425993",
+          "title": "Fort Irwin Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-fort-irwin-fire-department",
+          "resourceId": "gid://shopify/Collection/323189801097",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/617847849097",
+          "title": "Fort Irwin FD Liquidation",
+          "type": "COLLECTION",
+          "url": "/collections/2-fort-irwin-fd-liquidation",
+          "resourceId": "gid://shopify/Collection/327578353801",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/604314108041",
+          "title": "Redondo Beach Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-redondo-beach-fire-department",
+          "resourceId": "gid://shopify/Collection/323598745737",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/603609399433",
+          "title": "EMSA Emergency Medical Services Authority",
+          "type": "COLLECTION",
+          "url": "/collections/emsa-emergency-medical-services-authority",
+          "resourceId": "gid://shopify/Collection/323373269129",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/604936601737",
+          "title": "Alameda Police Department",
+          "type": "COLLECTION",
+          "url": "/collections/alameda-police-department",
+          "resourceId": "gid://shopify/Collection/323742531721",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/605376446601",
+          "title": "Santa Clara City FD",
+          "type": "COLLECTION",
+          "url": "/collections/1-santa-clara-city-fd",
+          "resourceId": "gid://shopify/Collection/323925541001",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/606784454793",
+          "title": "Local 1171 Apparel",
+          "type": "COLLECTION",
+          "url": "/collections/2-local-1171-apparel",
+          "resourceId": "gid://shopify/Collection/324228939913",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/553515024521",
+          "title": "Waterloo Morada Fire District",
+          "type": "COLLECTION",
+          "url": "/collections/waterloo-morada-fire-district-wmr",
+          "resourceId": "gid://shopify/Collection/307818594441",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/606760697993",
+          "title": "Local 1243",
+          "type": "COLLECTION",
+          "url": "/collections/local-1243",
+          "resourceId": "gid://shopify/Collection/324221206665",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/608710361225",
+          "title": "Dixon Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-dixon-fire-department",
+          "resourceId": "gid://shopify/Collection/324773675145",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/609299169417",
+          "title": "Palo Alto Fire",
+          "type": "COLLECTION",
+          "url": "/collections/1-palo-alto-fire",
+          "resourceId": "gid://shopify/Collection/324987388041",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/611423944841",
+          "title": "Moraga-Orinda Fire District",
+          "type": "COLLECTION",
+          "url": "/collections/1-moraga-orinda-fire-district",
+          "resourceId": "gid://shopify/Collection/325625806985",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/611794288777",
+          "title": "Napa State Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-napa-state-fire-department",
+          "resourceId": "gid://shopify/Collection/325731713161",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/612272472201",
+          "title": "Sierra College EMS Academy",
+          "type": "COLLECTION",
+          "url": "/collections/1-sierra-college-ems-academy",
+          "resourceId": "gid://shopify/Collection/325860098185",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/612461543561",
+          "title": "Stockton Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-stockton-fire-department",
+          "resourceId": "gid://shopify/Collection/325906432137",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/614275350665",
+          "title": "Menlo Park Fire District",
+          "type": "COLLECTION",
+          "url": "/collections/1-menlo-park-fire-district",
+          "resourceId": "gid://shopify/Collection/326457065609",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/614587105417",
+          "title": "Humboldt Bay Fire",
+          "type": "COLLECTION",
+          "url": "/collections/1-humboldt-bay-fire",
+          "resourceId": "gid://shopify/Collection/326597574793",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/615658750089",
+          "title": "Folsom Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-folsom-fire-department",
+          "resourceId": "gid://shopify/Collection/326964510857",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/616400519305",
+          "title": "Bishop Fire Department",
+          "type": "COLLECTION",
+          "url": "/collections/1-bishop-fire-department",
+          "resourceId": "gid://shopify/Collection/327190741129",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/618052485257",
+          "title": "Ripon Fire District",
+          "type": "COLLECTION",
+          "url": "/collections/1-ripon-fire-district",
+          "resourceId": "gid://shopify/Collection/327674986633",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/446308614281",
+          "title": "FN Simple Merch",
+          "type": "COLLECTION",
+          "url": "/collections/fn-simple-gear",
+          "resourceId": "gid://shopify/Collection/276952547465",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/514761523337",
+          "title": "SF City Gear",
+          "type": "COLLECTION",
+          "url": "/collections/sf-city-gear",
+          "resourceId": "gid://shopify/Collection/296620458121",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/558291681417",
+          "title": "Bay Area Firefighter",
+          "type": "COLLECTION",
+          "url": "/collections/bay-area-firefighter",
+          "resourceId": "gid://shopify/Collection/309158805641",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/445528309897",
+          "title": "LOGIN to see your Shop",
+          "type": "HTTP",
+          "url": "#loginpop",
+          "resourceId": null,
+          "tags": [],
+          "items": []
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/MenuItem/470512238729",
+      "title": "Sizing",
+      "type": "PAGE",
+      "url": "/pages/how-to-size-yourself",
+      "resourceId": "gid://shopify/Page/97646477449",
+      "tags": [],
+      "items": []
+    },
+    {
+      "id": "gid://shopify/MenuItem/443178680457",
+      "title": "Custom Orders",
+      "type": "PAGE",
+      "url": "/pages/custom-orders",
+      "resourceId": "gid://shopify/Page/88801443977",
+      "tags": [],
+      "items": []
+    },
+    {
+      "id": "gid://shopify/MenuItem/443178713225",
+      "title": "Contact",
+      "type": "PAGE",
+      "url": "/pages/contact",
+      "resourceId": "gid://shopify/Page/82224283785",
+      "tags": [],
+      "items": [
+        {
+          "id": "gid://shopify/MenuItem/449115685001",
+          "title": "Onboard Now",
+          "type": "PAGE",
+          "url": "/pages/onboard-now",
+          "resourceId": "gid://shopify/Page/91351679113",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/443178745993",
+          "title": "Contact Us",
+          "type": "PAGE",
+          "url": "/pages/contact",
+          "resourceId": "gid://shopify/Page/82224283785",
+          "tags": [],
+          "items": []
+        },
+        {
+          "id": "gid://shopify/MenuItem/443178778761",
+          "title": "Returns & Exchanges",
+          "type": "HTTP",
+          "url": "https://flexreturnapp.com/s/fn-simple-uniforms",
+          "resourceId": null,
+          "tags": [],
+          "items": []
+        }
+      ]
+    },
+    {
+      "id": "gid://shopify/MenuItem/443178811529",
+      "title": "About Us",
+      "type": "PAGE",
+      "url": "/pages/about-us",
+      "resourceId": "gid://shopify/Page/82832261257",
+      "tags": [],
+      "items": []
+    }
+  ]
+}

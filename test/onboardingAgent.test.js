@@ -10,6 +10,7 @@ const rules = require("../onboardingRules");
 const realPolicy = require("../onboardingPolicy");
 const realHelium = require("../helium");
 const createOnboardingRouter = require("../onboardingRoutes");
+const shopifyOnboarding = require("../shopifyOnboarding");
 
 /*
  * No blob storage, no Shopify, no Drive, no keys: the record store runs on
@@ -130,7 +131,7 @@ function fakeHelium({ present = false } = {}) {
    write_online_store_navigation, so a suite that defaults to "no scope" tests
    a store we do not run. menuTitles is the live menu — verifyMegaMenu answers
    from it, so an item nobody inserted cannot be "verified". */
-function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, menuTitles = [] } = {}) {
+function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, menuTitles = [], realMenu = false } = {}) {
   const liveMenuTitles = [...menuTitles];
   const calls = { setProduct: [], attachMockups: [], duplicate: [], collection: [] };
   let lastSet = null;
@@ -262,7 +263,58 @@ function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, m
     liveMenuTitles: () => [...liveMenuTitles],
     lastSetProduct: () => lastSet
   };
+  if (realMenu) wireRealMegaMenu(shopify);
   return shopify;
+}
+
+/*
+ * The four menu functions above are stubs, so no test in this file has ever
+ * put the agent's finish path through the REAL insert — the staleness check
+ * included, which is the whole of what stands between "approved" and a write
+ * to a shared setting. `realMenu: true` swaps in shopifyOnboarding's own
+ * implementations over a verbatim dump of the live 108-entry Mega Menu.
+ *
+ * Call resetRealMegaMenu() after such a test: setGraphql is module state.
+ */
+const LIVE_MENU = require("./fixtures/megamenu-live.json");
+
+function resetRealMegaMenu() {
+  shopifyOnboarding.setGraphql(null);
+}
+
+function wireRealMegaMenu(shopify) {
+  let current = JSON.parse(JSON.stringify(LIVE_MENU));
+  /* These tests onboard "Vacaville Fire Department", which is a real store and
+     is already in the live menu — leave it in and every insert is a no-op. */
+  const storeItem = current.items.find((i) => i.type === "COLLECTIONS");
+  storeItem.items = storeItem.items.filter((i) => i.title !== DEPARTMENT);
+
+  let nextId = 970000;
+  const rebuild = (items) =>
+    (items || []).map((item) => ({
+      id: item.id || `gid://shopify/MenuItem/${nextId++}`,
+      title: item.title,
+      type: item.type,
+      url: item.url ?? null,
+      resourceId: item.resourceId ?? null,
+      tags: item.tags || [],
+      items: rebuild(item.items)
+    }));
+
+  shopifyOnboarding.setGraphql(async (query, variables = {}) => {
+    if (/query megaMenu/.test(query)) return { menus: { nodes: [current] } };
+    if (/mutation menuUpdate/.test(query)) {
+      current = { ...current, items: rebuild(variables.items) };
+      return { menuUpdate: { menu: current, userErrors: [] } };
+    }
+    throw new Error(`the live-menu stub has no handler for: ${String(query).slice(0, 40)}`);
+  });
+
+  shopify.readMegaMenu = (...args) => shopifyOnboarding.readMegaMenu(...args);
+  shopify.proposeMegaMenuInsert = (...args) => shopifyOnboarding.proposeMegaMenuInsert(...args);
+  shopify.applyMegaMenuInsert = (...args) => shopifyOnboarding.applyMegaMenuInsert(...args);
+  shopify.verifyMegaMenu = (...args) => shopifyOnboarding.verifyMegaMenu(...args);
+  shopify.storeItemTitles = () => (current.items.find((i) => i.type === "COLLECTIONS").items || []).map((i) => i.title);
 }
 
 function fakeMockups({ base = "photo" } = {}) {
@@ -885,6 +937,132 @@ test("a menu that cannot be read falls back to what was recorded, and says so", 
   assert.equal(checked.status, "complete", JSON.stringify(checked.report.missingInformation));
   const line = checked.report.completed.find((c) => /Mega Menu/.test(c));
   assert.match(line, /could not be read back to prove it/);
+});
+
+/* ---------------------------------------------------------------------------
+   The finish path against the real insert, over the live 108-entry menu.
+
+   Everything above stubs proposeMegaMenuInsert/applyMegaMenuInsert, so the
+   staleness check — the one thing standing between "Dan approved" and a write
+   to a setting every department shares — was never in the picture.
+   ------------------------------------------------------------------------- */
+
+/* The placeholder proposeSharedSettings stores when readMegaMenu was not
+   available at build time: index 0, both neighbours "", no newItem. */
+function placeholderMenuProposal(record) {
+  return {
+    insertAfter: "",
+    insertBefore: "",
+    index: 0,
+    title: record.collection.title,
+    url: "",
+    newItem: null,
+    collectionHandle: record.collection.handle || "",
+    collectionGid: record.collection.gid || ""
+  };
+}
+
+test("the finish inserts into the live menu directly above the first public store", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  await settleAllButTheMenu(deps, id);
+
+  const before = deps.shopify.storeItemTitles();
+  const expectedIndex = before.indexOf("FN Simple Merch");
+  assert.ok(expectedIndex > 0, "the live menu lists the public stores after the departments");
+
+  const after = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+  assert.equal(after.sharedSettings.megaMenu.status, "applied", after.sharedSettings.megaMenu.error || "");
+  assert.ok(after.sharedSettings.megaMenu.menuItemId, "the item id comes back from the write");
+
+  const titles = deps.shopify.storeItemTitles();
+  assert.equal(titles.length, before.length + 1);
+  assert.equal(titles[expectedIndex], MENU_ITEM_TITLE, "named like the other entries, and placed among them");
+  assert.deepEqual(titles.filter((x) => x !== MENU_ITEM_TITLE), before, "every existing entry survives, in order");
+
+  const verified = await agent.verifySharedSettings(id, { by: "dan" });
+  assert.equal(verified.sharedSettings.megaMenu.status, "verified");
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.equal(checked.status, "complete", JSON.stringify(checked.report.missingInformation));
+});
+
+/*
+ * A record built while the menu could not be read holds a placeholder, not a
+ * position Dan approved. Carrying it over made the staleness check fire on
+ * every finish — the agent reported "the Mega Menu changed since the proposal
+ * was approved" about a menu that had not changed at all, and fell back to the
+ * checklist with nothing wrong.
+ */
+test("a build that could not read the menu is not mistaken for an approval that went stale", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  await settleAllButTheMenu(deps, id);
+  await store.updateOnboarding(id, (r) => {
+    r.sharedSettings.megaMenu.proposal = placeholderMenuProposal(r);
+    r.sharedSettings.megaMenu.status = "manual";
+    return r;
+  });
+
+  const before = deps.shopify.storeItemTitles();
+  const after = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+
+  assert.equal(after.sharedSettings.megaMenu.status, "applied", after.sharedSettings.megaMenu.error || "");
+  assert.equal(after.sharedSettings.megaMenu.error, "");
+  const titles = deps.shopify.storeItemTitles();
+  assert.equal(titles[before.indexOf("FN Simple Merch")], MENU_ITEM_TITLE);
+});
+
+/* A position Dan really did approve, that really did move, is still refused —
+   the guard is narrowed to placeholders, not removed. */
+test("a menu that moved under an approved proposal is still refused, in words that name both positions", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  await settleAllButTheMenu(deps, id);
+  await store.updateOnboarding(id, (r) => {
+    r.sharedSettings.megaMenu.proposal = {
+      ...r.sharedSettings.megaMenu.proposal,
+      insertAfter: "A Department That Moved",
+      newItem: { title: MENU_ITEM_TITLE, type: "COLLECTION", url: `/collections/${r.collection.handle}` }
+    };
+    return r;
+  });
+
+  const before = deps.shopify.storeItemTitles();
+  const after = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+
+  assert.equal(after.sharedSettings.megaMenu.status, "manual");
+  assert.match(after.sharedSettings.megaMenu.error, /changed since the proposal was approved/);
+  assert.deepEqual(deps.shopify.storeItemTitles(), before, "nothing was written");
+  // An absent neighbour reads as "nothing", never as an item named "null".
+  assert.doesNotMatch(after.sharedSettings.megaMenu.error, /"null"/);
+});
+
+/*
+ * When the write does not happen, the checklist is the instruction Dan
+ * follows. It was whatever the build stored, so a record built before the menu
+ * item lost its "N." prefix told him to create "1. Vacaville Fire Department"
+ * — the only entry out of 109 named that way.
+ */
+test("the manual checklist is re-derived at finish, not replayed from the build", async () => {
+  // No scope, so the checklist is the only path and the only instruction.
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { megaMenuAvailable: false } });
+  await settleAllButTheMenu(deps, id);
+  await store.updateOnboarding(id, (r) => {
+    r.sharedSettings.megaMenu.checklist = [`Name the item exactly "${r.collection.title}".`];
+    r.sharedSettings.megaMenu.proposal = { ...r.sharedSettings.megaMenu.proposal, title: r.collection.title };
+    return r;
+  });
+
+  const after = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+  assert.equal(after.sharedSettings.megaMenu.status, "manual");
+  const checklist = after.sharedSettings.megaMenu.checklist;
+  // The collection IS named with the ordinal and the link step says so; it is
+  // the menu ITEM that must not carry it.
+  const naming = checklist.find((line) => /Name the item exactly/.test(line));
+  assert.match(naming, new RegExp(`exactly "${MENU_ITEM_TITLE}"`));
+  assert.doesNotMatch(naming, new RegExp(`"${COLLECTION_TITLE}"`), "the ordinal never names the menu item");
+  assert.ok(checklist.some((line) => line.includes(`Link it to "${COLLECTION_TITLE}"`)), "the link still points at the collection by its real title");
+  assert.equal(after.sharedSettings.megaMenu.proposal.title, MENU_ITEM_TITLE);
 });
 
 

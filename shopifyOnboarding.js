@@ -1037,8 +1037,13 @@ async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
   }
   if (!recomputed.storeItemId) throw codedError(recomputed.reason, "MENU_UNAVAILABLE");
   if (recomputed.index !== proposal.index || recomputed.insertAfter !== proposal.insertAfter || recomputed.insertBefore !== proposal.insertBefore) {
+    /* A store that lands first legitimately has nothing above it, and a store
+       that lands last nothing below; interpolating those straight into the
+       sentence reported `after "null"` to Dan as if a menu item were named
+       that. Say what an absent neighbour means instead. */
+    const neighbour = (value) => (value ? `"${value}"` : "nothing");
     throw codedError(
-      `The Mega Menu changed since the proposal was approved (approved: after "${proposal.insertAfter}" / before "${proposal.insertBefore}"; now: after "${recomputed.insertAfter}" / before "${recomputed.insertBefore}"). Propose again.`,
+      `The Mega Menu changed since the proposal was approved (approved: after ${neighbour(proposal.insertAfter)} / before ${neighbour(proposal.insertBefore)}; now: after ${neighbour(recomputed.insertAfter)} / before ${neighbour(recomputed.insertBefore)}). Propose again.`,
       "STALE_PROPOSAL"
     );
   }

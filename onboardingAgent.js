@@ -1797,7 +1797,12 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
   }
 
   const menu = record.sharedSettings.megaMenu;
+  const menuTitle = rules.megaMenuItemTitle(record.collection.title);
   const patch = { approvedAt: nowIso(), approvedBy: clean(by) };
+  /* The position the manual checklist should name if the write does not
+     happen. It starts as whatever the build stored and is replaced the moment
+     a live read gives something better. */
+  let checklistFrom = menu.proposal?.newItem ? menu.proposal : null;
   if (applied) {
     patch.status = "applied";
     patch.appliedAt = nowIso();
@@ -1810,20 +1815,29 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
       try {
         const read = await shop().readMegaMenu();
         if (!read.available) throw new Error(read.reason || "The Mega Menu could not be read.");
-        const proposal = shop().proposeMegaMenuInsert(read.menu, { title: rules.megaMenuItemTitle(record.collection.title), collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
-        // The recomputed proposal must match what Dan approved; applyMegaMenuInsert
-        // refuses a stale one rather than inserting in the wrong place.
-        /* Carry what Dan APPROVED, not what we just recomputed, or the
-           staleness check inside applyMegaMenuInsert compares the live menu
-           against itself and can never fail. The record stores an absent
-           neighbour as "", which has to survive as null: a new store that
-           lands FIRST in the list legitimately has no item above it, and a
-           truthiness fallback would silently replace that with whatever the
-           fresh read produced. */
+        const proposal = shop().proposeMegaMenuInsert(read.menu, { title: menuTitle, collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
+        checklistFrom = proposal;
+        /* applyMegaMenuInsert refuses a stale proposal rather than inserting
+           where Dan did not approve, so it has to be given what he APPROVED,
+           not what we just recomputed — otherwise it compares the live menu
+           against itself and can never fail. Two things the record does not
+           say outright:
+
+           • An absent neighbour is stored as "" and has to survive as null. A
+             store that lands FIRST legitimately has nothing above it, and a
+             truthiness fallback would quietly swap that for the fresh read.
+           • Only a proposal the build derived from a real menu read is a
+             position Dan approved. When the read was unavailable, the record
+             holds a placeholder — index 0, both neighbours "" — and carrying
+             THAT over fires the staleness check on every finish, reporting a
+             menu change that never happened. `newItem` is the field only a
+             real proposal carries, and applyMegaMenuInsert already requires
+             it, so it is the marker here too. */
+        const approved = menu.proposal?.newItem ? menu.proposal : null;
         const approvedNeighbour = (stored, fresh) => (stored === undefined ? fresh : stored === "" ? null : stored);
-        proposal.index = menu.proposal?.index ?? proposal.index;
-        proposal.insertAfter = approvedNeighbour(menu.proposal?.insertAfter, proposal.insertAfter);
-        proposal.insertBefore = approvedNeighbour(menu.proposal?.insertBefore, proposal.insertBefore);
+        proposal.index = approved?.index ?? proposal.index;
+        proposal.insertAfter = approvedNeighbour(approved?.insertAfter, proposal.insertAfter);
+        proposal.insertBefore = approvedNeighbour(approved?.insertBefore, proposal.insertBefore);
         const result = await shop().applyMegaMenuInsert(read.menu, proposal, {});
         patch.status = "applied";
         patch.appliedAt = nowIso();
@@ -1834,6 +1848,21 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
         patch.error = errorText(error);
       }
     }
+  }
+
+  /* Re-derive the checklist from the rule as it stands now, not as it stood
+     when the build ran. Records built before the menu item lost its "N."
+     prefix still carry a checklist that tells Dan to name the item
+     "1. Bishop Fire Department" — the one entry out of 109 named that way,
+     and precisely the instruction he follows when the write did not happen. */
+  if (patch.status !== "applied") {
+    patch.checklist = megaMenuChecklist({
+      menuTitle,
+      collectionTitle: record.collection.title,
+      insertAfter: checklistFrom?.insertAfter || "",
+      insertBefore: checklistFrom?.insertBefore || ""
+    });
+    patch.proposal = { ...(menu.proposal || {}), title: menuTitle };
   }
 
   return store().updateOnboarding(id, (r) => {
