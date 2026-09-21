@@ -1214,7 +1214,16 @@
     return `
       <ol class="wizard-rail ob-stepper" data-ob-stepper aria-label="Onboarding phases">
         ${PHASES.map((phase, i) => {
-          const phaseState = i < index ? "done" : i === index ? "current" : "todo";
+          /* Position alone is not completion. The Approvals step sits before
+             Report, so it inherited a tick the moment the build finished —
+             claiming Mega Menu, Flow and Helium were handled while they were
+             still "proposed". It is done when they actually are. */
+          const settings = record.sharedSettings || {};
+          const approvalsDone = ["megaMenu", "flow", "helium"].every((key) =>
+            ["applied", "verified", "confirmed"].includes(settings[key]?.status)
+          );
+          const positional = i < index ? "done" : i === index ? "current" : "todo";
+          const phaseState = phase.panel === "shared" && !approvalsDone ? (i === index ? "current" : "todo") : positional;
           return `
           <li data-state="${phaseState}">
             <button type="button" data-ob="goto" data-ob-target="${esc(phase.panel)}" ${i === index ? 'aria-current="step"' : ""}>
