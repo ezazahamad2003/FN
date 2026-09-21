@@ -1937,6 +1937,30 @@ function tagsOfOtherDepartments(tags, code) {
   return (tags || []).filter((tag) => DEPARTMENT_CODE_TAG_RE.test(clean(tag)) && clean(tag) !== code);
 }
 
+/*
+ * Why this face is not a render, in words that point at the real fix.
+ *
+ * `warnings[]` is a mixed bag — colour notes, the Class B caveat, the AI-blank
+ * notice — so whichever landed first is not the explanation. Falling back to
+ * warnings[0] told Dan to "upload a front photo of the blank" for a hat whose
+ * actual problem was a missing E01 embroidery proof: he would have uploaded a
+ * photo, re-run, and hit the same wall. Records built before the renderer
+ * carried `reason` are still in the store, so those are read the same way —
+ * the warning that explains THIS path, never the first one.
+ */
+function mockupReason(mockup) {
+  const warnings = (mockup.warnings || []).map(clean).filter(Boolean);
+  let text =
+    clean(mockup.reason) ||
+    warnings.find((w) => /^No artwork for /i.test(w) || /^No \w+ blank for /i.test(w)) ||
+    `the ${mockup.face} image could not be rendered (${mockup.path}).`;
+  /* The caller prefixes "<product> <colour> <face>: " and some warnings carry
+     "<colour> <face>: " of their own, which read as "Navy front: Navy front:". */
+  const prefix = `${mockup.color} ${mockup.face}:`;
+  if (text.toLowerCase().startsWith(prefix.toLowerCase())) text = text.slice(prefix.length).trim();
+  return text;
+}
+
 async function checkProduct(record, product, colorTable) {
   const code = departmentCode(record);
   const label = product.title || product.styleNumber || product.id;
@@ -2224,10 +2248,7 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   for (const product of record.products) {
     for (const mockup of product.mockups || []) {
       if (mockup.path === "missing-artwork" || mockup.path === "render-failed") {
-        /* The path-specific reason, not warnings[0] — that slot belongs to
-           whichever colour/Class B/AI-blank notice landed first, which is how
-           a missing embroidery proof got reported as a missing blank photo. */
-        report.missingInformation.push(`${product.title || product.id} ${mockup.color} ${mockup.face}: ${mockup.reason || mockup.warnings?.[0] || mockup.path}`);
+        report.missingInformation.push(`${product.title || product.id} ${mockup.color} ${mockup.face}: ${mockupReason(mockup)}`);
       }
     }
     /* Part 2 makes the blank photo Dan's to supply; when none arrived the

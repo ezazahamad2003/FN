@@ -702,6 +702,33 @@ test("an AI-generated blank is recorded and reported, never passed off as the ga
   assert.equal(checked.report.missingInformation.some((m) => /AI-generated/.test(m)), false);
 });
 
+test("a face with no artwork names the artwork, not whichever warning came first", async () => {
+  const { id } = await builtOnboarding();
+  const face = await store.updateOnboarding(id, (r) => {
+    const mockup = r.products[0].mockups[0];
+    // Records built before the renderer carried `reason` are still in the
+    // store, and this one is a hat with no embroidery proof.
+    delete mockup.reason;
+    mockup.path = "missing-artwork";
+    mockup.warnings = [
+      `${mockup.color} ${mockup.face}: no blank photo was supplied and no supplier photo was found, so this garment is AI-generated rather than a picture of the real item. Upload a ${mockup.face} photo of the blank and re-run to replace it.`,
+      `No artwork for E01 (VAC-E01); the ${mockup.face} image is the blank.`
+    ];
+    return r;
+  }).then((r) => r.products[0].mockups[0]);
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  const line = checked.report.missingInformation.find((m) => /No artwork for E01/.test(m));
+  assert.ok(line, JSON.stringify(checked.report.missingInformation));
+
+  /* Telling Dan to upload a blank photo for a hat whose real problem is a
+     missing E01 proof sends him round the loop again. */
+  assert.equal(/Upload a \w+ photo of the blank/.test(line), false, line);
+  const prefix = `${face.color} ${face.face}:`;
+  assert.equal(line.split(prefix).length - 1, 1, `"${prefix}" should appear once: ${line}`);
+});
+
+
 test("a blank from a real photo raises no invented-garment warning", async () => {
   const { id, record } = await builtOnboarding();
   assert.ok(record.products[0].mockups.every((mockup) => mockup.base === "photo"));
