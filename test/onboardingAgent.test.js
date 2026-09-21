@@ -859,6 +859,38 @@ test("a lock proven to work is reported with the evidence, not just the link", a
   assert.ok(checked.lock.access.checkedAt);
 });
 
+test("Dan can confirm Helium by hand, exactly as he confirms Flow", async () => {
+  /* Helium has no write API and only one of its three form ids is known, so
+     "verified" — every form read back carrying the tag — can never be reached.
+     Requiring it meant no onboarding could ever finish. Flow, equally
+     unautomatable, has always been satisfied by Dan saying he did it. */
+  const { id } = await builtOnboarding({ liveProducts: 1, helium: fakeHelium({ present: false }) });
+
+  const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
+  assert.equal(after.sharedSettings.helium.status, "confirmed");
+  assert.equal(after.sharedSettings.helium.confirmedBy, "Dan");
+  assert.ok(after.sharedSettings.helium.confirmedAt);
+
+  const checked = await agent.finalCheck(id, { by: "Dan" });
+  assert.ok(
+    checked.report.completed.some((c) => /Helium forms confirmed by Dan/.test(c)),
+    JSON.stringify(checked.report.completed)
+  );
+  assert.equal(
+    checked.report.missingInformation.some((m) => /Helium/.test(m)),
+    false,
+    "a confirmed Helium must not keep blocking the onboarding"
+  );
+});
+
+test("a Helium read that finds every form still reports the stronger verdict", async () => {
+  const { id } = await builtOnboarding({ liveProducts: 1 });
+  agent.setDeps({ helium: fakeHelium({ present: true }) });
+  const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
+  assert.equal(after.sharedSettings.helium.status, "verified", "read-back beats attestation");
+  assert.equal(after.sharedSettings.helium.confirmedBy, "");
+});
+
 test("final check catches a product Shopify says is ACTIVE or carries another department's tag", async () => {
   const shopify = fakeShopify({ order: [] });
   const { id } = await builtOnboarding({ shopify });

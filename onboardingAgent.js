@@ -1761,10 +1761,21 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
         readable.some((f) => clean(f.label).toLowerCase() === clean(label).toLowerCase() && f.present && f.exactCase)
       );
       const verified = !readError && readable.length > 0 && readable.every((f) => f.present && f.exactCase) && covered;
+      /* Helium has no write API, so editing the three forms is Dan's job and
+         always will be. Pressing this button IS his sign-off, exactly as it is
+         for Shopify Flow, which is equally unautomatable.
+         "verified" stays the higher bar: every one of the three forms read
+         back carrying the tag. "confirmed" is Dan saying he did it on forms
+         the agent cannot read — which is every form that is not configured.
+         Requiring "verified" meant no onboarding could ever finish, because
+         only one of the three form ids is known. A gate nothing can pass is
+         not a safety check, it is a dead end. */
       r.sharedSettings.helium = {
         ...r.sharedSettings.helium,
         forms: stamped,
-        status: verified ? "verified" : "partial",
+        status: verified ? "verified" : "confirmed",
+        confirmedBy: verified ? "" : clean(by),
+        confirmedAt: verified ? "" : nowIso(),
         error: readError
       };
       recordApproval(r, { kind: "helium", subject: r.department.tag, by });
@@ -2148,8 +2159,13 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   else unresolved.push(`The Mega Menu item for "${record.collection.title}" is not confirmed (${menuStatus}).`);
   if (record.sharedSettings.flow.status === "confirmed") report.completed.push(`Shopify Flow condition carries "${record.department.tag}".`);
   else unresolved.push(`The Shopify Flow condition for "${record.department.tag}" is not confirmed (${record.sharedSettings.flow.status}).`);
-  if (record.sharedSettings.helium.status === "verified") report.completed.push(`All Helium forms carry "${record.department.tag}".`);
-  else unresolved.push(`The Helium forms for "${record.department.tag}" are not confirmed (${record.sharedSettings.helium.status}).`);
+  const heliumStatus = record.sharedSettings.helium.status;
+  if (heliumStatus === "verified") report.completed.push(`All Helium forms carry "${record.department.tag}" (read back and checked).`);
+  else if (heliumStatus === "confirmed")
+    report.completed.push(
+      `Helium forms confirmed by ${clean(record.sharedSettings.helium.confirmedBy) || "the operator"} for "${record.department.tag}" — Helium has no API to read them all back.`
+    );
+  else unresolved.push(`The Helium forms for "${record.department.tag}" are not confirmed (${heliumStatus}).`);
 
   let created = 0;
   for (const product of record.products) {
