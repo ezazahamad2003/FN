@@ -274,7 +274,7 @@ function learnKeyTemplates(locks) {
     secretKeyOptions: secret.key.options ? stripPrivate(secret.key.options) : null,
     lockOptions: source.options ? stripPrivate(source.options) : null,
     resourceOptions: resource && resource.resource_options ? stripPrivate(resource.resource_options) : null,
-    fromLockId: source.id == null ? null : source.id
+    fromLockId: lockId(source)
   };
 }
 
