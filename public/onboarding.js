@@ -2312,8 +2312,15 @@
     const done = (key) => ["applied", "verified", "confirmed"].includes(settings[key]?.status);
 
     const steps = [];
-    if (!done("megaMenu") && state.caps?.megaMenu?.writable) {
-      steps.push({ label: "Adding to the Mega Menu…", suffix: "/shared-settings/megaMenu/approve", body: { by, applied: true } });
+    /* applied:true means "a human already made this change" — the server
+       stamps it done and calls nothing. That was right while the app had no
+       navigation scope and the menu could only be edited by hand; with the
+       scope granted it would record a menu item that was never created. The
+       card promises "add the store to the Mega Menu", so send applied:false
+       and let the server actually insert it. */
+    const menuStep = !done("megaMenu") && state.caps?.megaMenu?.writable;
+    if (menuStep) {
+      steps.push({ label: "Adding to the Mega Menu…", suffix: "/shared-settings/megaMenu/approve", body: { by, applied: false } });
     }
     for (const kind of ["flow", "helium"]) {
       if (!done(kind)) steps.push({ label: `Recording ${kind === "flow" ? "Flow" : "Helium"}…`, suffix: `/shared-settings/${kind}/approve`, body: { by, applied: true } });
@@ -2332,7 +2339,18 @@
         }
         applyRecord(payload);
         const record = state.record;
-        if (record.status === "complete") {
+        /* The insert can still fail on a live menu — a stale proposal, a
+           neighbour renamed since the build. The server falls back to
+           "manual" and keeps the checklist; saying nothing here would leave
+           the operator believing the store is in the menu. */
+        const menu = record.sharedSettings?.megaMenu || {};
+        if (menuStep && !["applied", "verified"].includes(menu.status)) {
+          showBanner(
+            page(),
+            "obDetailError",
+            `Everything else is recorded, but the Mega Menu was not saved${menu.error ? ` (${menu.error})` : ""}. Add the item by hand with the checklist in Approvals, then press finish again.`
+          );
+        } else if (record.status === "complete") {
           showBanner(page(), "obDetailError", "Done. Set prices and make the products Active in Shopify to put the store live.", "ok");
         }
       },

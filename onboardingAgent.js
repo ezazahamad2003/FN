@@ -2154,9 +2154,38 @@ async function finalCheck(id, { by = "", build = null } = {}) {
     );
   }
 
+  /* §12 the menu is readable and writable with the app's current scopes, so a
+     recorded "applied" is a claim and the live menu is the proof — read it
+     back and let what is actually there decide. The recorded status only
+     stands in when the menu cannot be read at all (scope withdrawn, Shopify
+     down); trusting it otherwise is how an item nobody created passes. */
   const menuStatus = record.sharedSettings.megaMenu.status;
-  if (menuStatus === "verified" || menuStatus === "applied") report.completed.push(`Mega Menu carries "${record.collection.title}".`);
-  else unresolved.push(`The Mega Menu item for "${record.collection.title}" is not confirmed (${menuStatus}).`);
+  let menuCheck;
+  try {
+    menuCheck = await shop().verifyMegaMenu(record.collection.title);
+  } catch (error) {
+    menuCheck = { available: false, present: false, reason: errorText(error) };
+  }
+  if (menuCheck.available && menuCheck.present) {
+    report.completed.push(
+      `Mega Menu carries "${record.collection.title}"${menuCheck.before ? `, directly below "${menuCheck.before}"` : ""}${
+        menuCheck.after ? ` and above "${menuCheck.after}"` : ""
+      } (read back from the live menu).`
+    );
+  } else if (menuCheck.available) {
+    /* "is not confirmed" is load-bearing: the classifier at the end of this
+       function sorts unresolved lines into missing information vs. warnings by
+       exactly that phrase, and an absent menu item is missing information. */
+    unresolved.push(
+      `The Mega Menu item for "${record.collection.title}" is not confirmed — the live menu was read back and the item is not there (recorded ${menuStatus}).`
+    );
+  } else if (menuStatus === "verified" || menuStatus === "applied") {
+    report.completed.push(
+      `Mega Menu recorded as ${menuStatus} for "${record.collection.title}", but the menu could not be read back to prove it (${menuCheck.reason || "the menu could not be read"}).`
+    );
+  } else {
+    unresolved.push(`The Mega Menu item for "${record.collection.title}" is not confirmed (${menuStatus}).`);
+  }
   if (record.sharedSettings.flow.status === "confirmed") report.completed.push(`Shopify Flow condition carries "${record.department.tag}".`);
   else unresolved.push(`The Shopify Flow condition for "${record.department.tag}" is not confirmed (${record.sharedSettings.flow.status}).`);
   const heliumStatus = record.sharedSettings.helium.status;
@@ -2229,6 +2258,11 @@ async function finalCheck(id, { by = "", build = null } = {}) {
       r.build = build;
     }
     r.report = { ...r.report, ...report };
+    // The read-back above is the same proof verifySharedSettings records, so
+    // the console shows "verified" rather than the operator's "applied".
+    if (menuCheck.available && menuCheck.present && r.sharedSettings.megaMenu.status !== "verified") {
+      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "" };
+    }
     // §12 "Never report an onboarding as complete while anything is unresolved."
     if (complete) {
       r.status = "complete";

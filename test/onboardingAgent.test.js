@@ -126,7 +126,12 @@ function fakeHelium({ present = false } = {}) {
 
 /* The Shopify layer: records every call so the tests can assert on the exact
    input productSet / attachMockups received. */
-function fakeShopify({ megaMenuAvailable = false, order = [], liveProducts = 0 } = {}) {
+/* megaMenuAvailable defaults to true: the app's token carries
+   write_online_store_navigation, so a suite that defaults to "no scope" tests
+   a store we do not run. menuTitles is the live menu — verifyMegaMenu answers
+   from it, so an item nobody inserted cannot be "verified". */
+function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, menuTitles = [] } = {}) {
+  const liveMenuTitles = [...menuTitles];
   const calls = { setProduct: [], attachMockups: [], duplicate: [], collection: [] };
   let lastSet = null;
   const shopify = {
@@ -241,11 +246,17 @@ function fakeShopify({ megaMenuAvailable = false, order = [], liveProducts = 0 }
       return { newItem: { title: COLLECTION_TITLE, type: "COLLECTION", url: "/collections/1-vacaville-fire-department" }, index: 3, insertAfter: "Suisun City Fire Department", insertBefore: "FN Simple Merch", alreadyPresent: false, storeItemId: "gid://shopify/MenuItem/9" };
     },
     async applyMegaMenuInsert() {
+      if (!megaMenuAvailable) throw new Error("Mega Menu is not writable: Access denied to menus.");
+      liveMenuTitles.push(COLLECTION_TITLE);
       return { applied: true, alreadyPresent: false, menuItemId: "gid://shopify/MenuItem/50", index: 3 };
     },
-    async verifyMegaMenu() {
-      return { available: true, present: true, index: 3, before: "Suisun City Fire Department", after: "FN Simple Merch" };
+    async verifyMegaMenu(title) {
+      if (!megaMenuAvailable) return { available: false, present: false, index: -1, before: null, after: null, reason: "Access denied to menus.", accessDenied: true };
+      const index = liveMenuTitles.indexOf(title);
+      return { available: true, present: index !== -1, index, before: index > 0 ? liveMenuTitles[index - 1] : "Suisun City Fire Department", after: index === -1 ? null : "FN Simple Merch" };
     },
+    // A change made by hand in Shopify admin, which the API never saw.
+    addMenuTitleByHand: (title) => liveMenuTitles.push(title),
     lastSetProduct: () => lastSet
   };
   return shopify;
@@ -757,7 +768,9 @@ test("final check stays open until the shared settings are confirmed, then compl
   assert.ok(record.report.completed.some((c) => c.includes(COLLECTION_TITLE)));
 
   await agent.recordLock(id, { secretLink: "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123", by: "dan" });
-  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
+  // applied:false is what the finish card sends now the scope is granted: the
+  // agent performs the insert rather than recording one it never made.
+  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
   await agent.approveSharedSetting(id, "flow", { by: "dan" });
   deps.helium.checkAllForms = fakeHelium({ present: true }).checkAllForms;
   await agent.approveSharedSetting(id, "helium", { by: "dan" });
@@ -777,6 +790,66 @@ test("final check stays open until the shared settings are confirmed, then compl
   assert.ok(checked.report.driveDocUrl, "the report is saved to the department folder");
   assert.ok(agent.reportHtml(checked).includes("1. Completed"));
 });
+
+/* The Mega Menu is the one shared setting the agent can now write itself, so
+   the record's own word for it stopped being evidence. These three pin what
+   counts as proof. */
+
+const MENU_LINK = "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123";
+
+// Everything except the menu, so the menu alone decides the verdict.
+async function settleAllButTheMenu(deps, id) {
+  await agent.recordLock(id, { secretLink: MENU_LINK, by: "dan" });
+  await agent.approveSharedSetting(id, "flow", { by: "dan" });
+  deps.helium.checkAllForms = fakeHelium({ present: true }).checkAllForms;
+  await agent.approveSharedSetting(id, "helium", { by: "dan" });
+}
+
+test("a menu item recorded as applied but absent from the live menu never passes", async () => {
+  const { deps, id } = await builtOnboarding({ liveProducts: 1 });
+  await settleAllButTheMenu(deps, id);
+
+  // "I did this" on a menu nobody edited. The console used to send exactly
+  // this from the finish button, which recorded an item it never created.
+  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
+  assert.equal((await store.getOnboarding(id)).sharedSettings.megaMenu.status, "applied");
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.notEqual(checked.status, "complete");
+  assert.ok(
+    checked.report.missingInformation.some((m) => /Mega Menu/.test(m) && /not there/.test(m)),
+    JSON.stringify(checked.report.missingInformation)
+  );
+  assert.equal(checked.report.completed.some((c) => /Mega Menu carries/.test(c)), false);
+});
+
+test("a menu item added by hand is proof as soon as the live menu shows it", async () => {
+  const { deps, id } = await builtOnboarding({ liveProducts: 1 });
+  await settleAllButTheMenu(deps, id);
+
+  deps.shopify.addMenuTitleByHand(COLLECTION_TITLE);
+  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.equal(checked.status, "complete", JSON.stringify(checked.report.missingInformation));
+  assert.ok(checked.report.completed.some((c) => /Mega Menu carries/.test(c) && /read back from the live menu/.test(c)));
+  // The read-back is the same proof verifySharedSettings records.
+  assert.equal(checked.sharedSettings.megaMenu.status, "verified");
+});
+
+test("a menu that cannot be read falls back to what was recorded, and says so", async () => {
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { megaMenuAvailable: false } });
+  await settleAllButTheMenu(deps, id);
+
+  // No scope, so the checklist is the only path and Dan's word is all there is.
+  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.equal(checked.status, "complete", JSON.stringify(checked.report.missingInformation));
+  const line = checked.report.completed.find((c) => /Mega Menu/.test(c));
+  assert.match(line, /could not be read back to prove it/);
+});
+
 
 const SECRET_LINK = "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123";
 

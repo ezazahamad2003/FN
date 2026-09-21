@@ -219,7 +219,7 @@ platform. `#/onboarding/reference` can re-import it at any time.
 | Locksmith | Admin API (`LOCKSMITH_ACCESS_TOKEN`). The secret-link key shape is **learned** from an existing lock on the store rather than guessed, and a guessed shape is dry-run first. Without a token the agent produces the lock checklist. |
 | Helium Customer Fields | No write API exists. The agent **reads** the public registration form JSON, reports whether the department tag is present and exactly where it belongs alphabetically, and Dan makes the edit in all three forms. |
 | Shopify Flow | No API. Checklist only. |
-| Mega Menu | `menuUpdate` needs `write_online_store_navigation`, which this app's token does not carry today, so the agent computes the exact position and hands Dan a checklist. Grant the scope and it applies the change itself after approval. |
+| Mega Menu | `menuUpdate` needs `write_online_store_navigation`, and the app's token carries it, so after Dan approves, the agent inserts the store itself — directly below the last department store and above the first public store, keeping every existing entry. The final check reads the menu back and only the live menu counts. If the write ever fails the agent falls back to the computed checklist. |
 
 ## No gibberish on product images
 

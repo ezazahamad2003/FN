@@ -17,10 +17,13 @@ only for reading messy policies, drafting the rep email, and rendering mockups.
   "Next Level Cotton Tee, Short Sleeve (NL3600)", SKU `NL3600-S-NVY`,
   vendor = brand, productType Headwear / Tees & Tanks). They are the "master
   draft product" of spec §9.1.
-- The platform's Shopify token (client credentials, app `fn-onboarding`) has
-  scopes `read/write_files, read/write_products, read/write_publications`. It
-  can NOT read or write navigation menus (`write_online_store_navigation`) or
-  customers. The MegaMenu is Shopify menu `gid://shopify/Menu/191418204297`
+- The platform's Shopify token (client credentials, app `fn-onboarding`) carries
+  `write_files, write_online_store_navigation, write_products,
+  write_publications` (verified against a freshly minted token on 2026-09-21;
+  `menus` returns `main-menu, footer, megamenu, customer-account-main-menu`).
+  The navigation scope was added after the first build, so the Mega Menu is
+  read AND written by the agent — it is no longer a checklist. The token still
+  cannot read or write customers. The MegaMenu is Shopify menu `gid://shopify/Menu/191418204297`
   (handle `megamenu`); department stores are nested under its "Store" item,
   oldest→newest, followed by the public stores (FN Simple Merch, SF City Gear,
   Bay Area Firefighter, LOGIN…).
@@ -182,8 +185,12 @@ Container `department-onboardings`, blob `<id>` where
    collection), `shared-settings` (proposals only; applying is a separate
    approval action), `final-check`, `report`.
 5. **Shared settings** (`POST …/shared-settings/propose`, `…/approve`,
-   `…/verify`): Mega Menu (API when scope present, else checklist), Flow
-   (checklist), Helium (checklist + public-form verification).
+   `…/verify`): Mega Menu (applied through the API after approval — the scope
+   is granted; the checklist survives only as the fallback for a failed or
+   unreadable menu), Flow (checklist), Helium (checklist + public-form
+   verification). `approve` with `applied: true` means a human already made
+   the change and nothing is called, so the console sends it only for Flow and
+   Helium.
 6. **Report** (`GET …/report`): four sections; never "complete" while anything
    is unresolved.
 
@@ -241,3 +248,4 @@ ONBOARDING_MOCKUP_VERIFY=on
 - The agent never edits files in the Omni Printer folder — it only downloads copies.
 - Shared settings are never written without an approval record; if the API cannot write (scope missing), the item becomes a checklist and Dan confirms.
 - The report is `complete` only when: code approved, both folders exist, collection ok, lock verified or confirmed, menu/flow/helium confirmed, every product created with unique SKUs and images, and no missing information.
+- The final check reads the Mega Menu back and believes the live menu over the record: a stored `applied` passes only when the menu itself cannot be read.
