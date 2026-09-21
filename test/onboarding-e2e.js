@@ -169,6 +169,38 @@ async function main() {
 
     // --- build inputs ---------------------------------------------------
     const deptCode = afterSetup.onboarding.department.code.value;
+
+    /* Print-ready files are placed in the Omni Printer folder by the print
+       shop, never by the agent, and a row whose file is missing fails
+       validation — so a real build stops at that gate until they exist. Stand
+       in for the print shop here so --build exercises the build itself rather
+       than the refusal. Dry runs deliberately skip this: seeing the missing
+       file reported IS the thing a dry run checks. */
+    if (DO_BUILD && drive.productionFolderId) {
+      /* The SERVER restores the Google refresh token from platform storage at
+         boot; this process never did, so calling Drive from here without
+         hydrating first fails with "No Google account is connected" even
+         though the server two feet away is happily talking to Drive. */
+      await require("../auth").hydrateTokensFromStore();
+      const { uploadBuffer } = require("../drive");
+      const source = assetPath("Oakdale FD Main.png");
+      const already = (drive.productionFiles || []).map((f) => f.name);
+      const uploaded = [];
+      for (const face of ["F01", "B01"]) {
+        const name = `${deptCode}-${face}.png`;
+        if (already.includes(name)) continue;
+        await uploadBuffer({ originalname: name, mimetype: "image/png", buffer: fs.readFileSync(source) }, drive.productionFolderId);
+        uploaded.push(name);
+      }
+      const refreshed = await api("POST", `/api/onboardings/${id}/production-files`, { json: {} });
+      const names = (refreshed.onboarding.drive.productionFiles || []).map((f) => f.name);
+      step(
+        "print files staged in the Omni Printer folder",
+        names.includes(`${deptCode}-F01.png`) && names.includes(`${deptCode}-B01.png`),
+        uploaded.length ? `uploaded ${uploaded.join(", ")}` : "already present"
+      );
+    }
+
     const products = [
       {
         brand: "Next Level",
