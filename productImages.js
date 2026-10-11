@@ -278,4 +278,29 @@ async function renderFaceImage({
   }
 }
 
-module.exports = { renderFaceImage };
+/**
+ * A back view of the SAME garment, made from its front photo.
+ *
+ * Generating a back from a text prompt invents a different garment: on the
+ * NL3600 test the front was a real Midnight Navy Next Level photo and the
+ * generated back was a brighter navy tee with another collar, so the two
+ * product images did not look like one shirt. Editing the front photo keeps
+ * the colour, fabric, trims and framing, and only turns the garment around.
+ */
+async function deriveBackBlank({ frontBuffer, productType = "garment", color = "" }) {
+  const prompt =
+    "Image 1 is a studio product photo of a " + productType + (color ? " in " + color : "") + ", seen from the front. " +
+    "Show this exact same " + productType + " from the back instead, as the matching back-view product photo. " +
+    "Keep everything identical: the same colours on every part (body, panels, mesh, brim, trims, stitching), " +
+    "the same fabric, the same proportions, the same lighting, the same plain white background, " +
+    "and the same size and position in the frame. " +
+    "The back is plain and undecorated: no logo, no text, no tags, no labels, no graphics." +
+    /* A cap's back is never seen in its front photo, and the model filled it
+       with a solid twill panel on a Richardson 112, whose back is all mesh. */
+    (/\b(hat|cap|snapback|trucker)\b/i.test(productType)
+      ? " For a cap, the rear panels are the same material as the side panels in image 1 — if the sides are mesh, the whole back is mesh — with the adjustable closure strap at the bottom."
+      : "");
+  return editImage({ images: [{ buffer: frontBuffer, mimeType: "image/png", name: "front.png" }], prompt, quality: "high" });
+}
+
+module.exports = { renderFaceImage, deriveBackBlank };

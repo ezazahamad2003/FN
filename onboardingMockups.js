@@ -53,6 +53,7 @@ const UPSCALED_WARNING = "rendered at 1024 and upscaled";
 function defaultRenderers() {
   return {
     renderFaceImage: (...args) => require("./productImages").renderFaceImage(...args),
+    deriveBackBlank: (...args) => require("./productImages").deriveBackBlank(...args),
     generateBlankGarment: (...args) => require("./ai").generateBlankGarment(...args),
     findSupplierBlank: (...args) => require("./blanks").findSupplierBlank(...args),
     reason: (...args) => require("./azureOpenai").reason(...args)
@@ -132,18 +133,46 @@ function rethrowUnreadable(error, kind) {
  */
 async function normalizeBlank(buffer, { size = MODEL_INPUT_SIZE, mimetype = "" } = {}) {
   const { kind, pipeline } = openImage(buffer, { mimetype });
-  let fitted;
+  let flat;
   try {
-    fitted = await pipeline
-      .rotate()
-      .resize({ width: size, height: size, fit: "inside", withoutEnlargement: false })
-      .flatten({ background: "#ffffff" })
-      .png()
-      .toBuffer();
+    flat = await pipeline.rotate().flatten({ background: "#ffffff" }).png().toBuffer();
   } catch (error) {
     rethrowUnreadable(error, kind);
   }
-  return toSquare(fitted, size);
+  return frameGarment(flat, size);
+}
+
+/* Share of the square the garment's longer side fills. Supplier photos arrive
+   framed every which way — a Richardson 112 is a 1200 × 1800 portrait with
+   the cap in the top third — and fitting them as-is left a small cap stranded
+   at the top of an otherwise empty square. */
+const GARMENT_FILL = 0.82;
+
+/**
+ * Crop the white margin off a garment photo, then centre it on a white
+ * size × size square at GARMENT_FILL, so every product image in a store has
+ * the garment at the same size and position. A photo with no margin to crop
+ * (or one trim cannot read) is just fitted.
+ */
+async function frameGarment(flatPng, size) {
+  let trimmed = flatPng;
+  try {
+    trimmed = await sharp(flatPng).trim({ background: "#ffffff", threshold: 18 }).png().toBuffer();
+  } catch {
+    trimmed = flatPng;
+  }
+  const meta = await sharp(trimmed).metadata();
+  const target = Math.round(size * GARMENT_FILL);
+  const scale = target / Math.max(meta.width || 1, meta.height || 1);
+  const width = Math.max(1, Math.round((meta.width || 1) * scale));
+  const height = Math.max(1, Math.round((meta.height || 1) * scale));
+  const garment = await sharp(trimmed).resize({ width, height, fit: "fill", kernel: "lanczos3" }).png().toBuffer();
+  const left = Math.floor((size - width) / 2);
+  const top = Math.floor((size - height) / 2);
+  return sharp({ create: { width: size, height: size, channels: 3, background: "#ffffff" } })
+    .composite([{ input: garment, left, top }])
+    .png()
+    .toBuffer();
 }
 
 /** Final output sizing: contain on a white size × size canvas, PNG. */
@@ -304,6 +333,10 @@ function defaultGenerateBlank(product) {
     });
 }
 
+function defaultDeriveBack(product) {
+  return ({ frontBuffer, color }) => getRenderers().deriveBackBlank({ frontBuffer, productType: product.type || "garment", color });
+}
+
 function defaultSupplierLookup(product, onLog) {
   return async (color) => {
     const found = await getRenderers().findSupplierBlank(
@@ -325,7 +358,7 @@ function defaultSupplierLookup(product, onLog) {
  * `model` is what the renderer sees (1024); `stock(size)` is the photo itself
  * at output size, so a stock face from a 12 MP photo is not a 1024 upscale.
  */
-async function resolveBases({ product, color, photos, supplierLookup, generateBlank, needBack, log }) {
+async function resolveBases({ product, color, photos, supplierLookup, generateBlank, deriveBack, needBack, log }) {
   const base = { front: null, back: null, frontSource: null, backSource: null, warnings: [] };
 
   const take = async (face, source, getter) => {
@@ -355,7 +388,11 @@ async function resolveBases({ product, color, photos, supplierLookup, generateBl
     (generateBlank && (await take("front", "generated", async () => asBuffer(await generateBlank({ face: "front", color, product })))));
 
   if (needBack) {
+    /* A back made from the front photo is the same garment turned around; a
+       back generated from words is a different garment, so it is the last
+       resort. */
     (await take("back", "photo", async () => asBuffer(photos.back))) ||
+      (deriveBack && base.front && (await take("back", "derived", async () => asBuffer(await deriveBack({ frontBuffer: base.front.model, color, product }))))) ||
       (generateBlank && (await take("back", "generated", async () => asBuffer(await generateBlank({ face: "back", color, product })))));
   } else if (photos.back) {
     // Undecorated items only get a back image when Dan supplied one.
@@ -366,6 +403,11 @@ async function resolveBases({ product, color, photos, supplierLookup, generateBl
      Part 2 makes the blank photo Dan's to supply. Saying so here is the only
      way it reaches him: the source is otherwise just a word in a log line that
      scrolls past during the build. */
+  if (base.backSource === "derived") {
+    base.warnings.push(
+      `${color} back: no back photo was supplied, so the back view was made from the ${base.frontSource === "photo" ? "front photo" : "supplier's front photo"} by the image model. Upload a back photo of the blank and re-run to replace it.`
+    );
+  }
   for (const face of ["front", "back"]) {
     if (base[`${face}Source`] !== "generated") continue;
     base.warnings.push(
@@ -388,7 +430,8 @@ async function stockImage(faceBase, size) {
  * Each result: { color, colorCode, style, face, buffer, fileName, path, base,
  * warnings, verified }.
  *   path      "render" | "render-failed" | "stock" | "missing-artwork"
- *   base      "photo" | "supplier" | "generated" | null (no base at all)
+ *   base      "photo" | "supplier" | "derived" (back made from the front
+ *             photo) | "generated" | null (no base at all)
  *   buffer    a size × size PNG; null ONLY when a decorated face has no base
  *             at all (no photo, no supplier hit, generation failed) — the
  *             warning says why, and the caller must not upload it.
@@ -406,6 +449,7 @@ async function renderProductMockups({
   blankPhotos = {},
   supplierLookup,
   generateBlank,
+  deriveBack,
   onLog,
   verify = process.env.ONBOARDING_MOCKUP_VERIFY !== "off",
   size = MOCKUP_SIZE
@@ -424,6 +468,7 @@ async function renderProductMockups({
   const styleNumber = product.styleNumber || "";
   const lookup = supplierLookup === undefined ? defaultSupplierLookup(product, log) : supplierLookup;
   const generate = generateBlank === undefined ? defaultGenerateBlank(product) : generateBlank;
+  const derive = deriveBack === undefined ? defaultDeriveBack(product) : deriveBack;
 
   for (const color of colorEntries(product)) {
     const colorCode = color.code || String(color.name).toUpperCase().replace(/[^A-Z0-9]+/g, "");
@@ -438,6 +483,7 @@ async function renderProductMockups({
       photos,
       supplierLookup: lookup,
       generateBlank: generate,
+      deriveBack: derive,
       needBack: hasDecoration,
       log
     });

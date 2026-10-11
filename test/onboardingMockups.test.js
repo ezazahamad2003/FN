@@ -26,8 +26,8 @@ async function dims(buffer) {
   return { width: meta.width, height: meta.height, format: meta.format };
 }
 
-function fakeRenderers({ failFirstWithSize = false, failAlways = false, reasonAnswer = null } = {}) {
-  const calls = { render: [], generate: [], supplier: [], reason: [] };
+function fakeRenderers({ failFirstWithSize = false, failAlways = false, reasonAnswer = null, deriveOk = false } = {}) {
+  const calls = { render: [], generate: [], supplier: [], reason: [], derive: [] };
   let failed = false;
   mockups.setRenderers({
     renderFaceImage: async (options) => {
@@ -39,6 +39,13 @@ function fakeRenderers({ failFirstWithSize = false, failAlways = false, reasonAn
       }
       const base = options.face === options.sourceFace ? options.baseBuffer : await options.getBackBlank();
       return { buffer: base, path: "render" };
+    },
+    // Off by default so the older tests keep exercising the generated
+    // fallback; deriveOk turns on the back-from-front path.
+    deriveBackBlank: async (options) => {
+      calls.derive.push(options);
+      if (!deriveOk) throw new Error("derive unavailable");
+      return solid(300, 300, "#202060");
     },
     generateBlankGarment: async (options) => {
       calls.generate.push(options);
@@ -565,4 +572,62 @@ test("a face names its own reason, not whichever warning landed first", async ()
   assert.ok(front.warnings.some((w) => /AI-generated/.test(w)), "the generated blank is still reported");
   assert.notEqual(front.warnings[0], front.reason, "warnings[0] is NOT the path reason here — that is the bug");
   assert.equal(calls.render.length, 0, "nothing is rendered when the artwork is absent");
+});
+
+
+test("renderProductMockups: a missing back is made from the front photo before one is invented", async () => {
+  const calls = fakeRenderers({ deriveOk: true });
+  const out = await mockups.renderProductMockups({
+    product: tee({ colors: ["Navy"] }),
+    departmentCode: "VAC",
+    artwork: {
+      F01: { buffer: await solid(20, 20, "#fff"), mimetype: "image/png", name: "VAC-F01.png" },
+      B01: { buffer: await solid(20, 20, "#fff"), mimetype: "image/png", name: "VAC-B01.png" }
+    },
+    blankPhotos: { Navy: { front: await solid(100, 120, "#123456") } },
+    supplierLookup: null,
+    verify: false,
+    size: SIZE
+  });
+  assert.deepEqual(out.map((m) => [m.face, m.base]), [["front", "photo"], ["back", "derived"]]);
+  assert.equal(calls.derive.length, 1, "the back came from the front photo");
+  assert.equal((await dims(calls.derive[0].frontBuffer)).width, 1024, "the deriver sees the normalised front");
+  assert.equal(calls.generate.length, 0, "nothing was invented");
+  assert.match(out[1].warnings.join(" "), /back view was made from the front photo/);
+  assert.ok(!out.some((m) => m.warnings.some((w) => /AI-generated/.test(w))));
+});
+
+test("normalizeBlank crops the margin and centres the garment at a fixed size", async () => {
+  // A 1200 x 1800 portrait with the "cap" in the top third, like the
+  // Richardson 112 supplier photo.
+  const cap = await solid(600, 300, "#1b2a4a");
+  const portrait = await sharp({ create: { width: 1200, height: 1800, channels: 3, background: "#ffffff" } })
+    .composite([{ input: cap, left: 300, top: 200 }])
+    .png()
+    .toBuffer();
+  const out = await mockups.normalizeBlank(portrait, { size: 1000 });
+  assert.deepEqual(await dims(out), { width: 1000, height: 1000, format: "png" });
+  // The garment is centred: the middle of the square is the cap, the corners white.
+  const centre = await pixel(out, 500, 500);
+  assert.ok(centre.r < 60 && centre.b > 50, "centre is the garment");
+  const corner = await pixel(out, 10, 10);
+  assert.ok(corner.r > 240 && corner.g > 240 && corner.b > 240, "corner is white");
+  // Its longer side fills ~82% of the square (600 px wide -> ~820 px).
+  const { data, info } = await sharp(out).raw().toBuffer({ resolveWithObject: true });
+  let minX = info.width, maxX = 0;
+  for (let x = 0; x < info.width; x++) {
+    const i = (500 * info.width + x) * info.channels;
+    if (data[i] < 128) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); }
+  }
+  assert.ok(Math.abs(maxX - minX + 1 - 820) <= 4, `garment width ${maxX - minX + 1}`);
+});
+
+test("blanks.typeFamily groups the wordings one garment is booked under", () => {
+  const blanks = require("../blanks");
+  assert.equal(blanks.typeFamily("Snapback hat"), "hat");
+  assert.equal(blanks.typeFamily("Trucker Cap"), "hat");
+  assert.equal(blanks.typeFamily("T-shirt"), "shirt");
+  assert.equal(blanks.typeFamily("Long sleeve shirt"), "long sleeve shirt");
+  assert.equal(blanks.typeFamily("Pullover Hoodie"), "hoodie");
+  assert.equal(blanks.typeFamily("Pants"), "");
 });

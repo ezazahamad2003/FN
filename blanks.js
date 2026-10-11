@@ -347,7 +347,7 @@ Find the blank wholesale ${productType || "garment"}${styleName ? ` style "${sty
       garmentColor
         ? `
 
-COLOURWAY MATTERS MORE THAN ANYTHING ELSE HERE. The department ordered this style in ${garmentColor}. Many of these sites publish a SEPARATE page per colourway (…/unisex-cotton-t-shirt-navy, …?color=Navy). Return the page for ${garmentColor} — not the black, white or heather page for the same style. A page showing the right style in the wrong colour is close to useless, because the photo on it cannot be used.`
+COLOURWAY MATTERS MORE THAN ANYTHING ELSE HERE. The department ordered this style in ${garmentColor}. Many of these sites publish a SEPARATE page per colourway (…/unisex-cotton-t-shirt-navy, …?color=Navy). Return the page for ${garmentColor} — not the black, white or heather page for the same style. A page showing the right style in the wrong colour is close to useless, because the photo on it cannot be used. A two-tone colourway (navy front with caramel or white mesh, a contrasting brim) is the WRONG colour for a solid ${garmentColor} order unless ${garmentColor} itself names two colours.`
         : ""
     }
 
@@ -383,6 +383,11 @@ Only list URLs you actually saw in the search results. If you cannot confirm the
  * the right garment, the right colour, undecorated, and shot flat from the
  * front, because every one of those failures ends up on a customer listing.
  */
+// "Navy/White", "Navy & Caramel", "Black - Charcoal" name a two-tone colourway.
+function namesTwoColours(garmentColor) {
+  return /[/&+]|\s-\s|\band\b/i.test(String(garmentColor || ""));
+}
+
 async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, productType, productLabel }) {
   const openai = client();
   const response = await openai.chat.completions.create({
@@ -404,6 +409,7 @@ Return JSON only:
   "garmentMatches": true|false,   // is this the expected KIND of garment (t-shirt vs polo vs pants vs cap, correct sleeve length)?
   "garmentSeen": "what garment is actually shown",
   "colourMatches": true|false,    // true if the expected colour was not specified
+  "twoTone": true|false,          // true if parts of the garment are a different colour (mesh back, brim, panels, sleeves, trim)
   "colourSeen": "the garment's actual colour",
   "undecorated": true|false,      // false if ANY logo, text, emblem, patch or printed graphic appears on the garment
   "decorationSeen": "what decoration is on it, if any",
@@ -411,6 +417,8 @@ Return JSON only:
   "backgroundClean": true|false,  // plain white or plain neutral studio background
   "singleGarment": true|false     // false if the image shows several garments, a colour grid, or a collage
 }
+
+colourMatches is about the WHOLE garment. A garment whose parts are different colours (a navy front with caramel, khaki or white mesh, a contrasting brim, raglan sleeves in another colour) does NOT match a single expected colour such as "Navy". It matches only when the expected colour itself names those colours (for example "Navy/Caramel" or "Navy/White").
 
 "flat-front" means the garment alone, laid flat or on an invisible mannequin, photographed from the front. A photo containing a human model is "model", never "flat-front". Ignore brand neck labels and sewn-in care tags — those are not decoration.`
           },
@@ -425,6 +433,10 @@ Return JSON only:
   const reasons = [];
   if (parsed.garmentMatches !== true) reasons.push(`wrong garment (saw ${parsed.garmentSeen || "something else"})`);
   if (parsed.colourMatches !== true) reasons.push(`wrong colour (saw ${parsed.colourSeen || "unknown"})`);
+  /* Belt and braces: the model has passed a navy/caramel trucker as "Navy"
+     when asked only about colour. A two-tone garment is refused unless the
+     order itself names two colours. */
+  else if (parsed.twoTone === true && !namesTwoColours(garmentColor)) reasons.push(`two-tone garment (saw ${parsed.colourSeen || "more than one colour"}), but the order is solid ${garmentColor}`);
   if (parsed.undecorated !== true) reasons.push(`already decorated (${parsed.decorationSeen || "artwork present"})`);
   if (parsed.shotType !== "flat-front") reasons.push(`${parsed.shotType || "unknown"} shot, not a flat front view`);
   if (parsed.backgroundClean !== true) reasons.push("background is not a clean studio backdrop");
@@ -467,6 +479,25 @@ function blankCacheKey(product) {
   return `${vendor}|${brandStyle}|${product.garmentColor || ""}|${product.productType || ""}`.toLowerCase();
 }
 
+// The family word a type is booked under: "Snapback hat", "trucker cap" and
+// "Hat" are one garment family, as are "T-shirt", "tee" and "shirt".
+function typeFamily(productType) {
+  const t = String(productType || "").toLowerCase();
+  if (/\b(hat|hats|cap|caps|snapback|trucker|beanie|visor|headwear)\b/.test(t)) return /beanie/.test(t) ? "beanie" : "hat";
+  if (/hood/.test(t)) return "hoodie";
+  if (/crew|sweatshirt/.test(t)) return "sweatshirt";
+  if (/polo/.test(t)) return "polo";
+  if (/long\s*sleeve/.test(t)) return "long sleeve shirt";
+  if (/\b(t-?shirt|tee|shirt)\b/.test(t)) return "shirt";
+  return "";
+}
+
+function familyKeys(product) {
+  const family = typeFamily(product.productType);
+  if (!family) return [];
+  return [blankCacheKey({ ...product, productType: family })];
+}
+
 /** Drop one combination from the in-process cache, so a link the operator
     just booked is picked up by the next build without a restart. */
 function clearCachedBlank(cacheKey) {
@@ -506,6 +537,21 @@ async function findSupplierBlank(product, { onLog } = {}) {
   let booked = null;
   try {
     booked = await lookupSupplierLink(cacheKey);
+    /* The same garment is booked under whatever words the first order used
+       ("hat"), and a later order that says "Snapback hat" missed the verified
+       photo and fell through to an invented cap. A verified entry for the
+       same vendor, style and colour under the garment's family word counts. */
+    if (!booked || booked.status !== "verified") {
+      for (const key of familyKeys(product)) {
+        if (key === cacheKey) continue;
+        const alt = await lookupSupplierLink(key);
+        if (alt && alt.status === "verified" && alt.imageUrl) {
+          log(`link book: using the verified entry booked as "${key}"`);
+          booked = alt;
+          break;
+        }
+      }
+    }
   } catch (error) {
     log(`link book unavailable (${error.message}); using live search`);
   }
@@ -829,6 +875,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
 
 module.exports = {
   blankCacheKey,
+  typeFamily,
   clearCachedBlank,
   findSupplierBlank,
   // exported for tests
