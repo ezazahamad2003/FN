@@ -239,6 +239,9 @@
    attention state in the console. */
 .ob-code-card[data-state="attention"] { border-color: var(--warn-border); }
 .ob-code-card[data-state="done"] { border-color: var(--success-border); }
+.ob-reco { margin-bottom: 16px; display: grid; gap: 8px; justify-items: start; }
+.ob-reco-pick { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0; }
+.ob-reco-pick .code-input { font-size: 1.25rem; letter-spacing: 0.08em; }
 
 /* ---- Phase stepper (extends .wizard-rail: five phases, not four) --------- */
 .ob-stepper {

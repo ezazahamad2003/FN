@@ -358,7 +358,7 @@ function recordDefaults({ name = "", state = "", storeOrdinal = 1, storeName = "
       storeOrdinal: normalizeOrdinal(storeOrdinal),
       storeName: clean(storeName),
       contacts: (Array.isArray(contacts) ? contacts : []).map(normalizeContact).filter(Boolean),
-      code: { value: null, source: null, approved: false, approvedAt: null, approvedBy: "", candidates: [], matches: [] }
+      code: { value: null, source: null, approved: false, approvedAt: null, approvedBy: "", candidates: [], matches: [], recommendation: null }
     },
     packet: { files: [], notes: String(notes == null ? "" : notes) },
     drive: {

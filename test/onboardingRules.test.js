@@ -97,6 +97,26 @@ test("department code lookup ranks exact agency matches first", () => {
   assert.equal(rules.lookupDepartmentCode("Nowhere Fire", list).length, 0);
 });
 
+test("County and City tell same-named agencies apart (live MACS rows)", () => {
+  const list = [
+    { code: "ACF", agency: "Alameda County FD" },
+    { code: "ALA", agency: "City of Alameda FD" },
+    { code: "LAC", agency: "Los Angeles County FD" },
+    { code: "LFD", agency: "Los Angeles FD" },
+    { code: "LKC", agency: "Lake City FPD" },
+    { code: "LSH", agency: "Lake County FPD" }
+  ];
+  const top = (name) => rules.lookupDepartmentCode(name, list).filter((r) => r.score >= 0.95).map((r) => r.code);
+  assert.deepEqual(top("Alameda Fire Department"), ["ALA"]);
+  assert.deepEqual(top("Alameda County Fire Department"), ["ACF"]);
+  assert.deepEqual(top("County of Los Angeles Fire Department"), ["LAC"]);
+  assert.deepEqual(top("Los Angeles Fire Department"), ["LFD"]);
+  assert.deepEqual(top("Lake Fire Department"), [], "neither Lake City nor Lake County is a sure match");
+  assert.deepEqual(top("Lake County Fire Protection District"), ["LSH"]);
+  assert.deepEqual(rules.significantWords("Butte Co FD"), ["BUTTE", "COUNTY"]);
+  assert.deepEqual(rules.significantWords("City of Vacaville FD"), ["VACAVILLE"]);
+});
+
 test("names: folders, collection title, department tag", () => {
   assert.equal(rules.departmentFolderName("Vacaville Fire Department", "VAC"), "Vacaville Fire Department (VAC)");
   assert.equal(rules.productionFolderName("Vacaville Fire Department", "VAC"), "(VAC) Vacaville Fire Department");

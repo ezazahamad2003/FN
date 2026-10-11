@@ -651,7 +651,35 @@ function collectionResult(node, extras) {
   };
 }
 
-async function ensureDepartmentCollection({ title, descriptionHtml, bannerBuffer, bannerAlt } = {}, { onLog } = {}) {
+const COLLECTION_PRODUCT_TAGS_QUERY = `
+query collectionProductTags($id: ID!) {
+  collection(id: $id) {
+    products(first: 50) { nodes { tags } }
+  }
+}`;
+
+/*
+ * Fire department names repeat across states, and the collection is found by
+ * title. A same-titled collection whose products all carry ANOTHER
+ * department's code tag belongs to a namesake; filling it would mix two
+ * departments' products behind one lock. An empty collection, or one with any
+ * product tagged with this code, is this department's.
+ */
+async function assertCollectionBelongsTo(node, departmentCode) {
+  const code = String(departmentCode || "").trim().toUpperCase();
+  if (!code || !node?.id) return;
+  const data = await gql(COLLECTION_PRODUCT_TAGS_QUERY, { id: node.id });
+  const tagLists = (data?.collection?.products?.nodes || []).map((p) => (p.tags || []).map((t) => String(t).toUpperCase()));
+  if (!tagLists.length) return;
+  if (tagLists.some((tags) => tags.includes(code))) return;
+  const others = [...new Set(tagLists.flat().filter((t) => /^[A-Z]{3,4}$/.test(t)))].slice(0, 5);
+  throw new Error(
+    `A collection named "${node.title}" already exists and its products belong to another department${others.length ? ` (tagged ${others.join(", ")})` : ""}, not ${code}. ` +
+      "Two departments with the same name need different names in the store — rename this onboarding (for example add the state) before building."
+  );
+}
+
+async function ensureDepartmentCollection({ title, descriptionHtml, bannerBuffer, bannerAlt, departmentCode = "", knownCollectionGid = "" } = {}, { onLog } = {}) {
   const log = logger(onLog);
   const wantTitle = String(title || "").trim();
   if (!wantTitle) throw new Error("ensureDepartmentCollection needs a title.");
@@ -663,6 +691,9 @@ async function ensureDepartmentCollection({ title, descriptionHtml, bannerBuffer
   const warnings = [];
 
   let node = await findCollectionByExactTitle(wantTitle);
+  // A collection this onboarding already made is its own; anything else found
+  // by title is checked before a single product is added to it.
+  if (node && node.id !== knownCollectionGid) await assertCollectionBelongsTo(node, departmentCode);
   const created = !node;
   let descriptionUpdated = false;
   if (created) {
@@ -1063,6 +1094,94 @@ async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
   return { applied: true, alreadyPresent: false, menuItemId: inserted?.id || null, index: recomputed.index, insertAfter: recomputed.insertAfter, insertBefore: recomputed.insertBefore };
 }
 
+/* ---------------------------------------------------------------------------
+   Store deletion — only ever called by deleteStore() in the agent, for a store
+   the agent built, after Dan typed its name.
+   ------------------------------------------------------------------------- */
+
+const STORE_PRODUCTS_QUERY = `
+query storeProducts($id: ID!, $after: String) {
+  collection(id: $id) {
+    id
+    title
+    products(first: 100, after: $after) {
+      nodes { id legacyResourceId title status tags collections(first: 5) { nodes { id title } } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+const PRODUCT_DELETE_MUTATION = `
+mutation productDelete($input: ProductDeleteInput!) {
+  productDelete(input: $input) { deletedProductId userErrors { field message } }
+}`;
+
+const COLLECTION_DELETE_MUTATION = `
+mutation collectionDelete($input: CollectionDeleteInput!) {
+  collectionDelete(input: $input) { deletedCollectionId userErrors { field message } }
+}`;
+
+async function storeProducts(collectionGidOrId) {
+  const id = collectionGid(collectionGidOrId);
+  const out = [];
+  let after = null;
+  let title = "";
+  do {
+    const data = await gql(STORE_PRODUCTS_QUERY, { id, after });
+    const collection = data?.collection;
+    if (!collection) throw new Error(`Collection ${collectionGidOrId} was not found in Shopify.`);
+    title = collection.title;
+    for (const p of collection.products.nodes || []) {
+      out.push({
+        gid: p.id,
+        id: String(p.legacyResourceId),
+        title: p.title,
+        status: p.status,
+        tags: p.tags || [],
+        otherCollections: (p.collections?.nodes || []).filter((c) => c.id !== id).map((c) => c.title)
+      });
+    }
+    after = collection.products.pageInfo?.hasNextPage ? collection.products.pageInfo.endCursor : null;
+  } while (after);
+  return { title, products: out };
+}
+
+async function deleteProduct(gidOrId) {
+  const data = await gql(PRODUCT_DELETE_MUTATION, { input: { id: productGid(gidOrId) } });
+  assertNoUserErrors("productDelete", data?.productDelete?.userErrors);
+  return data?.productDelete?.deletedProductId || null;
+}
+
+async function deleteCollection(gidOrId) {
+  const data = await gql(COLLECTION_DELETE_MUTATION, { input: { id: collectionGid(gidOrId) } });
+  assertNoUserErrors("collectionDelete", data?.collectionDelete?.userErrors);
+  return data?.collectionDelete?.deletedCollectionId || null;
+}
+
+// Drop every Mega Menu item that links to this collection, matched by the
+// collection's id only — never by title, so no other store can be touched.
+async function removeMegaMenuItemsFor(gidOrId) {
+  const gid = collectionGid(gidOrId);
+  const read = await readMegaMenu();
+  if (!read.available) return { removed: 0, available: false, reason: read.reason };
+  let removed = 0;
+  const prune = (items) =>
+    (items || [])
+      .filter((item) => {
+        if (item.resourceId === gid) {
+          removed += 1;
+          return false;
+        }
+        return true;
+      })
+      .map((item) => ({ ...item, items: prune(item.items) }));
+  const items = prune(read.menu.items);
+  if (!removed) return { removed: 0, available: true };
+  const data = await gql(MENU_UPDATE_MUTATION, { id: read.menu.id, title: read.menu.title, items: items.map(toMenuItemUpdateInput) });
+  assertNoUserErrors("menuUpdate", data?.menuUpdate?.userErrors);
+  return { removed, available: true };
+}
+
 /* `collectionGid` matters: an item Dan added by hand is named however he named
    it, and matching on the title alone reports a store that IS in the menu as
    missing. menuTitleMatches accepts either, exactly as the proposal's
@@ -1188,6 +1307,11 @@ module.exports = {
   collectionSnapshot,
   productSnapshot,
   allProductTags,
+  // store deletion
+  storeProducts,
+  deleteProduct,
+  deleteCollection,
+  removeMegaMenuItemsFor,
   // mega menu
   readMegaMenu,
   findStoreItem,

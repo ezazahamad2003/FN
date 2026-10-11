@@ -148,6 +148,13 @@ async function getLock(id) {
   return data;
 }
 
+// Same path shape as getLock. Used only when a store the agent built is
+// deleted; a failure is reported as a manual step, never retried blindly.
+async function deleteLock(id) {
+  await request("DELETE", `/locks/${encodeURIComponent(String(id))}.json`);
+  return true;
+}
+
 /* ---------------------------------------------------------------------------
    Lock inspection (pure)
    ------------------------------------------------------------------------- */
@@ -680,6 +687,7 @@ module.exports = {
   listLocks,
   getLock,
   findLockForCollection,
+  deleteLock,
   isCollectionLock,
   learnKeyTemplates,
   stripPrivate,

@@ -272,6 +272,24 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
 
   /* ---- setup ------------------------------------------------------------ */
 
+  /* ---- a store the agent built (the Departments page) ------------------- */
+
+  router.get("/stores/:collectionId", gate, async (req, res) => {
+    try {
+      res.json(await agent.storeInfo(req.params.collectionId));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.delete("/stores/:collectionId", gate, async (req, res) => {
+    try {
+      res.json(await agent.deleteStore(req.params.collectionId, { confirmName: req.body?.confirmName, by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.post("/onboardings/:id/setup", gate, async (req, res) => {
     try {
       res.json({ onboarding: await agent.runSetup(req.params.id, { by: byOf(req) }) });
@@ -282,7 +300,7 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
 
   router.post("/onboardings/:id/code", gate, async (req, res) => {
     try {
-      res.json({ onboarding: await agent.approveCode(req.params.id, { code: req.body?.code, by: byOf(req) }) });
+      res.json({ onboarding: await agent.approveCode(req.params.id, { code: req.body?.code, name: req.body?.name, by: byOf(req) }) });
     } catch (error) {
       fail(res, error);
     }

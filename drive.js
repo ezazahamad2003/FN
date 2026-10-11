@@ -100,8 +100,14 @@ async function createFolder(name, parentId) {
   });
 }
 
+// Trash, never delete: Drive keeps it for 30 days. supportsAllDrives because
+// production folders live in a shared drive.
 async function trashFile(fileId) {
-  return withDrive((drive) => drive.files.update({ fileId, requestBody: { trashed: true } }));
+  return withDrive((drive) => drive.files.update({ fileId, supportsAllDrives: true, requestBody: { trashed: true } }));
+}
+
+async function restoreFile(fileId) {
+  return withDrive((drive) => drive.files.update({ fileId, supportsAllDrives: true, requestBody: { trashed: false } }));
 }
 
 async function ensureSubfolder(name, parentId) {
@@ -300,6 +306,7 @@ module.exports = {
   getFileMeta,
   listFilesInFolder,
   readFileText,
+  restoreFile,
   trashFile,
   updateJsonFile,
   uploadJsonFile,

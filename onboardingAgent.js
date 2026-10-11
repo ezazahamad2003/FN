@@ -140,6 +140,17 @@ function onlyRowForStyle(record, styleNumber) {
   return hits.length === 1 ? hits[0] : null;
 }
 
+/* Some master products carry their type HTML-escaped ("Tees &amp; Tanks");
+   Shopify shows it literally, so the copy is decoded. */
+function plainText(value) {
+  return clean(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
 function departmentCode(record) {
   return record?.department?.code?.value || "";
 }
@@ -499,12 +510,16 @@ async function runSetup(id, { by = "" } = {}) {
     warnings.push(`The Department Code List could not be read (${errorText(error)}).`);
   }
   const taken = await tables().takenDepartmentCodes(observed.codes);
-  const top = matches[0] || null;
   /* The list scores on the agency NAME alone, and fire department names repeat
-     across states. Auto-approving a same-named California agency for an
-     out-of-state department would put another department's code in this one's
-     SKUs, so a state that disagrees drops through to Dan. */
+     across states. Among equally good matches the one in this department's
+     state comes first, so a same-named agency elsewhere never wins a tie. */
   const wantState = clean(record.department.state).toUpperCase();
+  const inState = (row) => (wantState && clean(row?.state).toUpperCase() === wantState ? 1 : 0);
+  matches = [...matches].sort((a, b) => Number(b.score) - Number(a.score) || inState(b) - inState(a));
+  const top = matches[0] || null;
+  /* Auto-approving a same-named agency from another state would put another
+     department's code in this one's SKUs, so a state that disagrees drops
+     through to Dan. */
   const topState = clean(top?.state).toUpperCase();
   const stateConflict = Boolean(top && wantState && topState && wantState !== topState);
   if (stateConflict) {
@@ -512,8 +527,31 @@ async function runSetup(id, { by = "" } = {}) {
       `"${top.agency}" (${top.code}) is on the Department Code List but in ${topState}, and this department is in ${wantState} — approve a code rather than inheriting that one.`
     );
   }
+  // Two rows that match equally well with different codes: Dan picks.
+  const tie = Boolean(
+    top &&
+      matches.some((m) => m !== top && Number(m.score) === Number(top.score) && inState(m) === inState(top) && String(m.code).toUpperCase() !== String(top.code).toUpperCase())
+  );
+  if (tie) {
+    warnings.push(`More than one agency on the Department Code List matches "${record.department.name}" equally well — pick the right code.`);
+  }
+  /* The collection title, the menu item and the customer's department tag
+     are all the department NAME, so a namesake that already has a different
+     code (another state, or another folder) would share them. Said before any
+     code is approved; the build refuses a namesake's collection outright. */
+  const namesakes = [
+    ...matches.filter((m) => sameAgency(m.agency, record.department.name) && !inState(m) && clean(m.state)),
+    ...observed.rows.filter((r) => clean(r.agency) && sameAgency(r.agency, record.department.name))
+  ];
+  const namesakeCodes = [...new Set(namesakes.map((n) => String(n.code).toUpperCase()))];
+  if (namesakeCodes.length && !(top && !stateConflict && !tie && Number(top.score) >= LIST_MATCH_AUTO_APPROVE && namesakeCodes.every((c) => c === String(top.code).toUpperCase()))) {
+    warnings.push(
+      `A department named "${record.department.name}" already exists with code ${namesakeCodes.join(", ")}${namesakes.some((n) => clean(n.state)) ? ` (${[...new Set(namesakes.map((n) => clean(n.state)).filter(Boolean))].join(", ")})` : ""}. ` +
+        "If that is this department, approve that code. If it is a different department, change this onboarding's name (for example add the state) — the store collection, menu item and customer tag all use the name."
+    );
+  }
 
-  if (top && !stateConflict && Number(top.score) >= LIST_MATCH_AUTO_APPROVE) {
+  if (top && !stateConflict && !tie && Number(top.score) >= LIST_MATCH_AUTO_APPROVE) {
     record = await store().updateOnboarding(id, (r) => {
       r.department.code = {
         value: String(top.code).toUpperCase(),
@@ -539,22 +577,108 @@ async function runSetup(id, { by = "" } = {}) {
     return { ...candidate, agency: owner ? owner.agency : agencyForCode(matches, candidate.code) };
   });
 
+  const recommendation = recommendCode({
+    name: record.department.name,
+    state: wantState,
+    top,
+    tie,
+    matches,
+    namesakes,
+    candidates,
+    knownAgencies: [...matches, ...observed.rows]
+  });
+
   return store().updateOnboarding(id, (r) => {
     r.department.code.candidates = candidates;
     r.department.code.matches = matches.map(matchRow);
+    r.department.code.recommendation = recommendation;
     r.department.code.source = r.department.code.source || "proposed";
     r.status = "setup";
     r.phase = "setup";
     for (const w of warnings) note(r, { type: "warning", message: w, by });
     note(r, {
       type: "code",
-      message: candidates.length
-        ? `${r.department.name} is not on the Department Code List. Proposed: ${candidates.map((c) => `${c.code}${c.inUse ? " (in use)" : ""}`).join(", ")}. Waiting for approval.`
-        : `No department code could be proposed for ${r.department.name}. Enter one by hand.`,
+      message: recommendation
+        ? `Recommended for Dan: ${recommendation.summary}`
+        : candidates.length
+          ? `${r.department.name} is not on the Department Code List. Proposed: ${candidates.map((c) => `${c.code}${c.inUse ? " (in use)" : ""}`).join(", ")}. Waiting for approval.`
+          : `No department code could be proposed for ${r.department.name}. Enter one by hand.`,
       by
     });
     return r;
   });
+}
+
+/* "Fire Protection District" and "Fire Department" are different agencies
+   that often share a town name (Vacaville FD vs Vacaville FPD). */
+function agencyKind(name) {
+  const words = rules.agencyWords(name);
+  if (words.includes("FPD") || words.includes("DISTRICT")) return "district";
+  if (words.includes("FD") || words.includes("DEPARTMENT") || words.includes("DEPT")) return "department";
+  return "";
+}
+
+/*
+ * The agent's single recommendation for a code it could not auto-approve —
+ * the code (and, for a namesake, the store name) Dan approves with one click,
+ * and one sentence saying why. Null when there is nothing safe to recommend.
+ *
+ *   tie on the list   → the row whose kind (district/department) matches
+ *   namesake elsewhere→ "<name> <STATE>" plus the first free code
+ *   not on the list   → the first free proposed code
+ */
+function recommendCode({ name, state, top, tie, matches, namesakes, candidates, knownAgencies }) {
+  const free = (candidates || []).find((c) => !c.inUse) || null;
+
+  if (tie && top) {
+    const tied = matches.filter((m) => Number(m.score) === Number(top.score));
+    const kind = agencyKind(name);
+    const sameKind = kind ? tied.filter((m) => agencyKind(m.agency) === kind) : [];
+    const listed = tied.map((m) => `${String(m.code).toUpperCase()} (${clean(m.agency)}${m.city ? `, ${clean(m.city)}` : ""})`).join(" and ");
+    if (sameKind.length === 1) {
+      const pick = sameKind[0];
+      return {
+        code: String(pick.code).toUpperCase(),
+        name: "",
+        summary: `approve ${String(pick.code).toUpperCase()} — the list has ${listed}; "${name}" is a fire ${kind}, and only ${clean(pick.agency)} is one. Pick the other if that is wrong.`
+      };
+    }
+    return { code: "", name: "", summary: `the list has ${listed}. Both are real agencies — pick the one this department is.` };
+  }
+
+  // A different agency already owns this exact name: give this one a name of
+  // its own and a fresh code.
+  const elsewhere = (namesakes || []).filter((n) => clean(n.state) && state && clean(n.state).toUpperCase() !== state);
+  if (elsewhere.length && state) {
+    const suggested = `${name} ${state}`;
+    const clash = (knownAgencies || []).some((a) => clean(a.agency) && sameAgency(a.agency, suggested));
+    const others = [...new Set(elsewhere.map((n) => `${String(n.code).toUpperCase()} in ${clean(n.state).toUpperCase()}`))].join(", ");
+    if (!free || clash) {
+      return { code: "", name: "", summary: `"${name}" is already ${others}. Give this department a different store name and pick a free code by hand.` };
+    }
+    return {
+      code: free.code,
+      name: suggested,
+      summary:
+        `rename the store to "${suggested}" and approve ${free.code}. "${name}" is already ${others}, and the collection, menu item and customer tag all use the name, so the two must differ. ` +
+        `Helium and Flow then use "${suggested}" — the checklist at the end covers both.`
+    };
+  }
+
+  // Same name in FN's own Drive or products with no state to compare: most
+  // likely this very department coming back.
+  const ours = (namesakes || []).find((n) => !clean(n.state));
+  if (ours) {
+    const code = String(ours.code).toUpperCase();
+    return {
+      code,
+      name: "",
+      summary: `approve ${code} — "${clean(ours.agency)}" already has a Drive folder with that code, so this is most likely the same department. If it is a different department, rename this one instead.`
+    };
+  }
+
+  if (free) return { code: free.code, name: "", summary: `approve ${free.code} (${free.reason}) — no other department uses it.` };
+  return null;
 }
 
 function matchRow(row) {
@@ -588,10 +712,27 @@ function sameAgency(a, b) {
  * §2.4: Dan approves the code. A code already owned by a DIFFERENT agency is
  * refused outright — reusing one would collide in SKUs, tags and file names.
  */
-async function approveCode(id, { code, by = "" } = {}) {
+async function approveCode(id, { code, name: rename = "", by = "" } = {}) {
   const valid = rules.validateDepartmentCode(code);
   if (valid.error) throw badRequest(valid.error);
-  const record = await store().getOnboarding(id);
+  let record = await store().getOnboarding(id);
+
+  /* The recommendation for a namesake is a new store name AND a code, approved
+     together. The name is the collection title, menu item and customer tag,
+     so it can only change before anything is built under the old one. */
+  const newName = rules.departmentTag(rename);
+  if (newName && newName !== record.department.name) {
+    if (record.collection.id || record.collection.gid || record.drive.departmentFolderId) {
+      throw badRequest("The store name cannot change after its folders or collection exist.");
+    }
+    const previous = record.department.name;
+    record = await store().updateOnboarding(id, (r) => {
+      r.department.name = newName;
+      recordApproval(r, { kind: "name", subject: `${previous} → ${newName}`, by });
+      note(r, { type: "code", message: `Store name changed from "${previous}" to "${newName}" so it does not share a name with another department.`, by });
+      return r;
+    });
+  }
   const name = record.department.name;
 
   const rows = await tables().departmentCodeRows();
@@ -599,6 +740,30 @@ async function approveCode(id, { code, by = "" } = {}) {
   const isNew = !owner;
   if (owner && clean(owner.agency) && !sameAgency(owner.agency, name)) {
     throw badRequest(`Department code ${valid.code} is already used by "${clean(owner.agency)}". Pick a different code.`);
+  }
+  // Same name is not the same department when the states differ.
+  const ownerState = clean(owner?.state).toUpperCase();
+  const state = clean(record.department.state).toUpperCase();
+  if (owner && ownerState && state && ownerState !== state) {
+    throw badRequest(
+      `Department code ${valid.code} belongs to "${clean(owner.agency)}" in ${ownerState}, and this department is in ${state}. Pick a different code.`
+    );
+  }
+  /* Not on the list does not mean free: older stores have codes that only
+     show in Drive folder names and Shopify product tags. Reusing one would
+     merge two departments' SKUs, tags and print files. */
+  if (isNew) {
+    const observed = await observedCodes([]);
+    const users = observed.rows.filter((row) => String(row.code).toUpperCase() === valid.code);
+    const foreign = users.find((row) => clean(row.agency) && !sameAgency(row.agency, name));
+    if (foreign) {
+      throw badRequest(`Department code ${valid.code} is already used by "${clean(foreign.agency)}" (its Drive folder). Pick a different code.`);
+    }
+    if (users.length && !users.some((row) => clean(row.agency))) {
+      throw badRequest(
+        `Department code ${valid.code} is already on Shopify products, and no department on the list or in Drive claims it. Check which store uses it, or pick a different code.`
+      );
+    }
   }
 
   if (isNew) {
@@ -1465,7 +1630,14 @@ async function buildCollection(id, record, log) {
   }
 
   const result = await shop().ensureDepartmentCollection(
-    { title, descriptionHtml: rules.collectionDescriptionHtml(), bannerBuffer, bannerAlt: `${record.department.name} banner` },
+    {
+      title,
+      descriptionHtml: rules.collectionDescriptionHtml(),
+      bannerBuffer,
+      bannerAlt: `${record.department.name} banner`,
+      departmentCode: departmentCode(record),
+      knownCollectionGid: record.collection.gid || ""
+    },
     { onLog: log }
   );
   warnings.push(...(result.warnings || []));
@@ -1579,7 +1751,7 @@ async function buildProduct(id, record, product, log) {
       descriptionHtml,
       vendor: expanded.product.fulfillment,
       tags: expanded.product.tags,
-      productType: sourceDetail?.productType || expanded.product.type,
+      productType: plainText(sourceDetail?.productType) || expanded.product.type,
       options: expanded.options,
       variants: expanded.variants.map((v) => ({ ...v, taxable: defaults.taxable !== false, tracked: Boolean(defaults.tracked), requiresShipping: defaults.requiresShipping !== false })),
       collectionGids: record.collection.gid ? [record.collection.gid] : []
@@ -2487,8 +2659,181 @@ async function resumeInterruptedBuilds({ onLog = () => {} } = {}) {
   return { resumed };
 }
 
+/* ---------------------------------------------------------------------------
+   A store the agent built: where it lives, and deleting all of it
+   ------------------------------------------------------------------------- */
+
+// The onboarding record behind a Shopify collection, or null for a store the
+// agent did not build (the 100+ stores that predate it).
+async function recordForCollection(collectionId) {
+  const want = String(collectionId || "").replace(/^gid:\/\/shopify\/Collection\//, "");
+  if (!want) return null;
+  for (const summary of await store().listOnboardings()) {
+    const record = await store().getOnboarding(summary.id);
+    const id = String(record.collection.id || "") || String(record.collection.gid || "").replace(/^gid:\/\/shopify\/Collection\//, "");
+    if (id && id === want) return record;
+  }
+  return null;
+}
+
+// What the department page shows: the Drive links and whether it can delete.
+async function storeInfo(collectionId) {
+  const record = await recordForCollection(collectionId);
+  if (!record) {
+    return { builtByAgent: false, deletable: false, reason: "This store was not built by the Onboarding Agent, so it cannot be deleted from here." };
+  }
+  return {
+    builtByAgent: true,
+    deletable: !isBuildActive(record.id),
+    reason: isBuildActive(record.id) ? "The store is building. Wait for the build to finish." : "",
+    onboardingId: record.id,
+    departmentName: record.department.name,
+    code: departmentCode(record),
+    collectionTitle: record.collection.title,
+    drive: {
+      departmentFolderUrl: record.drive.departmentFolderUrl || "",
+      productionFolderUrl: record.drive.productionFolderUrl || ""
+    }
+  };
+}
+
+/*
+ * Delete a store the agent built: the Mega Menu item and Locksmith lock that
+ * point at it, its products, the collection, both Drive folders (trashed, so
+ * Drive keeps them 30 days), its row on the Department Code List and the
+ * onboarding record. Every step runs and reports on its own; one failure never
+ * hides the others. Refused for any store the agent did not build, for a
+ * store with a live (Active) product, and unless the name is typed exactly.
+ */
+async function deleteStore(collectionId, { confirmName = "", by = "" } = {}) {
+  const record = await recordForCollection(collectionId);
+  if (!record) throw badRequest("Only stores built by the Onboarding Agent can be deleted here.");
+  if (isBuildActive(record.id)) {
+    const error = new Error("The store is building. Wait for the build to finish before deleting it.");
+    error.code = "BUILD_RUNNING";
+    throw error;
+  }
+  const names = [record.department.name, record.collection.title].map((n) => clean(n).toLowerCase());
+  if (!names.includes(clean(confirmName).toLowerCase())) {
+    throw badRequest(`Type the store name exactly ("${record.collection.title || record.department.name}") to delete it.`);
+  }
+
+  const gid = record.collection.gid || `gid://shopify/Collection/${record.collection.id}`;
+  const code = departmentCode(record);
+  const { products } = await shop().storeProducts(gid);
+  const live = products.filter((p) => p.status === "ACTIVE");
+  if (live.length) {
+    throw badRequest(`${live.length} product(s) are Active and selling (${live.map((p) => p.title).join(", ")}). Set them to Draft first — a live store is never deleted from here.`);
+  }
+
+  const done = [];
+  const manual = [];
+  const failed = [];
+  const step = async (label, run) => {
+    try {
+      const result = await run();
+      if (result) done.push(result);
+    } catch (error) {
+      failed.push(`${label}: ${errorText(error)}`);
+    }
+  };
+
+  await step("Mega Menu", async () => {
+    const result = await shop().removeMegaMenuItemsFor(gid);
+    if (!result.available) {
+      manual.push(`Check the Mega Menu by hand — it could not be read (${result.reason}).`);
+      return "";
+    }
+    return result.removed ? `Removed ${result.removed} Mega Menu item(s).` : "";
+  });
+
+  await step("Locksmith lock", async () => {
+    if (!locksmith().configured()) {
+      manual.push(`Delete the Locksmith lock on "${record.collection.title}" by hand.`);
+      return "";
+    }
+    const lock = await locksmith().findLockForCollection(record.collection.id);
+    if (!lock) return "";
+    try {
+      await locksmith().deleteLock(lock.id);
+      return `Deleted Locksmith lock ${lock.id}.`;
+    } catch (error) {
+      manual.push(`Delete Locksmith lock ${lock.id} ("${record.collection.title}") by hand — the API refused (${errorText(error)}).`);
+      return "";
+    }
+  });
+
+  /* Every product that lives ONLY in this collection goes with it — all of
+     them are Draft (checked above), and leaving them would orphan them. One
+     tagged with another department's code is still deleted, but named, since
+     it was built into this collection by mistake. A product that is also in
+     another collection is only taken out of this one by the collection delete
+     and is otherwise left alone. */
+  let deleted = 0;
+  const foreign = [];
+  for (const product of products) {
+    if (product.otherCollections.length) {
+      manual.push(`"${product.title}" was left in Shopify — it is also in ${product.otherCollections.join(", ")}.`);
+      continue;
+    }
+    const ours = !code || product.tags.map((t) => String(t).toUpperCase()).includes(code);
+    await step(`Product "${product.title}"`, async () => {
+      await shop().deleteProduct(product.gid);
+      deleted += 1;
+      if (!ours) foreign.push(`${product.title} (${product.tags.filter((t) => /^[A-Z]{3,4}$/.test(t)).join(", ") || "no department tag"})`);
+      return "";
+    });
+  }
+  if (deleted) done.push(`Deleted ${deleted} product(s).`);
+  if (foreign.length) done.push(`Also deleted products from another department that were built into this collection: ${foreign.join("; ")}.`);
+
+  await step("Collection", async () => {
+    await shop().deleteCollection(gid);
+    return `Deleted the collection "${record.collection.title}".`;
+  });
+
+  for (const [label, folderId] of [
+    ["Department folder", record.drive.departmentFolderId],
+    ["Production folder", record.drive.productionFolderId]
+  ]) {
+    if (!folderId) continue;
+    await step(label, async () => {
+      await drive().trashFile(folderId);
+      return `Moved the ${label.toLowerCase()} to the Drive trash (restorable for 30 days).`;
+    });
+  }
+
+  await step("Department Code List", async () => {
+    if (!code) return "";
+    const rows = await tables().getRows("department-codes");
+    const row = rows.find((r) => String(r.code).toUpperCase() === code && sameAgency(r.agency, record.department.name));
+    // A code from the official list stays: the agency still exists.
+    if (!row || !["onboarding", "fn"].includes(String(row.source || ""))) return "";
+    await tables().removeRow("department-codes", row.code);
+    return `Freed the code ${code} on the Department Code List.`;
+  });
+
+  manual.push(`Remove "${record.department.tag}" from the Helium registration form's Department options, if it was added.`);
+  manual.push(`Remove "${record.department.tag}" from the Shopify Flow condition, if it was added.`);
+
+  // The record goes last, and only when Shopify is clean — it is the only map
+  // back to anything a failed step left behind.
+  if (!failed.length) {
+    await step("Onboarding record", async () => {
+      await store().deleteOnboarding(record.id);
+      return "Deleted the onboarding record.";
+    });
+  } else {
+    manual.push("The onboarding record was kept because a step failed — fix it and delete again.");
+  }
+
+  return { deleted: !failed.length, storeName: record.collection.title || record.department.name, done, manual, failed, by: clean(by) };
+}
+
 module.exports = {
   setDeps,
+  storeInfo,
+  deleteStore,
   capabilities,
   createOnboarding,
   addFiles,

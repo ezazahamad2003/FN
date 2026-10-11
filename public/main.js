@@ -1584,6 +1584,7 @@ function renderDepartment({ collection, products }) {
       </div>
       <div class="dh-actions">
         <button class="btn btn-ghost btn-sm" type="button" id="refreshDepartment">Refresh</button>
+        <button class="btn btn-danger-ghost btn-sm" type="button" id="deleteStore" hidden>Delete store</button>
         <button class="btn btn-primary btn-sm" type="button" id="openNewProduct">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           New product
@@ -1591,7 +1592,90 @@ function renderDepartment({ collection, products }) {
       </div>
     </header>
 
+    <div class="dept-links" id="deptLinks" hidden></div>
+
     ${grid}`;
+  loadStoreInfo(collection.id);
+}
+
+/* Stores the Onboarding Agent built have Drive folders and can be deleted
+   here; the stores that predate it get neither. */
+let currentStoreInfo = null;
+
+async function loadStoreInfo(collectionId) {
+  currentStoreInfo = null;
+  try {
+    const res = await adminFetch(`/api/stores/${encodeURIComponent(collectionId)}`);
+    const info = await res.json().catch(() => ({}));
+    if (!res.ok || !currentCollection || String(currentCollection.id) !== String(collectionId)) return;
+    currentStoreInfo = info;
+    const links = el("deptLinks");
+    const del = el("deleteStore");
+    if (!info.builtByAgent || !links || !del) return;
+    const folder = (label, url) =>
+      url
+        ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`
+        : `<span class="dl-missing">${label}: not created</span>`;
+    links.innerHTML = `
+      <span class="dl-label">Google Drive</span>
+      ${folder("Department folder", info.drive?.departmentFolderUrl)}
+      ${folder("Print files (Omni Printer)", info.drive?.productionFolderUrl)}
+      ${info.code ? `<span class="dl-code">Code <b>${escapeHtml(info.code)}</b></span>` : ""}`;
+    links.hidden = false;
+    del.hidden = false;
+    del.disabled = !info.deletable;
+    if (info.reason) del.title = info.reason;
+  } catch {
+    /* the links are a convenience; the product grid already rendered */
+  }
+}
+
+async function deleteStore(button) {
+  const info = currentStoreInfo;
+  if (!info?.builtByAgent || !currentCollection) return;
+  const name = info.collectionTitle || currentCollection.title;
+  const first = window.confirm(
+    `Delete the "${name}" store COMPLETELY?\n\nThis removes:\n` +
+      "  • every product in it and the Shopify collection\n" +
+      "  • its Mega Menu item and Locksmith lock\n" +
+      "  • its Drive department folder and print-file folder (moved to Drive trash)\n" +
+      "  • its code on the Department Code List and the onboarding record\n\n" +
+      "A store with any Active product is refused. There is no undo for Shopify."
+  );
+  if (!first) return;
+  const typed = window.prompt(`Final check — type the store name exactly to delete it:\n\n${name}`);
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== name.toLowerCase() && typed.trim().toLowerCase() !== String(info.departmentName || "").toLowerCase()) {
+    window.alert("The name did not match. Nothing was deleted.");
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Deleting…";
+  try {
+    const res = await adminFetch(`/api/stores/${encodeURIComponent(currentCollection.id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ confirmName: typed.trim() })
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.error || "Could not delete the store.");
+    const section = (title, lines) => (lines?.length ? `\n\n${title}:\n${lines.map((l) => `  • ${l}`).join("\n")}` : "");
+    window.alert(
+      `${payload.deleted ? `"${payload.storeName}" deleted.` : `"${payload.storeName}" was only partly deleted.`}` +
+        section("Done", payload.done) +
+        section("Failed", payload.failed) +
+        section("Still to do by hand", payload.manual)
+    );
+    if (payload.deleted) {
+      window.location.hash = "#/departments";
+      loadDepartments({ force: true });
+    } else {
+      loadDepartment(currentCollection.id);
+    }
+  } catch (error) {
+    window.alert(error.message);
+    button.disabled = false;
+    button.textContent = "Delete store";
+  }
 }
 
 async function loadDepartment(collectionId) {
@@ -2146,6 +2230,8 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#openNewProduct") || e.target.closest("#emptyNewProduct")) {
     return openNewProductModal();
   }
+  const delStore = e.target.closest("#deleteStore");
+  if (delStore && !delStore.disabled) return deleteStore(delStore);
   if (e.target.closest("#refreshDepartment") && currentCollection) {
     return loadDepartment(currentCollection.id);
   }

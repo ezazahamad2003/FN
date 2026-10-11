@@ -62,7 +62,7 @@ test("emptyRecord: full default shape from the design doc", () => {
   assert.equal(record.department.storeOrdinal, 1);
   assert.equal(record.department.storeName, "");
   assert.deepEqual(record.department.contacts, [{ name: "Chief Smith", role: "", email: "chief@vacaville.gov", phone: "" }]);
-  assert.deepEqual(record.department.code, { value: null, source: null, approved: false, approvedAt: null, approvedBy: "", candidates: [], matches: [] });
+  assert.deepEqual(record.department.code, { value: null, source: null, approved: false, approvedAt: null, approvedBy: "", candidates: [], matches: [], recommendation: null });
   assert.deepEqual(record.packet, { files: [], notes: "rush" });
   assert.equal(record.collection.title, `1. ${NAME}`);
   assert.equal(record.collection.descriptionSet, false);

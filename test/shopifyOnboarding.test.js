@@ -615,6 +615,35 @@ test("ensureDepartmentCollection finds the exact title and never confuses store 
   assert.equal(callsNamed(calls, "collectionUpdate").length, 0, "an identical description is left alone");
 });
 
+test("ensureDepartmentCollection refuses a same-titled collection that belongs to another department", async (t) => {
+  t.after(resetShopify);
+  const calls = stubGraphql({
+    findCollections: () => ({ collections: { nodes: [collectionNode()] } }),
+    collectionProductTags: () => ({ collection: { products: { nodes: [{ tags: ["BSH", "Embroidered"] }, { tags: ["BSH"] }] } } }),
+    ...publicationHandlers()
+  });
+  await assert.rejects(
+    () => shopifyOnboarding.ensureDepartmentCollection({ title: COLLECTION_TITLE, departmentCode: "BSN" }),
+    /already exists and its products belong to another department \(tagged BSH\), not BSN/
+  );
+  assert.equal(callsNamed(calls, "collectionUpdate").length, 0, "nothing is written to the namesake's collection");
+
+  // Its own products, an empty collection, or the collection this onboarding made are all fine.
+  for (const [nodes, extra] of [
+    [[{ tags: ["BSH"] }, { tags: ["BSN"] }], {}],
+    [[], {}],
+    [[{ tags: ["BSH"] }], { knownCollectionGid: "gid://shopify/Collection/777" }]
+  ]) {
+    stubGraphql({
+      findCollections: () => ({ collections: { nodes: [collectionNode()] } }),
+      collectionProductTags: () => ({ collection: { products: { nodes } } }),
+      ...publicationHandlers()
+    });
+    const result = await shopifyOnboarding.ensureDepartmentCollection({ title: COLLECTION_TITLE, departmentCode: "BSN", ...extra });
+    assert.equal(result.created, false);
+  }
+});
+
 test("ensureDepartmentCollection rewrites only a description that really differs", async (t) => {
   t.after(resetShopify);
   const existing = collectionNode({ descriptionHtml: "<p>Old wording from another department.</p>" });
@@ -1549,4 +1578,29 @@ test("setProduct retries without collections when the schema really rejects the 
   assert.equal(seen.length, 2, "one rejected attempt, one retry");
   assert.ok("collections" in seen[0]);
   assert.ok(!("collections" in seen[1]), "the retry drops the field the schema rejected");
+});
+
+test("removeMegaMenuItemsFor drops only the item linked to that collection, keeping every other entry", async (t) => {
+  t.after(resetShopify);
+  let sent = null;
+  stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [megaMenuFixture()] } }),
+    menuUpdate: (vars) => {
+      sent = vars;
+      return { menuUpdate: { menu: { id: vars.id, title: vars.title, handle: "megamenu", items: [] }, userErrors: [] } };
+    }
+  });
+  // Bishop (602) goes; "Bishop Fire Department Union" (603) shares the name prefix and stays.
+  const result = await shopifyOnboarding.removeMegaMenuItemsFor("gid://shopify/Collection/602");
+  assert.equal(result.removed, 1);
+  const store = sent.items.find((i) => i.title === "Store");
+  assert.deepEqual(
+    store.items.map((i) => i.title),
+    ["Ripon Fire Department", "Bishop Fire Department Union", "FN Simple Merch", "SF City Gear", "Bay Area Firefighter", "LOGIN to see your Shop"]
+  );
+  assert.ok(store.items.every((i) => i.id), "every kept item goes back with its id");
+
+  stubGraphql({ megaMenu: () => ({ menus: { nodes: [megaMenuFixture()] } }) });
+  const none = await shopifyOnboarding.removeMegaMenuItemsFor("gid://shopify/Collection/999");
+  assert.deepEqual(none, { removed: 0, available: true }, "nothing linked → no menuUpdate at all");
 });

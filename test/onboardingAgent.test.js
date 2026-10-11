@@ -543,6 +543,111 @@ test("runSetup proposes codes for a department that is not on the list, and appr
   assert.equal(approved.drive.departmentFolderId, "folder-Bahama Fire Department (BAH)");
 });
 
+test("a same-named department in another state never inherits the code, and is told to change the name", async () => {
+  harness();
+  await referenceTables.upsertRows("department-codes", [{ code: "CLA", agency: "Clayton Fire Department", city: "Clayton", state: "CA" }], { source: "test" });
+  const created = await agent.createOnboarding({ payload: { departmentName: "Clayton Fire Department", state: "NC" } });
+
+  const proposed = await agent.runSetup(created.id, { by: "dan" });
+  assert.equal(proposed.department.code.approved, false, "the CA agency's code is not auto-approved for NC");
+  const messages = proposed.events.map((e) => e.message).join("\n");
+  assert.match(messages, /is on the Department Code List but in CA/);
+  assert.match(messages, /A department named "Clayton Fire Department" already exists with code CLA \(CA\).*change this onboarding's name/);
+
+  // Same name, other state: approving the namesake's code is refused.
+  await assert.rejects(() => agent.approveCode(created.id, { code: "CLA", by: "dan" }), /belongs to "Clayton Fire Department" in CA, and this department is in NC/);
+
+  // The agent does the naming: a store name of its own and the first free code.
+  const reco = proposed.department.code.recommendation;
+  assert.equal(reco.name, "Clayton Fire Department NC");
+  assert.equal(reco.code, "CFD");
+  assert.match(reco.summary, /rename the store to "Clayton Fire Department NC" and approve CFD.*already CLA in CA/);
+
+  // One click: rename and approve together; tag, collection and folders follow.
+  const approved = await agent.approveCode(created.id, { code: reco.code, name: reco.name, by: "dan" });
+  assert.equal(approved.department.name, "Clayton Fire Department NC");
+  assert.equal(approved.department.tag, "Clayton Fire Department NC");
+  assert.equal(approved.collection.title, "1. Clayton Fire Department NC");
+  assert.equal(approved.department.code.value, "CFD");
+  assert.equal(approved.drive.departmentFolderId, "folder-Clayton Fire Department NC (CFD)");
+  assert.deepEqual(approved.approvals.map((a) => a.kind), ["name", "code"]);
+  const rows = await referenceTables.departmentCodeRows();
+  assert.equal(rows.find((r) => r.code === "CFD").agency, "Clayton Fire Department NC");
+
+  // Once its folders exist the name is fixed.
+  await assert.rejects(() => agent.approveCode(created.id, { code: "CFD", name: "Something Else FD", by: "dan" }), /cannot change after its folders/);
+});
+
+test("a list tie between a fire department and a fire protection district recommends the matching kind", async () => {
+  harness();
+  await referenceTables.upsertRows(
+    "department-codes",
+    [
+      { code: "VAC", agency: "City of Vacaville FD", city: "Vacaville", state: "CA" },
+      { code: "VVF", agency: "Vacaville FPD", city: "Vacaville", state: "CA" }
+    ],
+    { source: "test" }
+  );
+  const created = await agent.createOnboarding({ payload: { departmentName: "Vacaville Fire Department", state: "CA" } });
+  const record = await agent.runSetup(created.id, { by: "dan" });
+  assert.equal(record.department.code.approved, false, "a tie is never auto-approved");
+  const reco = record.department.code.recommendation;
+  assert.equal(reco.code, "VAC");
+  assert.equal(reco.name, "");
+  assert.match(reco.summary, /only City of Vacaville FD is one/);
+});
+
+test("a code the agent proposes from scratch comes with a one-line recommendation", async () => {
+  harness();
+  const created = await agent.createOnboarding({ payload: { departmentName: "Bahama Fire Department", state: "NC" } });
+  const record = await agent.runSetup(created.id, { by: "dan" });
+  assert.equal(record.department.code.recommendation.code, "BAH");
+  assert.match(record.department.code.recommendation.summary, /approve BAH \(first three letters of the name\) — no other department uses it/);
+  assert.match(record.events.map((e) => e.message).join("\n"), /Recommended for Dan: approve BAH/);
+});
+
+test("the list row in the department's own state wins a same-name tie", async () => {
+  harness();
+  await referenceTables.upsertRows(
+    "department-codes",
+    [
+      { code: "RSC", agency: "Ross Fire Department", city: "Ross", state: "CA" },
+      { code: "RSN", agency: "Ross Fire Department", city: "Ross", state: "NV" }
+    ],
+    { source: "test" }
+  );
+  const nv = await agent.createOnboarding({ payload: { departmentName: "Ross Fire Department", state: "NV" } });
+  const record = await agent.runSetup(nv.id, { by: "dan" });
+  assert.equal(record.department.code.value, "RSN");
+  assert.equal(record.department.code.approved, true);
+});
+
+test("two equally good list matches in the same state wait for Dan", async () => {
+  harness();
+  await referenceTables.upsertRows(
+    "department-codes",
+    [
+      { code: "MLA", agency: "Mill Fire Department", city: "North", state: "CA" },
+      { code: "MLB", agency: "Mill Fire Department", city: "South", state: "CA" }
+    ],
+    { source: "test" }
+  );
+  const created = await agent.createOnboarding({ payload: { departmentName: "Mill Fire Department", state: "CA" } });
+  const record = await agent.runSetup(created.id, { by: "dan" });
+  assert.equal(record.department.code.approved, false);
+  assert.match(record.events.map((e) => e.message).join("\n"), /More than one agency .* matches "Mill Fire Department" equally well/);
+  // Both are fire departments, so the agent cannot tell them apart — it says so.
+  assert.equal(record.department.code.recommendation.code, "");
+  assert.match(record.department.code.recommendation.summary, /MLA \(Mill Fire Department, North\) and MLB \(Mill Fire Department, South\).*pick the one/);
+});
+
+test("approveCode refuses a code that is only in use on Shopify products", async () => {
+  harness();
+  const created = await agent.createOnboarding({ payload: { departmentName: "Bahama Fire Department", state: "NC" } });
+  // BSH is a live product tag (fakeShopify) but on no list and in no folder.
+  await assert.rejects(() => agent.approveCode(created.id, { code: "BSH", by: "dan" }), /already on Shopify products/);
+});
+
 test("approveCode refuses anything that is not a 3–4 letter code", async () => {
   harness();
   const created = await agent.createOnboarding({ payload: { departmentName: "Bahama Fire Department" } });
@@ -1272,4 +1377,111 @@ test("the router creates, reads and 404s an onboarding over HTTP", async () => {
     assert.equal(colors.status, 200);
     assert.ok((await colors.json()).rows.some((row) => row.code === "NVY"));
   });
+});
+
+/* ---------------------------------------------------------------------------
+   Deleting a store the agent built
+   ------------------------------------------------------------------------- */
+
+async function builtStore({ products, menu = { available: true, removed: 1 }, lock = { id: 4242 } } = {}) {
+  const shopify = fakeShopify();
+  const calls = { deletedProducts: [], deletedCollections: [], menu: [], locks: [], trashed: [] };
+  shopify.storeProducts = async () => ({
+    title: COLLECTION_TITLE,
+    products: products || [
+      { gid: "gid://shopify/Product/1", id: "1", title: "Tee", status: "DRAFT", tags: ["VAC"], otherCollections: [] },
+      { gid: "gid://shopify/Product/2", id: "2", title: "Hat", status: "DRAFT", tags: ["VAC"], otherCollections: [] },
+      { gid: "gid://shopify/Product/3", id: "3", title: "Shared polo", status: "DRAFT", tags: ["VAC"], otherCollections: ["FN Simple Merch"] },
+      { gid: "gid://shopify/Product/4", id: "4", title: "Stray tee", status: "DRAFT", tags: ["ZTFD"], otherCollections: [] }
+    ]
+  });
+  shopify.deleteProduct = async (gid) => calls.deletedProducts.push(gid);
+  shopify.deleteCollection = async (gid) => calls.deletedCollections.push(gid);
+  shopify.removeMegaMenuItemsFor = async (gid) => {
+    calls.menu.push(gid);
+    return menu;
+  };
+  const drive = fakeDrive();
+  drive.trashFile = async (id) => calls.trashed.push(id);
+  const locksmith = {
+    ...fakeLocksmith(),
+    configured: () => true,
+    findLockForCollection: async () => lock,
+    deleteLock: async (id) => calls.locks.push(id)
+  };
+  harness({ shopify, drive, locksmith });
+  await referenceTables.upsertRows("department-codes", [{ code: "VAC", agency: DEPARTMENT, state: "CA" }], { source: "onboarding" });
+  const created = await agent.createOnboarding({ payload: { departmentName: DEPARTMENT, state: "CA" } });
+  await store.updateOnboarding(created.id, (r) => {
+    r.department.code = { ...r.department.code, value: "VAC", approved: true };
+    r.collection = { ...r.collection, id: "111", gid: COLLECTION_GID, title: COLLECTION_TITLE };
+    r.drive = { ...r.drive, departmentFolderId: "dept-folder", departmentFolderUrl: "https://drive.test/dept-folder", productionFolderId: "print-folder", productionFolderUrl: "https://drive.test/print-folder" };
+    return r;
+  });
+  return { id: created.id, calls };
+}
+
+test("storeInfo gives the Drive links for a store the agent built, and nothing for older stores", async () => {
+  await builtStore();
+  const info = await agent.storeInfo("111");
+  assert.equal(info.builtByAgent, true);
+  assert.equal(info.deletable, true);
+  assert.equal(info.code, "VAC");
+  assert.deepEqual(info.drive, { departmentFolderUrl: "https://drive.test/dept-folder", productionFolderUrl: "https://drive.test/print-folder" });
+  const older = await agent.storeInfo("555");
+  assert.equal(older.builtByAgent, false);
+  assert.equal(older.deletable, false);
+});
+
+test("deleteStore removes the products, collection, menu item, lock, Drive folders, code row and record", async () => {
+  const { id, calls } = await builtStore();
+  const result = await agent.deleteStore("111", { confirmName: COLLECTION_TITLE, by: "dan" });
+
+  assert.equal(result.deleted, true);
+  assert.deepEqual(calls.menu, [COLLECTION_GID]);
+  assert.deepEqual(calls.locks, [4242]);
+  assert.deepEqual(
+    calls.deletedProducts,
+    ["gid://shopify/Product/1", "gid://shopify/Product/2", "gid://shopify/Product/4"],
+    "a product shared with another collection is kept; one built here by mistake is not orphaned"
+  );
+  assert.match(result.done.join("\n"), /another department .*: Stray tee \(ZTFD\)/);
+  assert.deepEqual(calls.deletedCollections, [COLLECTION_GID]);
+  assert.deepEqual(calls.trashed, ["dept-folder", "print-folder"]);
+  assert.match(result.manual.join("\n"), /"Shared polo" was left in Shopify — it is also in FN Simple Merch/);
+  assert.match(result.manual.join("\n"), /Helium/);
+  assert.deepEqual(result.failed, []);
+  const rows = await referenceTables.departmentCodeRows();
+  assert.ok(!rows.some((r) => r.code === "VAC"), "the code is freed");
+  await assert.rejects(() => store.getOnboarding(id));
+});
+
+test("deleteStore refuses older stores, a wrong name, and any store with an Active product", async () => {
+  await builtStore({ products: [{ gid: "gid://shopify/Product/1", id: "1", title: "Tee", status: "ACTIVE", tags: ["VAC"], otherCollections: [] }] });
+  await assert.rejects(() => agent.deleteStore("555", { confirmName: "x" }), /Only stores built by the Onboarding Agent/);
+  await assert.rejects(() => agent.deleteStore("111", { confirmName: "Vacaville" }), /Type the store name exactly/);
+  await assert.rejects(() => agent.deleteStore("111", { confirmName: DEPARTMENT }), /1 product\(s\) are Active and selling \(Tee\)/);
+});
+
+test("a failed step keeps the record so nothing is orphaned, and a refused lock becomes a manual step", async () => {
+  const { id, calls } = await builtStore();
+  const real = agent;
+  // The collection delete fails; the lock API refuses.
+  const shopify = fakeShopify();
+  shopify.storeProducts = async () => ({ title: COLLECTION_TITLE, products: [] });
+  shopify.removeMegaMenuItemsFor = async () => ({ available: true, removed: 0 });
+  shopify.deleteCollection = async () => {
+    throw new Error("Shopify said no");
+  };
+  agent.setDeps({
+    shopify,
+    drive: { ...fakeDrive(), trashFile: async (f) => calls.trashed.push(f) },
+    locksmith: { ...fakeLocksmith(), configured: () => true, findLockForCollection: async () => ({ id: 7 }), deleteLock: async () => { throw new Error("404"); } }
+  });
+  const result = await real.deleteStore("111", { confirmName: DEPARTMENT });
+  assert.equal(result.deleted, false);
+  assert.match(result.failed.join("\n"), /Collection: Shopify said no/);
+  assert.match(result.manual.join("\n"), /Delete Locksmith lock 7 .* by hand/);
+  assert.match(result.manual.join("\n"), /record was kept/);
+  assert.ok(await store.getOnboarding(id), "the record survives a partial delete");
 });

@@ -1149,6 +1149,7 @@
     }
     const candidates = list(code.candidates);
     const matches = list(code.matches);
+    const reco = code.recommendation || null;
     return `
       <section class="card card-pad ob-panel ob-code-card" data-ob-panel="code" data-state="attention">
         <div class="card-head">
@@ -1158,17 +1159,33 @@
             <p class="muted">Nothing is named, tagged, or built until the code is approved. Codes are usually three letters and never reuse another department's.</p>
           </div>
         </div>
+        ${reco
+          ? `<div class="gap-report ob-reco" data-tone="${reco.code ? "ok" : "warn"}">
+              <p class="gap-title">${reco.code ? "The agent recommends" : "The agent needs you to choose"}</p>
+              ${reco.code
+                ? `<p class="ob-reco-pick"><b class="code-input">${esc(reco.code)}</b>${reco.name ? ` <span>as <b>${esc(reco.name)}</b></span>` : ""}</p>`
+                : ""}
+              <p class="gap-note">${esc(reco.summary.charAt(0).toUpperCase() + reco.summary.slice(1))}</p>
+              ${reco.code
+                ? `<button class="btn btn-primary btn-sm" type="button" data-ob="use-recommendation">${reco.name ? `Rename and approve ${esc(reco.code)}` : `Approve ${esc(reco.code)}`}</button>`
+                : ""}
+            </div>`
+          : ""}
         ${matches.length
           ? `<div class="ob-subhead"><p class="field-label">On the Department Code List</p></div>
              <div class="ob-candidates">
                ${matches
-                 .map(
-                   (match) => `
-                 <button class="ob-candidate" type="button" data-ob="pick-code" data-ob-code="${esc(match.code || "")}" data-tone="ok">
+                 .map((match) => {
+                   /* A same-named agency in another state is a namesake, not
+                      this department — never shown as the safe pick. */
+                   const ownState = String(record.department?.state || "").toUpperCase();
+                   const otherState = Boolean(match.state && ownState && String(match.state).toUpperCase() !== ownState);
+                   return `
+                 <button class="ob-candidate" type="button" data-ob="pick-code" data-ob-code="${esc(match.code || "")}" data-tone="${otherState ? "warn" : "ok"}" ${otherState ? `title="A different department in ${esc(match.state)}"` : ""}>
                    <b>${esc(match.code || "")}</b>
-                   <small>${esc(match.agency || "")}${match.city ? ` · ${esc(match.city)}` : ""}</small>
-                 </button>`
-                 )
+                   <small>${esc(match.agency || "")}${match.city ? ` · ${esc(match.city)}` : ""}${match.state ? ` · ${esc(match.state)}` : ""}${otherState ? " · other state" : ""}</small>
+                 </button>`;
+                 })
                  .join("")}
              </div>`
           : ""}
@@ -2171,6 +2188,11 @@
       return;
     }
     if (action === "approve-code") return approveCode(trigger);
+    if (action === "use-recommendation") {
+      const reco = record.department?.code?.recommendation;
+      if (!reco?.code) return;
+      return runSimple(trigger, "Approving…", "/code", { code: reco.code, name: reco.name || "", by: currentOperator() });
+    }
     if (action === "run-setup") return runSimple(trigger, "Running…", "/setup");
     if (action === "run-review") return runSimple(trigger, "Reviewing…", "/review");
     if (action === "refresh-production") return runSimple(trigger, "Reading…", "/production-files");

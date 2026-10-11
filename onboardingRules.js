@@ -387,9 +387,9 @@ function proposeColorCodes(colorName) {
 const DEPARTMENT_CODE_RE = /^[A-Z]{3,4}$/;
 
 const AGENCY_STOP_WORDS = new Set([
-  "FIRE", "DEPARTMENT", "DEPT", "DISTRICT", "PROTECTION", "FPD", "FD", "CITY", "OF", "COUNTY",
+  "FIRE", "DEPARTMENT", "DEPT", "DISTRICT", "PROTECTION", "FPD", "FD", "OF",
   "THE", "AND", "&", "RESCUE", "EMS", "SERVICES", "SERVICE", "AUTHORITY", "VOLUNTEER", "VFD",
-  "CSD", "TOWNSHIP", "TOWN", "AREA", "REGIONAL", "COMMUNITY", "CO", "STATION"
+  "CSD", "TOWNSHIP", "TOWN", "AREA", "REGIONAL", "COMMUNITY", "STATION"
 ]);
 
 function agencyWords(name) {
@@ -400,9 +400,32 @@ function agencyWords(name) {
     .filter(Boolean);
 }
 
+/*
+ * The words that identify an agency. "County" and "City" are NOT boilerplate:
+ * Alameda County FD (ACF) and City of Alameda FD (ALA) are different
+ * departments with different codes, and so are Lake City FPD and Lake County
+ * FPD. "City of X" is just X; "County of X" and "X Co" are "X County".
+ */
 function significantWords(name) {
-  const words = agencyWords(name).filter((w) => !AGENCY_STOP_WORDS.has(w));
-  return words.length ? words : agencyWords(name);
+  let words = agencyWords(name);
+  let county = false;
+  const out = [];
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if ((w === "CITY" || w === "COUNTY") && words[i + 1] === "OF") {
+      if (w === "COUNTY") county = true;
+      i += 1;
+      continue;
+    }
+    if (w === "COUNTY" || w === "CO") {
+      county = true;
+      continue;
+    }
+    if (AGENCY_STOP_WORDS.has(w)) continue;
+    out.push(w);
+  }
+  if (county && out.length) out.push("COUNTY");
+  return out.length ? out : words;
 }
 
 /*
@@ -950,6 +973,7 @@ module.exports = {
   lookupDepartmentCode,
   validateDepartmentCode,
   significantWords,
+  agencyWords,
   // names
   departmentFolderName,
   productionFolderName,

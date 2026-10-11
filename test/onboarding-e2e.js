@@ -33,6 +33,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const DO_BUILD = process.argv.includes("--build");
 const KEEP = process.argv.includes("--keep");
 const DEPARTMENT = process.env.E2E_DEPARTMENT || "Zol Test Fire Department";
+const POLICY = process.env.E2E_POLICY || "";
 
 const steps = [];
 function step(name, ok, detail) {
@@ -137,6 +138,11 @@ async function main() {
       if (fs.existsSync(file)) {
         form.append("artwork", new Blob([fs.readFileSync(file)], { type: name.endsWith(".png") ? "image/png" : "image/jpeg" }), name);
       }
+    }
+    /* A real department's uniform policy, so the policy review and the rep
+       email are written against actual text rather than "no policy". */
+    if (POLICY) {
+      form.append("policies", new Blob([fs.readFileSync(POLICY)], { type: "application/pdf" }), path.basename(POLICY));
     }
     const created = await api("POST", "/api/onboardings", { form, expect: 201 });
     id = created.onboarding.id;

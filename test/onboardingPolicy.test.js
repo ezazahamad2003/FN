@@ -70,7 +70,7 @@ test("reviewPolicy: canned model output is completed and sanitised in code", asy
   // The model was called the way the contract says, with the no-invention rule.
   assert.equal(calls.length, 1);
   assert.equal(calls[0].jsonObject, true);
-  assert.equal(calls[0].maxTokens, 2500);
+  assert.equal(calls[0].maxTokens, 4000);
   assert.equal(calls[0].messages[0].role, "system");
   assert.match(calls[0].messages[0].content, /Policies usually do not say how logos are decorated/);
   assert.match(calls[0].messages[0].content, /Never invent brands, style numbers, colours/);
@@ -88,13 +88,12 @@ test("reviewPolicy: canned model output is completed and sanitised in code", asy
     ["Decoration method (print or embroidery)", "Logo size", "Which logo goes on which garment", "Class B shirts: button and patch rules"]
   );
 
-  // Questions: one per missing topic (model's wording, else the default), then extras.
-  assert.equal(review.questions[0], "Should the logos be printed or embroidered?");
-  assert.equal(review.questions[1], policy.DEFAULT_QUESTIONS["Logo size"]);
-  assert.equal(review.questions[2], policy.DEFAULT_QUESTIONS["Which logo goes on which garment"]);
-  assert.equal(review.questions[3], policy.DEFAULT_QUESTIONS["Class B shirts: button and patch rules"]);
-  assert.equal(review.questions[4], "Do you want names on the shirts?");
-  assert.equal(review.questions.length, 5);
+  // Questions: the three missing per-garment details are asked ONCE, as a
+  // fill-in list; the other missing topic gets its default; then extras.
+  assert.match(review.questions[0], /^For each garment in the store, could you tell us which logo goes on it, whether it is printed or embroidered and roughly how big the logo is\?/);
+  assert.equal(review.questions[1], policy.DEFAULT_QUESTIONS["Class B shirts: button and patch rules"]);
+  assert.equal(review.questions[2], "Do you want names on the shirts?");
+  assert.equal(review.questions.length, 3);
 
   // Email: subject, greeting, intro, numbered questions covering every missing topic, signature.
   assert.equal(review.emailDraft.subject, "Uniform store details we still need — Vacaville Fire Department");
@@ -102,6 +101,11 @@ test("reviewPolicy: canned model output is completed and sanitised in code", asy
   assert.ok(body.startsWith("Hi Chief Rivera,\n\n"), "greets the rep by name");
   assert.match(body, /Thanks for sending the policy and the artwork/);
   review.questions.forEach((q, i) => assert.ok(body.includes(`\n${i + 1}. ${q}\n`), `question ${i + 1} numbered in the email`));
+  // The fill-in list: only the missing columns, one line per suggested garment.
+  assert.ok(body.includes("\n   Garment — Logo (file name) — Print or embroidery — Approx. width in inches\n"));
+  assert.ok(body.includes("\n   T-shirt: ___ — ___ — ___\n"));
+  assert.ok(body.includes("\n   Hat: ___ — ___ — ___\n"));
+  assert.doesNotMatch(body, /Where it goes|Garment color/, "confirmed details are not asked again");
   assert.ok(body.endsWith("\n\nThanks,\nDan\nFN Simple Uniforms"), "signs off as Dan / FN Simple Uniforms");
   assert.doesNotMatch(body, /\[NAME\]|\[Contact/);
 
@@ -128,6 +132,60 @@ test("reviewPolicy: canned model output is completed and sanitised in code", asy
   assert.match(review.notes, /Style number "PC61".*cleared/);
 });
 
+test("reviewPolicy: re-asked topics, a promising intro and non-apparel rows are cut (Menlo Park run)", async () => {
+  const policyText = `District-issued: 1 – pair District approved safety boots. Flying Cross # 98R6686 LAPD navy blue uniform shirt.
+Uniform items such as T-shirts, sweatshirts, hats and jackets will be purchased through the MPFFA.`;
+  policy.setModel({
+    reason: fakeReason(
+      JSON.stringify({
+        confirmed: [],
+        missing: [{ topic: "Which logo goes on which garment", detail: "Not mapped.", question: "Which artwork file goes on each garment?" }],
+        questions: [
+          "Which single artwork file is your primary district patch/logo?",
+          "Do MPFFA items have standard decoration methods/placements we should follow?",
+          "Should the store offer only District-issued items or also MPFFA items?",
+          "Who at the MPFFA approves designs?",
+          "Do you want a cadet section?"
+        ],
+        suggestedProducts: [
+          { brand: "", styleNumber: "", type: "district-issued safety boots", colors: [], confidence: "low", evidence: "safety boots" },
+          { brand: "Flying Cross", styleNumber: "98R6686", type: "short sleeve uniform shirt", colors: [], classB: true, confidence: "high", evidence: "98R6686" },
+          { brand: "", styleNumber: "", type: "T-shirt", colors: [], confidence: "low", evidence: "purchased through the MPFFA" },
+          { brand: "", styleNumber: "", type: "Badge", colors: [], confidence: "low", evidence: "" }
+        ],
+        emailIntro: "I reviewed your uniform policy. Below are the items the policy already specifies and the missing details we need from you.",
+        notes: ""
+      })
+    )
+  });
+  const review = await policy.reviewPolicy({ departmentName: "Menlo Park FPD", repName: "Captain Ortiz", policyText });
+
+  assert.deepEqual(review.suggestedProducts.map((p) => p.type), ["short sleeve uniform shirt", "T-shirt"], "boots and badges are not store items");
+  assert.match(review.notes, /safety boots" is not apparel FN sells/);
+  assert.equal(review.suggestedProducts[0].classB, true);
+
+  // The extra artwork and decoration questions re-ask topics; the cap keeps two genuine extras.
+  assert.ok(!review.questions.some((q) => /primary district patch|standard decoration methods/.test(q)));
+  const extras = review.questions.filter((q) => /MPFFA|cadet/.test(q));
+  assert.deepEqual(extras, ["Should the store offer only District-issued items or also MPFFA items?", "Who at the MPFFA approves designs?"]);
+
+  assert.doesNotMatch(review.emailDraft.body, /already specifies/, "an intro promising a list the email lacks is replaced");
+  assert.match(review.emailDraft.body, /a few details the policy does not cover/);
+  const body = review.emailDraft.body;
+  assert.ok(body.indexOf("\n   T-shirt: ") < body.indexOf("\n   Short sleeve uniform shirt: "), "store staples lead the fill-in list");
+  assert.match(body, /fill in the list below\.\n/);
+  assert.doesNotMatch(body, /below\?/);
+});
+
+test("questionTopic files free-text questions under the seven topics", () => {
+  assert.equal(policy.questionTopic("Which single artwork file is your primary logo?"), "Which logo goes on which garment");
+  assert.equal(policy.questionTopic("Should it be embroidered?"), "Decoration method (print or embroidery)");
+  assert.equal(policy.questionTopic("How big should the chest patch be?"), "Logo size");
+  assert.equal(policy.questionTopic("Where should the patch be placed?"), "Decoration location");
+  assert.equal(policy.questionTopic("Do Class B shirts button to the top?"), "Class B shirts: button and patch rules");
+  assert.equal(policy.questionTopic("Do you want a cadet section?"), null);
+});
+
 test("reviewPolicy: garbage or a thrown model falls back to a code-built review", async () => {
   policy.setModel({ reason: fakeReason("Sure! Here is my analysis of the policy...") });
   const garbage = await policy.reviewPolicy({ departmentName: "Bahama Fire Department", repName: "", policyText: "Some policy text." });
@@ -136,11 +194,15 @@ test("reviewPolicy: garbage or a thrown model falls back to a code-built review"
     garbage.missing,
     policy.REVIEW_TOPICS.map((topic) => ({ topic, detail: "Not stated in the policy." }))
   );
-  assert.equal(garbage.questions.length, 7);
+  // Garments, one fill-in list for the five per-garment details, Class B.
+  assert.equal(garbage.questions.length, 3);
+  assert.equal(garbage.questions[0], policy.DEFAULT_QUESTIONS["Garments, brands and style numbers"]);
+  assert.equal(garbage.questions[2], policy.DEFAULT_QUESTIONS["Class B shirts: button and patch rules"]);
   assert.deepEqual(garbage.suggestedProducts, []);
   assert.match(garbage.notes, /nothing usable/);
   assert.ok(garbage.emailDraft.body.startsWith("Hello,\n\n"), "no rep name → plain greeting");
-  assert.ok(garbage.emailDraft.body.includes("\n7. "));
+  assert.ok(garbage.emailDraft.body.includes("\n3. "));
+  assert.ok(garbage.emailDraft.body.includes("\n   Item 1: ___ — ___ — ___ — ___ — ___\n"), "no garments known → blank lines to fill");
   assert.ok(garbage.emailDraft.body.endsWith("Thanks,\nDan\nFN Simple Uniforms"));
   assert.equal(garbage.emailDraft.subject, "Uniform store details we still need — Bahama Fire Department");
 

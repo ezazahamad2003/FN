@@ -7,3 +7,7 @@ server.err.log
 .claude/settings.local.json
 public/test-assets/
 test/bases/
+
+# Output of test/sleeve-print-examples.js (regenerated on each run)
+test/sleeve-*.png
+test/source-artwork.png

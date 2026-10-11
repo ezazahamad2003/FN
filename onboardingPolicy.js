@@ -204,7 +204,70 @@ Return JSON only, in this shape:
   "notes": "anything Dan should know about how readable or complete the policy was"
 }
 
-A topic may be partly confirmed and partly missing; list it under both with the specifics. Every one of the seven topics must appear at least once. Use plain language a department rep will understand — no jargon.`;
+A topic may be partly confirmed and partly missing; list it under both with the specifics. Every one of the seven topics must appear at least once. Use plain language a department rep will understand — no jargon.
+
+Suggested products are what FN Simple would sell in the department's store: wearable apparel members wear or buy.
+- Include a row for EVERY wearable garment type the policy says members wear or may buy — including items bought through an association, union or employee store (for example T-shirts, sweatshirts, hats, jackets, workout apparel) — even when no brand or style number is given. Leave brand and styleNumber "" and set confidence "low" for those.
+- Never suggest non-apparel or issued hardware: boots, shoes, socks, belts, buckles, badges, medallions, collar ornaments or brass, nameplates, ties, helmets or turnout gear.
+- classB is true for the everyday button-up uniform shirt worn on shift (whatever the policy calls it — duty, station, semi-dress or Class B), false for dress (Class A) shirts and for T-shirts.
+
+The questions go into one short email to a busy fire captain. Ask each thing once: never ask the same thing twice in different words, and do not put a question in "questions" that belongs to one of the seven topics.
+The emailIntro only leads into the questions. Do not summarise what the policy already covers and do not promise a list of it — the email does not contain one.`;
+
+/*
+ * Per-garment production details. When several are missing the email asks
+ * for them once, as a fill-in list per garment, instead of one question each
+ * — five near-identical questions is what makes a rep stop reading.
+ */
+const PER_GARMENT_COLUMNS = [
+  ["Which logo goes on which garment", "Logo (file name)"],
+  ["Decoration method (print or embroidery)", "Print or embroidery"],
+  ["Decoration location", "Where it goes (e.g. left chest, full back)"],
+  ["Logo size", "Approx. width in inches"],
+  ["Colors", "Garment color"]
+];
+const PER_GARMENT_TOPICS = PER_GARMENT_COLUMNS.map(([topic]) => topic);
+
+const PER_GARMENT_PHRASES = {
+  "Which logo goes on which garment": "which logo goes on it",
+  "Decoration method (print or embroidery)": "whether it is printed or embroidered",
+  "Decoration location": "where the logo goes",
+  "Logo size": "roughly how big the logo is",
+  Colors: "which color the garment comes in"
+};
+
+function joinPhrases(parts) {
+  if (parts.length <= 1) return parts.join("");
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+// Things FN does not sell: they never become product suggestions.
+const NON_STORE_ITEM = /\b(boots?|shoes?|footwear|socks?|belts?|buckles?|badges?|medallions?|collar (brass|ornaments?|insignia|pins?)|brass|name\s*plates?|nameplates?|neckties?|helmets?|turnouts?)\b/i;
+// Garments that carry no logo, so they get no line in the fill-in list.
+const UNDECORATED_ITEM = /\b(trousers?|pants?|slacks|skirts?|ties|tie(?!-))\b/i;
+// What FN decorates most, so these lead the fill-in list.
+const STORE_STAPLE = /t-?shirt|tee\b|sweatshirt|hoodie|job-?shirt|quarter-?zip|polo|hat|cap\b|beanie|watch cap|jacket|workout|fitness|sweater/i;
+
+/*
+ * The review topic a free-text question is really about, or null. Used to
+ * drop the model's extra questions that re-ask a topic in other words
+ * ("Which single artwork file is your primary logo?" after "Which logo goes
+ * on which garment?"). Most specific first.
+ */
+function questionTopic(question) {
+  const t = String(question || "").toLowerCase();
+  if (/class\s*b|button/.test(t)) return "Class B shirts: button and patch rules";
+  if (/artwork|logo file|which logo|which file|primary (logo|patch)/.test(t)) return "Which logo goes on which garment";
+  if (/embroider|\bprint|decoration method|decorat\w* method/.test(t)) return "Decoration method (print or embroidery)";
+  if (/\bsize|inches|dimension|how big/.test(t)) return "Logo size";
+  if (/placement|placed|\bwhere\b|location|left chest|sleeve|full back/.test(t)) return "Decoration location";
+  if (/colou?r|palette|\bhex\b|pantone/.test(t)) return "Colors";
+  if (/\bbrand|style number/.test(t)) return "Garments, brands and style numbers";
+  return null;
+}
+
+// At most this many questions beyond the seven topics reach the rep.
+const MAX_EXTRA_QUESTIONS = 2;
 
 function summariseKnownProducts(rows) {
   return asArray(rows)
@@ -299,6 +362,9 @@ function cleanIntro(value) {
   if (/^(hi|hello|dear|hey)\b/i.test(intro)) return "";
   if (/\b(thanks|regards|sincerely|best)\s*,?\s*$/i.test(intro)) return "";
   if (/\b1\.\s/.test(intro)) return "";
+  // The email lists only what is missing; an intro announcing what the policy
+  // already covers promises a section that is not there.
+  if (/\balready (specif|cover|state|list|include|say)|\b(items|details|what) (that )?(the|your) policy (already )?(specif|cover|state|list|include|say)/i.test(intro)) return "";
   return intro;
 }
 
@@ -362,6 +428,10 @@ function sanitiseSuggestedProducts(items, index, clearedNotes) {
     if (!brand && !styleNumber && !type && !colors.length) continue;
 
     const label = [brand, styleNumber, type].filter(Boolean).join(" ") || "a suggested product";
+    if (type && NON_STORE_ITEM.test(type)) {
+      clearedNotes.push(`"${label}" is not apparel FN sells — left out of the suggestions.`);
+      continue;
+    }
     if (styleNumber && !index.compact.includes(compactToken(styleNumber))) {
       clearedNotes.push(`Style number "${styleNumber}" (${label}) is not in the policy, notes or artwork — cleared so nothing invented reaches the build.`);
       styleNumber = "";
@@ -396,10 +466,32 @@ function sanitiseSuggestedProducts(items, index, clearedNotes) {
 }
 
 /*
- * The email Dan reviews and sends. Fixed shape: greeting, intro, numbered
- * questions (one per missing topic at least), closing, signature.
+ * Garments for the fill-in list: Dan's own rows when he has entered any,
+ * else the policy's suggestions. Undecorated items (trousers) are left out.
  */
-function buildEmailDraft({ departmentName, repName, questions, intro, confirmed }) {
+function gridGarments(knownProducts, suggestedProducts) {
+  const rows = asArray(knownProducts).length ? asArray(knownProducts) : asArray(suggestedProducts);
+  const labels = [];
+  for (const row of rows) {
+    const type = cleanText(row?.type, 60);
+    const label = type || [row?.brand, row?.styleNumber].filter(Boolean).join(" ");
+    if (!label || UNDECORATED_ITEM.test(label) || NON_STORE_ITEM.test(label)) continue;
+    const display = label.charAt(0).toUpperCase() + label.slice(1);
+    if (!labels.some((g) => g.toLowerCase() === display.toLowerCase())) labels.push(display);
+  }
+  // Staples first (stable within each group), so a long policy's formal
+  // pieces do not crowd the T-shirts and hats out of the list.
+  const ordered = [...labels.filter((l) => STORE_STAPLE.test(l)), ...labels.filter((l) => !STORE_STAPLE.test(l))];
+  return { garments: ordered.slice(0, 8), more: ordered.length > 8 };
+}
+
+/*
+ * The email Dan reviews and sends. Fixed shape: greeting, intro, numbered
+ * questions (every missing topic is asked once), closing, signature. The
+ * per-garment question is followed by a fill-in list the rep can answer
+ * inline.
+ */
+function buildEmailDraft({ departmentName, repName, questions, intro, confirmed, grid }) {
   const department = cleanText(departmentName, 200) || "your department";
   const rep = cleanText(repName, 120);
   const subject = `Uniform store details we still need — ${department}`;
@@ -410,8 +502,18 @@ function buildEmailDraft({ departmentName, repName, questions, intro, confirmed 
         `Thanks for sending over the ${department} uniform policy and artwork. We are setting up your online uniform store, and there are a few details the policy does not cover. Could you help us with the following?`
     );
     lines.push("");
-    questions.forEach((q, i) => lines.push(`${i + 1}. ${q}`));
-    lines.push("");
+    questions.forEach((q, i) => {
+      lines.push(`${i + 1}. ${q}`);
+      if (grid && q === grid.question) {
+        lines.push("");
+        lines.push(`   Garment — ${grid.columns.join(" — ")}`);
+        const garments = grid.garments.length ? grid.garments : ["Item 1", "Item 2", "Item 3"];
+        for (const g of garments) lines.push(`   ${g}: ${grid.columns.map(() => "___").join(" — ")}`);
+        if (grid.more) lines.push("   (add a line for any other garment you want in the store)");
+        lines.push("");
+      }
+    });
+    if (lines[lines.length - 1] !== "") lines.push("");
     lines.push("Once we have these answers we can finish the store and send you a link to review.");
   } else {
     // The model's intro was written to lead into questions; with none to ask
@@ -463,23 +565,52 @@ function finalizeReview(raw, ctx) {
   confirmed.sort((a, b) => topicOrder(a.topic) - topicOrder(b.topic));
   missing.sort((a, b) => topicOrder(a.topic) - topicOrder(b.topic));
 
+  const suggestedProducts = sanitiseSuggestedProducts(parsed.suggestedProducts, index, notes);
+
   const questions = [];
   const addQuestion = (value) => {
     const q = cleanQuestion(value);
     if (q && !questions.some((x) => x.toLowerCase() === q.toLowerCase())) questions.push(q);
+    return q;
   };
-  for (const m of missing) {
-    addQuestion(m.question || DEFAULT_QUESTIONS[m.topic] || `Could you tell us about ${m.topic.toLowerCase()}?`);
-  }
-  for (const q of asArray(parsed.questions)) addQuestion(q);
 
-  const suggestedProducts = sanitiseSuggestedProducts(parsed.suggestedProducts, index, notes);
+  // Two or more per-garment details missing → one question and a fill-in
+  // list, asked where the first of them would have been.
+  const missingTopics = [...new Set(missing.map((m) => m.topic))];
+  const gridTopics = PER_GARMENT_TOPICS.filter((t) => missingTopics.includes(t));
+  let grid = null;
+  if (gridTopics.length >= 2) {
+    grid = {
+      question: `For each garment in the store, could you tell us ${joinPhrases(gridTopics.map((t) => PER_GARMENT_PHRASES[t]))}? A rough answer is fine — just fill in the list below.`,
+      columns: PER_GARMENT_COLUMNS.filter(([t]) => gridTopics.includes(t)).map(([, label]) => label),
+      ...gridGarments(ctx.knownProducts, suggestedProducts)
+    };
+  }
+  for (const topic of missingTopics) {
+    if (grid && gridTopics.includes(topic)) {
+      if (!questions.includes(grid.question)) addQuestion(grid.question);
+      continue;
+    }
+    const m = missing.find((x) => x.topic === topic && x.question) || {};
+    addQuestion(m.question || DEFAULT_QUESTIONS[topic] || `Could you tell us about ${topic.toLowerCase()}?`);
+  }
+  // Extras only when they ask something the seven topics do not.
+  let extras = 0;
+  for (const q of asArray(parsed.questions)) {
+    if (extras >= MAX_EXTRA_QUESTIONS) break;
+    if (questionTopic(q)) continue;
+    const before = questions.length;
+    addQuestion(q);
+    if (questions.length > before) extras += 1;
+  }
+
   const emailDraft = buildEmailDraft({
     departmentName: ctx.departmentName,
     repName: ctx.repName,
     questions,
     intro: cleanIntro(parsed.emailIntro),
-    confirmed
+    confirmed,
+    grid
   });
 
   const modelNotes = cleanText(parsed.notes, 2000);
@@ -522,7 +653,7 @@ async function reviewPolicy(input = {}, { onLog } = {}) {
 
   let parsed = null;
   try {
-    const content = await model().reason({ messages: buildReviewMessages(ctx), jsonObject: true, maxTokens: 2500 });
+    const content = await model().reason({ messages: buildReviewMessages(ctx), jsonObject: true, maxTokens: 4000 });
     parsed = parseJsonObject(content);
     if (!parsed) {
       ctx.fallbackReason = "The policy review model returned nothing usable, so every topic is listed as missing — review the policy by hand.";
@@ -745,5 +876,6 @@ module.exports = {
   parseJsonObject,
   canonicalTopic,
   buildReviewMessages,
-  buildEmailDraft
+  buildEmailDraft,
+  questionTopic
 };
