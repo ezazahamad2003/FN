@@ -1,6 +1,7 @@
 const OpenAI = require("openai");
 const fetch = require("node-fetch");
 const sharp = require("sharp");
+const { frameGarment } = require("./garmentFrame");
 const { extractSupplierFacts } = require("./ai");
 const { lookupSupplierLink, saveSupplierLink } = require("./linkBook");
 
@@ -448,13 +449,8 @@ colourMatches is about the WHOLE garment. A garment whose parts are different co
 // Put every base on the same square white canvas so a store mixing supplier
 // photos and generated ones still looks like one catalogue.
 async function normalizeBase(buffer) {
-  return sharp(buffer)
-    .resize({ width: CANVAS, height: CANVAS, fit: "inside", withoutEnlargement: false })
-    .flatten({ background: "#ffffff" })
-    .extend({ background: "#ffffff", top: 0, bottom: 0, left: 0, right: 0 })
-    .resize({ width: CANVAS, height: CANVAS, fit: "contain", background: "#ffffff" })
-    .png()
-    .toBuffer();
+  const flat = await sharp(buffer).rotate().flatten({ background: "#ffffff" }).png().toBuffer();
+  return frameGarment(flat, CANVAS);
 }
 
 async function tryCandidate(url, expectations, log) {

@@ -23,6 +23,7 @@
 
 const sharp = require("sharp");
 const rules = require("./onboardingRules");
+const { frameGarment } = require("./garmentFrame");
 
 const MOCKUP_SIZE = Number(process.env.ONBOARDING_MOCKUP_SIZE) || rules.MOCKUP_SIZE;
 const BANNER = { width: rules.BANNER_WIDTH, height: rules.BANNER_HEIGHT };
@@ -142,38 +143,6 @@ async function normalizeBlank(buffer, { size = MODEL_INPUT_SIZE, mimetype = "" }
   return frameGarment(flat, size);
 }
 
-/* Share of the square the garment's longer side fills. Supplier photos arrive
-   framed every which way — a Richardson 112 is a 1200 × 1800 portrait with
-   the cap in the top third — and fitting them as-is left a small cap stranded
-   at the top of an otherwise empty square. */
-const GARMENT_FILL = 0.82;
-
-/**
- * Crop the white margin off a garment photo, then centre it on a white
- * size × size square at GARMENT_FILL, so every product image in a store has
- * the garment at the same size and position. A photo with no margin to crop
- * (or one trim cannot read) is just fitted.
- */
-async function frameGarment(flatPng, size) {
-  let trimmed = flatPng;
-  try {
-    trimmed = await sharp(flatPng).trim({ background: "#ffffff", threshold: 18 }).png().toBuffer();
-  } catch {
-    trimmed = flatPng;
-  }
-  const meta = await sharp(trimmed).metadata();
-  const target = Math.round(size * GARMENT_FILL);
-  const scale = target / Math.max(meta.width || 1, meta.height || 1);
-  const width = Math.max(1, Math.round((meta.width || 1) * scale));
-  const height = Math.max(1, Math.round((meta.height || 1) * scale));
-  const garment = await sharp(trimmed).resize({ width, height, fit: "fill", kernel: "lanczos3" }).png().toBuffer();
-  const left = Math.floor((size - width) / 2);
-  const top = Math.floor((size - height) / 2);
-  return sharp({ create: { width: size, height: size, channels: 3, background: "#ffffff" } })
-    .composite([{ input: garment, left, top }])
-    .png()
-    .toBuffer();
-}
 
 /** Final output sizing: contain on a white size × size canvas, PNG. */
 async function toSquare(buffer, size) {

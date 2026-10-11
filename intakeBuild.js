@@ -28,7 +28,7 @@ const sharp = require("sharp");
 const { generateBlankGarment, generateProductDescription } = require("./ai");
 const { findSupplierBlank } = require("./blanks");
 const { resolvePlacement } = require("./mockup");
-const { renderFaceImage } = require("./productImages");
+const { renderFaceImage, deriveBackBlank } = require("./productImages");
 const { placementFace, placementGuidance } = require("./placements");
 const { intakeTags } = require("./intake");
 const {
@@ -481,13 +481,21 @@ async function runBuild(intakeId, build, options) {
       if (!frontBase && (undecorated || frontDecos.length || !backDecos.length)) {
         frontBase = await generateBase(frontDecos, "front");
       }
-      // The back view is no longer text-generated up front: the decorated
-      // renderer turns the front photo around itself, so front and back
-      // mockups show the same product. A generated back-view blank is only
-      // created lazily - when there is no front base at all, or when the
-      // renderer fails and the composite fallback needs a surface.
+      /* The back view is made lazily, and from the FRONT photo when there is
+         one: the same garment turned around, so front and back mockups show
+         one product. A back generated from words was a different garment
+         (another shade, another collar). Words are only the fallback, when
+         there is no front base or the edit fails. */
       let backBlank = null;
       const ensureBackBlank = async () => {
+        if (!backBlank && frontBase) {
+          try {
+            log(build, `${title}: making the back view from the front photo`);
+            backBlank = await deriveBackBlank({ frontBuffer: frontBase, productType: product.productType || "garment", color: product.garmentColor || "" });
+          } catch (error) {
+            log(build, `${title}: back view from the front photo failed (${error.message}); generating one`);
+          }
+        }
         if (!backBlank) {
           log(build, `${title}: generating a back-view blank for ${backDecos.map((decoration) => decoration.label).join(", ")}`);
           backBlank = await generateBase(backDecos, "back");
