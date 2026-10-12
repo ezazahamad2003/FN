@@ -1070,7 +1070,10 @@
       case "products":
         return buildBlockers(record).length === 0;
       case "build":
-        return (buildState === "complete" || buildState === "partial") && collectionExists(record);
+        /* Only a complete build. "partial" means a product failed (Pine
+           Hollow's hat never reached Shopify) and Next still led on to
+           Finish, which would put a half-built store in the Mega Menu. */
+        return buildState === "complete" && collectionExists(record);
       case "finish":
         return record?.status === "complete";
       default:
@@ -1197,7 +1200,9 @@
             : key === "build"
               ? record.build?.state === "running" || record.build?.state === "starting"
                 ? "The build is running. Next unlocks when it finishes."
-                : "Build the store above. Next unlocks once the collection exists."
+                : record.build?.state === "partial"
+                  ? `${plural(list(record.products).filter((p) => p?.buildState === "failed").length, "A product", "Some products")} failed (see the red step above). Fix the row on Products, then re-run the build.`
+                  : "Build the store above. Next unlocks once every product is built."
               : "";
       }
     }
