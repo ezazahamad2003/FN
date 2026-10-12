@@ -1377,3 +1377,22 @@
 }
 
 .ob-logo-list .ob-logo-later { flex-basis: 100%; color: var(--text-subtle); }
+
+/* =============================================================================
+   Build — the "it is building" panel
+   ========================================================================== */
+.ob-building {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--info-border, var(--border));
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-md);
+  background: var(--info-soft);
+}
+
+.ob-building .spinner { flex: none; margin-top: 0.2rem; }
+.ob-building-title { margin: 0; font-weight: 800; color: var(--text); }
+.ob-building-sub { margin: var(--space-1) 0 0; color: var(--text-subtle); max-width: 70ch; }

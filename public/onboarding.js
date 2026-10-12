@@ -1950,7 +1950,7 @@
   function buildBodyHtml(record) {
     const build = record.build || {};
     const blockers = buildBlockers(record);
-    const running = build.state === "running";
+    const running = build.state === "running" || build.state === "starting";
     const steps = list(build.steps);
     const done = steps.filter((step) => step?.state === "complete").length;
     const pct = steps.length ? Math.round((done / steps.length) * 100) : build.state === "complete" ? 100 : 0;
@@ -1960,7 +1960,28 @@
        live one. */
     const interrupted = build.state === "interrupted";
     const label = running ? "Building…" : interrupted ? "Resume build" : build.state ? "Re-run build" : "Build store";
+    /* A build takes minutes (the mockups are most of it), and a chip that
+       says "running" was easy to miss — an operator could not tell whether
+       the click had done anything. While it runs, one unmissable panel says
+       so: what it is doing now, how long it has been going, and that the
+       page can be left. */
+    const current = steps.find((step) => step?.state === "running");
+    const startedMs = Date.parse(build.startedAt || "") || 0;
+    const elapsedMin = startedMs ? Math.max(0, Math.floor((Date.now() - startedMs) / 60000)) : 0;
+    const productCount = list(record.products).length;
+    const nowDoing = current?.label || (steps.length ? "Finishing up" : "Starting");
+    const liveHtml = running
+      ? `<div class="ob-building" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <p class="ob-building-title">Building now — ${esc(nowDoing)}</p>
+            <p class="ob-building-sub">${steps.length ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : "Getting ready"}${startedMs ? ` · ${elapsedMin < 1 ? "under a minute" : `${elapsedMin} min`} so far` : ""} · usually ${Math.max(3, productCount * 2 + 1)}–${Math.max(5, productCount * 3 + 2)} minutes for ${productCount} product${plural(productCount, "", "s")}, mostly the mockups.
+            This page updates by itself, and the build keeps going if you leave it.</p>
+          </div>
+        </div>`
+      : "";
     return `
+      ${liveHtml}
       <div class="ob-build-actions">
         <button class="${btnClass(record, "build")}" type="button" data-ob="build" ${blockers.length || running ? "disabled" : ""} ${blockers.length ? `title="${esc(`Blocked: ${blockers.join(", ")}`)}"` : ""}>${esc(label)}</button>
         ${interrupted ? `<span class="hint" data-tone="warn">The last run stopped before it finished — resuming picks up where it left off.</span>` : ""}
