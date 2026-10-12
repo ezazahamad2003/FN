@@ -1054,6 +1054,13 @@ async function saveProducts(id, products, { by = "" } = {}) {
   const usedIds = new Set();
   for (let i = 0; i < products.length; i++) {
     const incoming = { ...(products[i] || {}) };
+    /* A row with nothing in it (+ Add product, then Save) is not a product.
+       Saving it showed four "is required" errors on an empty row and kept
+       the store's product list "needing attention" for no reason. */
+    const filled = ["brand", "styleNumber", "type", "title", "decorationCodes"].some((k) => clean(incoming[k])) ||
+      (Array.isArray(incoming.colors) && incoming.colors.some((c) => clean(c))) ||
+      (Array.isArray(incoming.sizes) && incoming.sizes.some((s) => clean(s)));
+    if (!filled) continue;
     // A row the console sends back carries its id; a row typed fresh does not,
     // so an unambiguous style number is the fallback key — without it a re-save
     // would silently drop the photos and proofs already attached to that row.
@@ -2735,6 +2742,11 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   // §12 "Never report an onboarding as complete while anything is unresolved"
   // — that includes anything still listed as missing information.
   const complete = unresolved.length === 0 && report.missingInformation.length === 0;
+  /* The exact list that kept this from "complete". The classifier above sorts
+     unresolved lines into missing information vs. warnings, so a blocker like
+     "no front image" landed among the non-blocking warnings: the finish card
+     showed nothing unresolved and the button appeared to do nothing. */
+  report.unresolved = [...new Set([...unresolved, ...report.missingInformation])];
   record = await store().updateOnboarding(id, (r) => {
     if (build) {
       build.heartbeatAt = nowIso();

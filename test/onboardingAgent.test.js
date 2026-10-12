@@ -1342,6 +1342,24 @@ test("final check catches a product Shopify says is ACTIVE or carries another de
   assert.ok(record.report.warnings.some((w) => /another department's tag: BSH/.test(w)));
 });
 
+test("a blocker the report files under warnings is still listed as unresolved", async () => {
+  /* Ripon's hat: its images uploaded, then a deploy cut the build before they
+     were bound to the variant. "no front image" is classified as a warning, so
+     with nothing under missing information the finish card showed no blocker
+     and pressing finish looked like a dead button. */
+  const shopify = fakeShopify({ order: [] });
+  const { id } = await builtOnboarding({ shopify });
+  const snapshot = await shopify.productSnapshot();
+  shopify.productSnapshot = async () => ({ ...snapshot, variants: snapshot.variants.map((v) => ({ ...v, image: null })) });
+
+  const record = await agent.finalCheck(id, { by: "dan" });
+  assert.notEqual(record.status, "complete");
+  const line = record.report.unresolved.find((u) => /has no front image for/.test(u));
+  assert.ok(line, `unresolved: ${JSON.stringify(record.report.unresolved)}`);
+  assert.ok(record.report.warnings.includes(line), "it is still reported where it was");
+  for (const missing of record.report.missingInformation) assert.ok(record.report.unresolved.includes(missing), missing);
+});
+
 /* ---------------------------------------------------------------------------
    The router over real HTTP
    ------------------------------------------------------------------------- */
@@ -1735,4 +1753,11 @@ test("an interrupted image upload is finished on the same product, never a secon
   assert.deepEqual(replaced.map((r) => r.gid), [first.products[0].shopify.gid], "the images were finished on the same product");
   assert.equal(second.products[0].replaceImages, undefined);
   assert.equal(second.products[0].buildState, "created");
+});
+
+test("an empty product row is not saved as a product", async () => {
+  const { id } = await readyForProducts();
+  const saved = await agent.saveProducts(id, [TEE_ROW, { id: "p2", brand: "", styleNumber: "", colors: [], sizes: [], styles: [] }], { by: "dan" });
+  assert.deepEqual(saved.products.map((p) => p.id), ["p1"]);
+  assert.match(saved.events[saved.events.length - 1].message, /1 product row\(s\) saved; 0 need attention/);
 });
