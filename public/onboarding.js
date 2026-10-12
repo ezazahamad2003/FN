@@ -2659,9 +2659,18 @@
       button,
       "Starting…",
       async () => {
-        await api(recordPath(id, "/build"), { method: "POST", body: JSON.stringify({ force: rerun }) });
+        const started = await api(recordPath(id, "/build"), { method: "POST", body: JSON.stringify({ force: rerun }) });
         if (!isCurrent("detail", id)) return;
-        await loadDetail(id);
+        /* Use the build the server just started. Re-reading the record here
+           raced the server writing it: the page came back "not started",
+           and since only a running build is polled, it stayed that way while
+           the build ran — the button looked like it only refreshed the page. */
+        if (started?.build && state.record) {
+          state.record.build = { ...(state.record.build || {}), ...started.build, state: started.build.state || "running" };
+          renderDetail();
+        } else {
+          await loadDetail(id);
+        }
       },
       page(),
       "obDetailError"
@@ -2774,7 +2783,7 @@
     /* Only a live build is worth polling. An interrupted one is waiting for
        somebody to press Resume — polling it forever just repainted the same
        page every five seconds and re-announced it to a screen reader. */
-    if (buildState !== "running") return;
+    if (buildState !== "running" && buildState !== "starting") return;
     const id = state.record.id;
     state.pollTimer = window.setTimeout(async () => {
       if (!isCurrent("detail", id)) return;
@@ -2785,7 +2794,7 @@
         if (next) {
           const wasRunning = state.record?.build?.state;
           state.record = next;
-          const nowRunning = next.build?.state === "running";
+          const nowRunning = next.build?.state === "running" || next.build?.state === "starting";
           if (nowRunning) {
             repaintBuild();
             maybePoll();
