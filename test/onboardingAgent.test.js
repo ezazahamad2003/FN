@@ -1593,3 +1593,26 @@ test("with no print-ready files the mockups use the department's own logos, and 
   assert.equal(tee.validation.ok, true);
   assert.match(tee.validation.warnings.join(" "), /Omni needs the print-ready files VAC-F01, VAC-F02, VAC-B01|Omni needs the print-ready files/);
 });
+
+test("Redo images re-renders one product and swaps the images on its existing draft", async () => {
+  let renders = 0;
+  const base = fakeMockups();
+  const mockups = { ...base, async renderProductMockups(args) { renders += 1; return base.renderProductMockups(args); } };
+  const { deps, id, record } = await builtOnboarding({ mockups });
+  assert.equal(renders, 1);
+  const productsBefore = deps.shopify.calls.setProduct.length;
+  const replaced = [];
+  deps.shopify.replaceProductImages = async (gid, images) => {
+    replaced.push({ gid, count: images.length });
+    return { removed: 4, added: images.length };
+  };
+  const result = await agent.redoProductImages(id, record.products[0].id, { by: "dan", wait: true });
+  assert.ok(result.started !== false, JSON.stringify(result));
+  const after = await store.getOnboarding(id);
+  assert.equal(after.build.state, "complete", after.build.error || "");
+  assert.equal(renders, 2, "the mockups were made again");
+  assert.equal(deps.shopify.calls.setProduct.length, productsBefore, "no second product was created");
+  assert.deepEqual(replaced.map((r) => r.gid), [record.products[0].shopify.gid]);
+  assert.ok(replaced[0].count > 0);
+  assert.equal(after.products[0].replaceImages, undefined, "the flag is cleared once done");
+});

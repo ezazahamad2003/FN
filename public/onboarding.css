@@ -1396,3 +1396,5 @@
 .ob-building .spinner { flex: none; margin-top: 0.2rem; }
 .ob-building-title { margin: 0; font-weight: 800; color: var(--text); }
 .ob-building-sub { margin: var(--space-1) 0 0; color: var(--text-subtle); max-width: 70ch; }
+
+.ob-mockup-group-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }

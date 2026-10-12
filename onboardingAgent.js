@@ -1296,6 +1296,29 @@ function buildLogger(build) {
  * progress lands in the record. `wait` awaits the run (used by tests and by
  * the resume watchdog).
  */
+/*
+ * "Redo images" for one product: new artwork, a real blank photo, or a
+ * better supplier photo arrived after it was built. A re-run used to reuse
+ * the old mockups and skip the existing Shopify product, so nothing changed.
+ * This clears the row's mockups and marks it, then runs the normal build:
+ * the mockup step renders it again and the product step swaps the images on
+ * the existing draft instead of skipping it.
+ */
+async function redoProductImages(id, productId, { by = "", wait = false } = {}) {
+  if (activeBuilds.has(id)) return { started: false, reason: "A build for this onboarding is already running.", build: null };
+  const record = await store().getOnboarding(id);
+  const product = productById(record, productId);
+  if (!product) throw badRequest(`No product row "${productId}" on this onboarding.`);
+  await store().updateOnboarding(id, (r) => {
+    const target = productById(r, productId);
+    target.mockups = [];
+    if (target.shopify?.gid) target.replaceImages = true;
+    note(r, { type: "build", message: `${target.title || target.styleNumber || productId}: images will be made again${target.shopify?.gid ? " and replaced on the Shopify draft" : ""}.`, by });
+    return r;
+  });
+  return startBuild(id, { force: true, by, wait });
+}
+
 async function startBuild(id, { force = false, by = "", wait = false } = {}) {
   // Reserve the slot BEFORE any await: two concurrent starts must not both
   // pass the check.
@@ -1459,6 +1482,26 @@ async function runBuild(id, build, { by = "" } = {}) {
     const product = productById(record, row.id);
     step = stepStart(build, `products:${product.id}`, `Product — ${product.title || product.styleNumber || product.id}`);
     try {
+      if (product.shopify?.gid && product.replaceImages && (await catalog().productExists(product.shopify.gid))) {
+        /* "Redo images": the product stays as built (title, SKUs, price
+           work Dan may have done); only its pictures are swapped for the
+           mockups this run just rendered. */
+        const fresh = productById(record, product.id);
+        const title = fresh.title || product.title || "";
+        const snapshot = await shop().productSnapshot(product.shopify.gid);
+        const images = await mockupImages(id, fresh, snapshot?.variants || [], title);
+        const replaced = await shop().replaceProductImages(product.shopify.gid, images, { onLog: log });
+        record = await saveBuild(id, build, (r) => {
+          const target = productById(r, product.id);
+          if (target) {
+            target.buildState = "created";
+            delete target.replaceImages;
+          }
+          note(r, { type: "build", message: `${title}: images replaced (${replaced.removed} removed, ${replaced.added} added).`, by }, build);
+        });
+        stepDone(step, `images replaced (${replaced.added})`);
+        continue;
+      }
       if (product.shopify?.gid && (await catalog().productExists(product.shopify.gid))) {
         stepSkip(step, "already created");
         log(`${product.title || product.id} already exists in Shopify; skipped.`);
@@ -1967,7 +2010,8 @@ async function proposeSharedSettings(id, { by = "" } = {}) {
     r.sharedSettings.flow = { ...r.sharedSettings.flow, status: r.sharedSettings.flow.status === "confirmed" ? "confirmed" : "proposed", checklist: helium().flowChecklist({ departmentTag: tag }) };
     r.sharedSettings.helium = {
       ...r.sharedSettings.helium,
-      status: r.sharedSettings.helium.status === "verified" ? "verified" : "proposed",
+      // A re-run (Redo images) must not undo what Dan already confirmed by hand.
+      status: ["verified", "confirmed"].includes(r.sharedSettings.helium.status) ? r.sharedSettings.helium.status : "proposed",
       forms,
       checklist: helium().manualChecklist({ departmentTag: tag, forms })
     };
@@ -2951,6 +2995,7 @@ module.exports = {
   saveProducts,
   proposeColor,
   startBuild,
+  redoProductImages,
   proposeSharedSettings,
   approveSharedSetting,
   verifySharedSettings,

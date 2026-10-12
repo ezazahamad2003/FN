@@ -389,7 +389,44 @@ function namesTwoColours(garmentColor) {
   return /[/&+]|\s-\s|\band\b/i.test(String(garmentColor || ""));
 }
 
-async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, productType, productLabel }) {
+/*
+ * The back photo of a garment, guessed from its verified front photo.
+ * Suppliers publish the two as a pair that differs only in the face word:
+ * "richardson_4332-navy-frontFlat.jpg" / "-backFlat.jpg",
+ * "NL3600_midnightnavy_flat_front.jpg" / "_flat_back.jpg", "…FlatFront8" /
+ * "…FlatBack8". Only the file name is changed, never the host or the query,
+ * and every candidate still has to pass the vision check as a back view.
+ */
+function backUrlCandidates(frontUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(frontUrl || ""));
+  } catch {
+    return [];
+  }
+  const parts = parsed.pathname.split("/");
+  const file = parts.pop() || "";
+  const swaps = [
+    [/frontflat/gi, (m) => (m[0] === "F" ? "BackFlat" : "backFlat")],
+    [/flat[_-]?front/gi, (m) => m.replace(/front/i, (f) => (f[0] === "F" ? "Back" : "back"))],
+    [/([_-])front(?=[._-]|\d|$)/gi, (m, sep) => `${sep}back`],
+    [/Front(?=[A-Z0-9._-]|$)/g, () => "Back"]
+  ];
+  const out = [];
+  for (const [pattern, replace] of swaps) {
+    const swapped = file.replace(pattern, replace);
+    if (swapped !== file) {
+      const url = new URL(parsed.toString());
+      url.pathname = [...parts, swapped].join("/");
+      // Some CDNs put the name in the path twice (sanmar /…/1200W-…Front8/1200W-…Front8.jpg).
+      url.pathname = url.pathname.split("/").map((seg) => (seg === file.replace(/\.[^.]+$/, "") ? swapped.replace(/\.[^.]+$/, "") : seg)).join("/");
+      if (!out.includes(url.toString())) out.push(url.toString());
+    }
+  }
+  return out;
+}
+
+async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, productType, productLabel, face = "front" }) {
   const openai = client();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -404,6 +441,7 @@ async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, pr
 
 Expected garment: ${productLabel || productType || "garment"}${brandStyle ? ` (style ${brandStyle})` : ""}
 Expected colour: ${garmentColor || "not specified — accept any colour"}
+Expected view: the ${face} of the garment
 
 Return JSON only:
 {
@@ -414,14 +452,14 @@ Return JSON only:
   "colourSeen": "the garment's actual colour",
   "undecorated": true|false,      // false if ANY logo, text, emblem, patch or printed graphic appears on the garment
   "decorationSeen": "what decoration is on it, if any",
-  "shotType": "flat-front" | "model" | "back" | "side" | "other",
+  "shotType": "flat-front" | "flat-back" | "model" | "back" | "side" | "other",
   "backgroundClean": true|false,  // plain white or plain neutral studio background
   "singleGarment": true|false     // false if the image shows several garments, a colour grid, or a collage
 }
 
 colourMatches is about the WHOLE garment. A garment whose parts are different colours (a navy front with caramel, khaki or white mesh, a contrasting brim, raglan sleeves in another colour) does NOT match a single expected colour such as "Navy". It matches only when the expected colour itself names those colours (for example "Navy/Caramel" or "Navy/White").
 
-"flat-front" means the garment alone, laid flat or on an invisible mannequin, photographed from the front. A photo containing a human model is "model", never "flat-front". Ignore brand neck labels and sewn-in care tags — those are not decoration.`
+"flat-front" means the garment alone, laid flat or on an invisible mannequin, photographed from the front; "flat-back" is the same, photographed from the back. A photo containing a human model is "model", never "flat-front". Ignore brand neck labels and sewn-in care tags — those are not decoration.`
           },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${buffer.toString("base64")}` } }
         ]
@@ -439,7 +477,8 @@ colourMatches is about the WHOLE garment. A garment whose parts are different co
      order itself names two colours. */
   else if (parsed.twoTone === true && !namesTwoColours(garmentColor)) reasons.push(`two-tone garment (saw ${parsed.colourSeen || "more than one colour"}), but the order is solid ${garmentColor}`);
   if (parsed.undecorated !== true) reasons.push(`already decorated (${parsed.decorationSeen || "artwork present"})`);
-  if (parsed.shotType !== "flat-front") reasons.push(`${parsed.shotType || "unknown"} shot, not a flat front view`);
+  const wantShot = face === "back" ? ["flat-back", "back"] : ["flat-front"];
+  if (!wantShot.includes(parsed.shotType)) reasons.push(`${parsed.shotType || "unknown"} shot, not a flat ${face} view`);
   if (parsed.backgroundClean !== true) reasons.push("background is not a clean studio backdrop");
   if (parsed.singleGarment !== true) reasons.push("image shows more than one garment");
 
@@ -889,8 +928,90 @@ async function findSupplierBlank(product, { onLog } = {}) {
   return result;
 }
 
+/*
+ * A real back photo for a garment whose front came from a supplier. The back
+ * used to be the image model turning the front photo around, always — a
+ * plausible garment, never a photograph. Order:
+ *   1. a verified back already on the link book entry (one download);
+ *   2. the front photo's file name with the face word swapped, each candidate
+ *      checked by vision as a flat back view of the same garment and colour;
+ * A verified back is written to the link book entry that holds the front, so
+ * every later department gets it in one download; a miss is recorded too, so
+ * the same pair is not re-checked on every build. Never throws.
+ */
+const backCache = new Map();
+
+async function findSupplierBack(product, { frontUrl = "", onLog } = {}) {
+  const log = (message) => {
+    if (onLog) onLog(message);
+  };
+  if (!frontUrl || !supplierBlanksEnabled()) return null;
+  if (backCache.has(frontUrl)) return backCache.get(frontUrl);
+
+  // The book entry that holds this front photo, under any of its keys.
+  let entryKey = "";
+  let entry = null;
+  try {
+    for (const key of [blankCacheKey(product), ...familyKeys(product)]) {
+      const e = await lookupSupplierLink(key);
+      if (e && e.imageUrl === frontUrl) {
+        entryKey = key;
+        entry = e;
+        break;
+      }
+    }
+  } catch {
+    // No book: the candidates below still work, nothing is remembered.
+  }
+
+  const done = (result) => {
+    backCache.set(frontUrl, result);
+    return result;
+  };
+
+  if (entry?.backStatus === "verified" && entry.backImageUrl) {
+    try {
+      const buffer = await fetchImage(entry.backImageUrl);
+      log(`link book hit (back): ${entry.backImageUrl}`);
+      return done({ imageBuffer: await normalizeBase(buffer), imageUrl: entry.backImageUrl });
+    } catch (error) {
+      log(`link book back photo is dead (${error.message}); re-checking`);
+    }
+  }
+  if (entry?.backStatus === "none" && entry.backCheckedFrom === frontUrl) return done(null);
+
+  const expectations = {
+    brandStyle: String(product.brandStyle || "").trim() || String(product.vendor || "").trim(),
+    vendor: String(product.vendor || "").trim(),
+    garmentColor: product.garmentColor || "",
+    productType: product.productType || "",
+    productLabel: product.productLabel || "",
+    face: "back"
+  };
+  const rejected = [];
+  for (const url of backUrlCandidates(frontUrl)) {
+    try {
+      const buffer = await fetchImage(url);
+      const meta = await sharp(buffer).metadata();
+      if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_IMAGE_EDGE) throw new Error(`too small (${meta.width || 0}x${meta.height || 0})`);
+      const verdict = await verifyBlankPhoto(buffer, `image/${meta.format === "jpg" ? "jpeg" : meta.format}`, expectations);
+      if (!verdict.usable) throw new Error(verdict.reasons.join("; "));
+      log(`accepted supplier back photo: ${url}`);
+      if (entryKey) saveSupplierLink(entryKey, { ...entry, backImageUrl: url, backStatus: "verified", backCheckedFrom: frontUrl }).catch(() => {});
+      return done({ imageBuffer: await normalizeBase(buffer), imageUrl: url });
+    } catch (error) {
+      rejected.push(`${url.split("/").pop()}: ${error.message}`);
+    }
+  }
+  if (rejected.length) log(`no supplier back photo (${rejected.slice(0, 3).join(" | ")})`);
+  if (entryKey) saveSupplierLink(entryKey, { ...entry, backStatus: "none", backCheckedFrom: frontUrl }).catch(() => {});
+  return done(null);
+}
+
 module.exports = {
   blankCacheKey,
+  findSupplierBack,
+  backUrlCandidates,
   familyKeys,
   typeFamily,
   clearCachedBlank,

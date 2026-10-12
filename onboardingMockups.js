@@ -57,6 +57,7 @@ function defaultRenderers() {
     deriveBackBlank: (...args) => require("./productImages").deriveBackBlank(...args),
     generateBlankGarment: (...args) => require("./ai").generateBlankGarment(...args),
     findSupplierBlank: (...args) => require("./blanks").findSupplierBlank(...args),
+    findSupplierBack: (...args) => require("./blanks").findSupplierBack(...args),
     reason: (...args) => require("./azureOpenai").reason(...args)
   };
 }
@@ -306,7 +307,28 @@ function defaultDeriveBack(product) {
   return ({ frontBuffer, color }) => getRenderers().deriveBackBlank({ frontBuffer, productType: product.type || "garment", color });
 }
 
-function defaultSupplierLookup(product, onLog) {
+function supplierQuery(product, color) {
+  return {
+    vendor: product.brand || "",
+    brandStyle: product.styleNumber || "",
+    garmentColor: color,
+    productType: product.type || "",
+    productLabel: product.title || ""
+  };
+}
+
+/* The back of the same supplier garment. Keyed on the front photo the
+   supplier lookup just found, so the pair always belongs together. */
+function defaultSupplierBackLookup(product, onLog, frontUrls) {
+  return async (color) => {
+    const frontUrl = frontUrls.get(color);
+    if (!frontUrl || !getRenderers().findSupplierBack) return null;
+    const found = await getRenderers().findSupplierBack(supplierQuery(product, color), { frontUrl, onLog });
+    return (found && found.imageBuffer) || null;
+  };
+}
+
+function defaultSupplierLookup(product, onLog, frontUrls = null) {
   return async (color) => {
     const found = await getRenderers().findSupplierBlank(
       {
@@ -318,6 +340,7 @@ function defaultSupplierLookup(product, onLog) {
       },
       { onLog }
     );
+    if (frontUrls && found && found.imageUrl) frontUrls.set(color, found.imageUrl);
     return (found && found.imageBuffer) || null;
   };
 }
@@ -327,7 +350,7 @@ function defaultSupplierLookup(product, onLog) {
  * `model` is what the renderer sees (1024); `stock(size)` is the photo itself
  * at output size, so a stock face from a 12 MP photo is not a 1024 upscale.
  */
-async function resolveBases({ product, color, photos, supplierLookup, generateBlank, deriveBack, needBack, log }) {
+async function resolveBases({ product, color, photos, supplierLookup, supplierBackLookup, generateBlank, deriveBack, needBack, log }) {
   const base = { front: null, back: null, frontSource: null, backSource: null, warnings: [] };
 
   const take = async (face, source, getter) => {
@@ -361,6 +384,11 @@ async function resolveBases({ product, color, photos, supplierLookup, generateBl
        back generated from words is a different garment, so it is the last
        resort. */
     (await take("back", "photo", async () => asBuffer(photos.back))) ||
+      /* The supplier's own back photo of the same garment, when the front came
+         from that supplier. Before this the back was always the image model
+         turning the front around — Pine Hollow's navy R112 came back with a
+         white mesh the real cap does not have. */
+      (supplierBackLookup && base.frontSource === "supplier" && (await take("back", "supplier", async () => asBuffer(await supplierBackLookup(color))))) ||
       (deriveBack && base.front && (await take("back", "derived", async () => asBuffer(await deriveBack({ frontBuffer: base.front.model, color, product }))))) ||
       (generateBlank && (await take("back", "generated", async () => asBuffer(await generateBlank({ face: "back", color, product })))));
   } else if (photos.back) {
@@ -417,6 +445,7 @@ async function renderProductMockups({
   artwork = {},
   blankPhotos = {},
   supplierLookup,
+  supplierBackLookup,
   generateBlank,
   deriveBack,
   onLog,
@@ -435,7 +464,10 @@ async function renderProductMockups({
   const method = classBShirt || product.decorationMethod === rules.DECORATION_EMBROIDERY ? "embroidery" : "print";
   const productType = product.type || "garment";
   const styleNumber = product.styleNumber || "";
-  const lookup = supplierLookup === undefined ? defaultSupplierLookup(product, log) : supplierLookup;
+  // Front photo URL per colour, so the back lookup can find the same garment's pair.
+  const frontUrls = new Map();
+  const lookup = supplierLookup === undefined ? defaultSupplierLookup(product, log, frontUrls) : supplierLookup;
+  const backLookup = supplierBackLookup === undefined ? (supplierLookup === undefined ? defaultSupplierBackLookup(product, log, frontUrls) : null) : supplierBackLookup;
   const generate = generateBlank === undefined ? defaultGenerateBlank(product) : generateBlank;
   const derive = deriveBack === undefined ? defaultDeriveBack(product) : deriveBack;
 
@@ -451,6 +483,7 @@ async function renderProductMockups({
       color: color.name,
       photos,
       supplierLookup: lookup,
+      supplierBackLookup: backLookup,
       generateBlank: generate,
       deriveBack: derive,
       needBack: hasDecoration,

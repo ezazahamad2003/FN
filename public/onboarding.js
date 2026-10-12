@@ -1652,6 +1652,7 @@
             ${chip(validation.ok === true ? "valid" : validation.ok === false ? "has errors" : "not validated", tone)}
             ${product?.buildState ? chip(product.buildState, product.buildState === "created" ? "ok" : product.buildState === "failed" ? "danger" : "muted") : ""}
             ${product?.shopify?.url ? `<a href="${esc(product.shopify.url)}" target="_blank" rel="noreferrer">Open in Shopify</a>` : ""}
+            ${redoButtonHtml(product)}
           </span>
           <button class="variant-remove" type="button" data-ob="remove-product" aria-label="Remove product ${index + 1}">&times;</button>
         </div>
@@ -2037,7 +2038,10 @@
             const mockups = list(product.mockups);
             return `
           <div class="ob-mockup-group">
-            <p class="field-label">${esc(product?.title || [product?.brand, product?.styleNumber].filter(Boolean).join(" ") || "Product")} <small>${mockups.length} image${plural(mockups.length, "", "s")}</small></p>
+            <div class="ob-mockup-group-head">
+              <p class="field-label">${esc(product?.title || [product?.brand, product?.styleNumber].filter(Boolean).join(" ") || "Product")} <small>${mockups.length} image${plural(mockups.length, "", "s")}</small></p>
+              ${redoButtonHtml(product)}
+            </div>
             <div class="ob-mockups">
               ${mockups.map((mockup) => mockupFigureHtml(record, mockup)).join("")}
             </div>
@@ -2045,6 +2049,16 @@
           })
           .join("")}
       </div>`;
+  }
+
+  /* New artwork, a real blank photo, or a better supplier photo after the
+     product was built: make its images again and swap them on the Shopify
+     draft. Without this a re-run reused the old images and skipped the
+     product, so nothing changed. */
+  function redoButtonHtml(product) {
+    if (!product?.id || !(list(product.mockups).length || product.shopify?.gid)) return "";
+    const running = ["running", "starting"].includes(state.record?.build?.state);
+    return `<button class="btn btn-ghost btn-sm" type="button" data-ob="redo-images" data-ob-product-id="${esc(product.id)}" ${running ? "disabled" : ""}>Redo images</button>`;
   }
 
   function mockupFigureHtml(record, mockup) {
@@ -2376,6 +2390,7 @@
     if (action === "save-notes") return saveNotes(trigger);
     if (action === "save-products") return saveProducts(trigger);
     if (action === "build") return startBuild(trigger);
+    if (action === "redo-images") return redoImages(trigger);
     if (action === "delete") return deleteRecord(trigger);
     if (action === "remove-file") return removeFile(trigger);
     if (action === "use-suggestions") return useSuggestions(trigger);
@@ -2692,6 +2707,33 @@
         } else {
           await loadDetail(id);
         }
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  function redoImages(button) {
+    const id = state.record?.id;
+    const productId = button.dataset.obProductId;
+    const product = list(state.record?.products).find((p) => p?.id === productId);
+    if (!id || !product) return;
+    const name = product.title || product.styleNumber || "this product";
+    const built = Boolean(product.shopify?.gid);
+    if (!window.confirm(`Make the images for "${name}" again${built ? " and replace them on its Shopify draft" : ""}?
+
+They are rebuilt from the current logos and blank photos. The product's title, SKUs and anything set in Shopify stay as they are.`)) return;
+    return runAction(
+      button,
+      "Starting…",
+      async () => {
+        const started = await api(`${recordPath(id)}/products/${encodeURIComponent(productId)}/redo-images`, { method: "POST", body: "{}" });
+        if (!isCurrent("detail", id)) return;
+        const fresh = await api(recordPath(id));
+        if (!isCurrent("detail", id)) return;
+        state.record = fresh.onboarding || state.record;
+        if (started?.build) state.record.build = { ...(state.record.build || {}), ...started.build, state: started.build.state || "running" };
+        goToStep("build");
       },
       page(),
       "obDetailError"

@@ -343,6 +343,17 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
 
   /* ---- build ------------------------------------------------------------ */
 
+  // Make one product's images again and swap them on its Shopify draft.
+  router.post("/onboardings/:id/products/:productId/redo-images", gate, async (req, res) => {
+    try {
+      const result = await agent.redoProductImages(req.params.id, req.params.productId, { by: byOf(req) });
+      if (!result.started) return res.status(409).json({ error: result.reason, build: result.build || null });
+      res.status(202).json({ started: true, build: result.build });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.post("/onboardings/:id/build", gate, async (req, res) => {
     try {
       const result = await agent.startBuild(req.params.id, { force: req.body?.force === true, by: byOf(req) });

@@ -631,3 +631,45 @@ test("blanks.typeFamily groups the wordings one garment is booked under", () => 
   assert.equal(blanks.typeFamily("Pullover Hoodie"), "hoodie");
   assert.equal(blanks.typeFamily("Pants"), "");
 });
+
+test("the back comes from the supplier's back photo when the front came from the supplier", async () => {
+  const product = tee({ decorationCodes: "F01/B01", styles: [], colors: ["Navy"] });
+  const art = { buffer: await solid(40, 40, "#ffcc00"), mimetype: "image/png", name: "logo.png" };
+  const supplierFront = await solid(240, 320, "#1a2a5a", { format: "jpeg" });
+  const supplierBack = await solid(240, 320, "#1a2a5b", { format: "jpeg" });
+  let derived = 0;
+  const log = [];
+  const out = await mockups.renderProductMockups({
+    product,
+    departmentCode: "PIN",
+    artwork: { F01: art, B01: art },
+    blankPhotos: {},
+    supplierLookup: async () => supplierFront,
+    supplierBackLookup: async () => supplierBack,
+    deriveBack: async () => {
+      derived += 1;
+      return supplierFront;
+    },
+    generateBlank: null,
+    onLog: (m) => log.push(m),
+    verify: false,
+    size: SIZE
+  });
+  assert.equal(derived, 0, "no turned-around front when the supplier has a back photo");
+  assert.ok(log.some((m) => /back blank from supplier/.test(m)), log.join("\n"));
+  const back = out.find((m) => m.face === "back");
+  assert.ok(!back.warnings.some((w) => /made from the .* by the image model/.test(w)), back.warnings.join(" | "));
+});
+
+test("backUrlCandidates swaps only the face word in the file name", () => {
+  const blanks = require("../blanks");
+  assert.deepEqual(blanks.backUrlCandidates("https://cdn.blankstyle.com/files/p_images/19327/richardson_4332-navy-frontFlat.jpg"), [
+    "https://cdn.blankstyle.com/files/p_images/19327/richardson_4332-navy-backFlat.jpg"
+  ]);
+  assert.ok(
+    blanks
+      .backUrlCandidates("https://sanmarsports.com/cdn/shop/files/NL3600_midnightnavy_flat_front.jpg?v=1&width=1946")
+      .includes("https://sanmarsports.com/cdn/shop/files/NL3600_midnightnavy_flat_back.jpg?v=1&width=1946")
+  );
+  assert.deepEqual(blanks.backUrlCandidates("https://x.test/cap-navy.jpg"), [], "no face word, no guess");
+});

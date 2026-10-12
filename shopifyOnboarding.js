@@ -624,6 +624,34 @@ async function attachMockups(id, images = [], { onLog } = {}) {
   })));
 }
 
+/*
+ * Swap a built product's images for new mockups. The old media are deleted
+ * first: a variant carries exactly one attached image and Shopify refuses a
+ * second ("already has attached media"), and deleting a media file detaches
+ * it from its variants. Only media on THIS product are touched.
+ */
+const FILE_DELETE_MUTATION = `
+mutation fileDelete($fileIds: [ID!]!) {
+  fileDelete(fileIds: $fileIds) {
+    deletedFileIds
+    userErrors { field message }
+  }
+}`;
+
+async function replaceProductImages(id, images = [], { onLog } = {}) {
+  const log = logger(onLog);
+  const snapshot = await productSnapshot(id);
+  if (!snapshot) throw new Error(`Product ${id} was not found in Shopify.`);
+  const oldIds = (snapshot.media || []).map((m) => m.id).filter(Boolean);
+  if (oldIds.length) {
+    const data = await gql(FILE_DELETE_MUTATION, { fileIds: oldIds });
+    assertNoUserErrors("fileDelete", data?.fileDelete?.userErrors);
+    log(`Removed ${oldIds.length} old image(s) from "${snapshot.title}".`);
+  }
+  await attachMockups(snapshot.gid, images, { onLog });
+  return { removed: oldIds.length, added: (images || []).length, variants: snapshot.variants, title: snapshot.title };
+}
+
 /* ---------------------------------------------------------------------------
    §6 Collection: exact title, Non-Stock notice description, 3584×2048
    banner, published to the Online Store.
@@ -1421,6 +1449,7 @@ module.exports = {
   buildProductSetInput,
   setProduct,
   attachMockups,
+  replaceProductImages,
   // collection
   ensureDepartmentCollection,
   // verification reads
