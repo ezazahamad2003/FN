@@ -1602,7 +1602,18 @@ async function runBuild(id, build, { by = "" } = {}) {
         });
         continue;
       }
-      const built = await buildProduct(id, record, product, log);
+      const built = await buildProduct(id, record, product, log, {
+        onCreated: (shopify) =>
+          saveBuild(id, build, (r) => {
+            const target = productById(r, product.id);
+            if (target) {
+              target.shopify = shopify;
+              target.buildState = "images";
+              // Images are owed: a resume replaces whatever partial set landed.
+              target.replaceImages = true;
+            }
+          })
+      });
       record = await saveBuild(id, build, (r) => {
         const target = productById(r, product.id);
         if (target) {
@@ -1931,7 +1942,7 @@ async function buildLock(record, log) {
 }
 
 /* §9 one product: duplicate a source, overwrite the copy, attach the mockups. */
-async function buildProduct(id, record, product, log) {
+async function buildProduct(id, record, product, log, { onCreated } = {}) {
   const warnings = [];
   const code = departmentCode(record);
   const colorTable = await tables().colorTable();
@@ -1995,6 +2006,12 @@ async function buildProduct(id, record, product, log) {
   );
   warnings.push(...(result.warnings || []));
 
+  /* Recorded the moment the product exists, before its images upload. A
+     deploy that interrupted the upload used to leave the record without the
+     product, and the resumed build made a second one (Ripon's hat, caught
+     and repaired by hand). With the id saved and the images still owed, the
+     resume finishes the images on THIS product instead. */
+  if (onCreated) await onCreated({ productId: result.legacyId, gid: result.id, url: result.url, variantCount: result.variants.length, createdAt: nowIso() });
   const images = await mockupImages(id, product, result.variants, title);
   if (images.length) await shop().attachMockups(result.id, images, { onLog: log });
   else warnings.push(`${title}: no mockup images were attached.`);

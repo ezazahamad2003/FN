@@ -1701,3 +1701,38 @@ test("Redo images that renders nothing keeps the product's existing Shopify imag
   assert.match(after.build.error || JSON.stringify(after.build.steps), /existing Shopify images were kept/);
   assert.equal(after.products[0].replaceImages, undefined, "the flag does not linger");
 });
+
+test("an interrupted image upload is finished on the same product, never a second product", async () => {
+  const deps = harness();
+  const realAttach = deps.shopify.attachMockups;
+  let attachCalls = 0;
+  deps.shopify.attachMockups = async (...a) => {
+    attachCalls += 1;
+    if (attachCalls === 1) throw new Error("SIGTERM during upload");
+    return realAttach ? realAttach(...a) : [];
+  };
+  const replaced = [];
+  deps.shopify.replaceProductImages = async (gid, images) => {
+    replaced.push({ gid, n: images.length });
+    return { removed: 1, added: images.length };
+  };
+  await seedVacavilleOnList();
+  const created = await agent.createOnboarding({
+    payload: { departmentName: DEPARTMENT, state: "CA" },
+    files: { artwork: [packetFile("artwork", "VFD-scramble.png", "image/png")], policies: [packetFile("policies", "policy.pdf")] }
+  });
+  await agent.runSetup(created.id, { by: "dan" });
+  await agent.saveProducts(created.id, [TEE_ROW], { by: "dan" });
+  await agent.startBuild(created.id, { by: "dan", wait: true });
+  const first = await store.getOnboarding(created.id);
+  assert.ok(first.products[0].shopify.gid, "the product id was saved before the upload failed");
+  assert.equal(first.products[0].replaceImages, true, "its images are still owed");
+  const productsMade = deps.shopify.calls.setProduct.length;
+
+  await agent.startBuild(created.id, { by: "dan", force: true, wait: true });
+  const second = await store.getOnboarding(created.id);
+  assert.equal(deps.shopify.calls.setProduct.length, productsMade, "no second product");
+  assert.deepEqual(replaced.map((r) => r.gid), [first.products[0].shopify.gid], "the images were finished on the same product");
+  assert.equal(second.products[0].replaceImages, undefined);
+  assert.equal(second.products[0].buildState, "created");
+});
