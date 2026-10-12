@@ -2817,11 +2817,14 @@ async function deleteStore(collectionId, { confirmName = "", by = "" } = {}) {
     }
     const lock = await locksmith().findLockForCollection(record.collection.id);
     if (!lock) return "";
+    // Locksmith's own lock objects carry `_id`; `lock.id` was undefined and
+    // the delete went to /locks/undefined.json.
+    const lockId = lock.id != null ? lock.id : lock._id;
     try {
-      await locksmith().deleteLock(lock.id);
-      return `Deleted Locksmith lock ${lock.id}.`;
+      await locksmith().deleteLock(lockId);
+      return `Deleted Locksmith lock ${lockId}.`;
     } catch (error) {
-      manual.push(`Delete Locksmith lock ${lock.id} ("${record.collection.title}") by hand — the API refused (${errorText(error)}).`);
+      manual.push(`Delete Locksmith lock ${lockId} ("${record.collection.title}") by hand — the API refused (${errorText(error)}).`);
       return "";
     }
   });

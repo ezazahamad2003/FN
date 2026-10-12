@@ -1554,3 +1554,10 @@ test("the lock step keeps the lock already on the collection instead of making a
   assert.equal(record.lock.locksmithLockId, "852901", "the existing lock's _id is recorded");
   assert.equal(record.lock.secretLink, "https://fnsimple.com/first");
 });
+
+test("deleteStore deletes a lock Locksmith returns with _id", async () => {
+  const { calls } = await builtStore({ lock: { _id: 852901 } });
+  const result = await agent.deleteStore("111", { confirmName: COLLECTION_TITLE, by: "dan" });
+  assert.deepEqual(calls.locks, [852901]);
+  assert.match(result.done.join(" "), /Deleted Locksmith lock 852901/);
+});
