@@ -306,6 +306,8 @@ const PRODUCT_DEFAULTS = {
   decorationMethod: "",
   decorationCodes: "",
   styles: [],
+  // [{ logo: assetId, spot: "F" }] — each is the next Style (rules.logoStyles).
+  otherLogos: [],
   fulfillment: "",
   classB: false,
   notes: "",

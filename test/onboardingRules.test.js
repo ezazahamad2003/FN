@@ -337,3 +337,108 @@ test("hat fits stay S/M and L/XL however they are written and whatever the type 
   }
   assert.deepEqual(r.expandSizeRange("S-XL"), ["S", "M", "L", "XL"], "a real range is still a range");
 });
+
+/* ---------------------------------------------------------------------------
+   Another logo on this garment → Styles (rules.logoStyles)
+   ------------------------------------------------------------------------- */
+
+const TEE = {
+  brand: "Next Level",
+  styleNumber: "NL3600",
+  type: "T-shirt",
+  colors: ["Navy"],
+  sizes: ["S", "M"],
+  decorationMethod: "print",
+  decorationCodes: "F01/B01",
+  fulfillment: "One Week Item",
+  logoMap: { F01: "logo-a", B01: "logo-back" }
+};
+
+test("another logo on the front is Style 2 of the SAME product: F01 becomes F02, the back stays", () => {
+  const setup = rules.logoStyles({ ...TEE, otherLogos: [{ logo: "logo-b" }] });
+  assert.deepEqual(setup.errors, []);
+  assert.deepEqual(setup.styles.map((s) => s.decorationCodes), ["F01/B01", "F02/B01"]);
+  assert.ok(setup.styles.every((s) => s.source === rules.OTHER_LOGO_SOURCE));
+  assert.deepEqual(setup.logoMap, { F01: "logo-a", B01: "logo-back", F02: "logo-b" });
+
+  const expanded = rules.expandProduct({ ...TEE, styles: setup.styles, logoMap: setup.logoMap }, { departmentCode: "VAC" });
+  assert.equal(expanded.ok, true, expanded.errors.join(" "));
+  assert.deepEqual(expanded.options.map((o) => o.name), [rules.OPTION_COLOR, rules.OPTION_SIZE, rules.OPTION_STYLE]);
+  assert.deepEqual(expanded.options[2].values, ["Style 1", "Style 2"]);
+  assert.deepEqual(expanded.variants.map((v) => v.sku), [
+    "NL3600-S-NVY-VAC-F01/B01",
+    "NL3600-S-NVY-VAC-F02/B01",
+    "NL3600-M-NVY-VAC-F01/B01",
+    "NL3600-M-NVY-VAC-F02/B01"
+  ]);
+});
+
+test("another logo goes where it is put; a third logo takes the next free number", () => {
+  const back = rules.logoStyles({ ...TEE, otherLogos: [{ logo: "logo-b", spot: "B" }] });
+  assert.deepEqual(back.styles.map((s) => s.decorationCodes), ["F01/B01", "F01/B02"]);
+  assert.equal(back.logoMap.B02, "logo-b");
+
+  const three = rules.logoStyles({ ...TEE, otherLogos: [{ logo: "logo-b" }, { logo: "logo-c" }] });
+  assert.deepEqual(three.styles.map((s) => s.decorationCodes), ["F01/B01", "F02/B01", "F03/B01"]);
+
+  // A code the row already uses is never handed out twice.
+  const typedF02 = rules.logoStyles({ ...TEE, decorationCodes: "F01/F02", logoMap: {}, otherLogos: [{ logo: "logo-b" }] });
+  assert.deepEqual(typedF02.styles.map((s) => s.decorationCodes), ["F01/F02", "F02/F03"]);
+
+  // No front logo: the row's first spot.
+  const backOnly = rules.logoStyles({ ...TEE, decorationCodes: "B01", otherLogos: [{ logo: "logo-b" }] });
+  assert.deepEqual(backOnly.styles.map((s) => s.decorationCodes), ["B01", "B02"]);
+});
+
+test("an embroidered other logo keeps the spot of the one it replaces", () => {
+  const hat = rules.logoStyles({
+    type: "Hat",
+    decorationMethod: "embroidery",
+    decorationCodes: "E01/E02",
+    placements: { E01: "F", E02: "B" },
+    logoMap: { E01: "logo-a" },
+    otherLogos: [{ logo: "logo-b" }]
+  });
+  assert.deepEqual(hat.errors, []);
+  assert.deepEqual(hat.styles.map((s) => s.decorationCodes), ["E01/E02", "E02/E03"]);
+  assert.equal(hat.placements.E03, "F", "drawn on the front, like E01");
+  assert.equal(hat.logoMap.E03, "logo-b");
+
+  // A Class B shirt's unplaced E01 is the left shoulder (onboardingMockups).
+  const classB = rules.logoStyles({ type: "Class B", classB: true, decorationCodes: "E01", otherLogos: [{ logo: "logo-b", spot: "LS" }] });
+  assert.deepEqual(classB.errors, []);
+  assert.deepEqual(classB.styles.map((s) => s.decorationCodes), ["E01", "E02"]);
+  assert.equal(classB.placements.E02, "LS", "not the right shoulder an unplaced E02 would get");
+});
+
+test("removing the other logos drops the Styles they made, and nothing typed by hand", () => {
+  const made = rules.logoStyles({ ...TEE, otherLogos: [{ logo: "logo-b" }, { logo: "logo-c" }] });
+  const saved = { ...TEE, styles: made.styles, logoMap: made.logoMap, placements: made.placements };
+
+  const one = rules.logoStyles({ ...saved, otherLogos: [{ logo: "logo-c" }] });
+  assert.deepEqual(one.styles.map((s) => s.decorationCodes), ["F01/B01", "F02/B01"]);
+  assert.deepEqual(one.logoMap, { F01: "logo-a", B01: "logo-back", F02: "logo-c" }, "F03 is gone, F02 is the remaining logo");
+
+  const none = rules.logoStyles({ ...saved, otherLogos: [] });
+  assert.deepEqual(none.styles, []);
+  assert.deepEqual(none.logoMap, { F01: "logo-a", B01: "logo-back" }, "the codes the other logos made are gone");
+  // The console sends the row back without those Styles; the stored row knows them.
+  const echoed = rules.logoStyles({ ...saved, styles: [], otherLogos: [] }, { previous: saved });
+  assert.deepEqual(echoed.logoMap, { F01: "logo-a", B01: "logo-back" });
+
+  const typed = [{ decorationCodes: "F01/B01" }, { decorationCodes: "F02/B01" }];
+  assert.deepEqual(rules.logoStyles({ ...TEE, styles: typed, otherLogos: [] }).styles, typed);
+});
+
+test("an other logo that cannot be built says why on the row", () => {
+  const errors = (product) => rules.logoStyles({ ...TEE, ...product }).errors.join(" | ");
+  assert.match(errors({ otherLogos: [{ logo: "" }] }), /Style 2: pick which logo goes on the front/);
+  assert.match(errors({ otherLogos: [{ logo: "logo-a" }] }), /Style 2 puts the same logo on the front as Style 1/);
+  assert.match(errors({ otherLogos: [{ logo: "logo-b" }, { logo: "logo-b" }] }), /Style 3 is the same logo on the front as Style 2/);
+  assert.match(errors({ otherLogos: [{ logo: "logo-b", spot: "RS" }] }), /Style 2: nothing is ticked on the right sleeve/);
+  assert.match(errors({ decorationCodes: "", otherLogos: [{ logo: "logo-b" }] }), /Tick where the logo goes/);
+  assert.match(errors({ styles: [{ decorationCodes: "F01" }, { decorationCodes: "F02" }], otherLogos: [{ logo: "logo-b" }] }), /Styles typed as codes/);
+  const many = Array.from({ length: rules.OTHER_LOGOS_MAX + 1 }, (_, i) => ({ logo: `logo-${i}` }));
+  assert.match(errors({ otherLogos: many }), /at most 5 other logos/);
+  assert.deepEqual(rules.logoStyles({ ...TEE }).errors, [], "no other logo, nothing to say");
+});

@@ -1690,7 +1690,6 @@
   function productRowHtml(record, product, index) {
     const id = product?.id || `p${index + 1}`;
     const validation = product?.validation || {};
-    const styles = list(product?.styles);
     const saved = Boolean(list(record.products).find((row) => row?.id === id));
     const tone = validation.ok === true ? "ok" : validation.ok === false ? "danger" : "muted";
     return `
@@ -1728,17 +1727,124 @@
         ${placementsHtml(record, product)}
         <div class="ob-size-presets"><span class="hint">Sizes:</span>${SIZE_PRESETS.map((preset) => `<button type="button" class="ob-color-chip" data-ob="size-preset" data-ob-sizes="${esc(preset.sizes)}" ${preset.add ? "data-ob-add=\"true\"" : ""}>${esc(preset.label)}</button>`).join("")}<span class="hint">${esc(SIZE_HINT)}</span></div>
         ${logosHtml(record, product, saved)}
-        <div class="ob-styles">
-          <p class="field-label">Styles <small>rare — only when this same blank is sold with a second logo setup, as a "Style" option</small></p>
-          <div class="ob-style-list" data-ob-style-list>
-            ${styles.map((style, styleIndex) => styleRowHtml(style, styleIndex)).join("")}
-          </div>
-          <button class="btn btn-ghost btn-sm" type="button" data-ob="add-style">+ Add a second logo setup</button>
-        </div>
+        ${otherLogosHtml(record, product)}
         ${blankPhotoHtml(record, product, saved)}
         ${colorIssuesHtml(product)}
         ${validationHtml(validation)}
       </fieldset>`;
+  }
+
+  /* ---- Another logo on this garment ------------------------------------------
+     The same blank, the same spot, a different logo — sold as ONE product
+     whose "Style" option picks the logo, not as a second product. Style 1 is
+     the row as set up under "Where the logos go"; each other logo here is the
+     next Style. The save works out the codes (F01 → F02), the SKUs and which
+     logo each Style's mockups use (rules.logoStyles on the server). */
+  const OTHER_LOGO_SOURCE = "other-logo";
+  const OTHER_LOGO_FIRST_HTML = `<p class="ob-other-logo-first"><span class="ob-style-name">Style 1</span> <span>the logos ticked above</span></p>`;
+
+  // Styles typed as codes by hand, before this existed. Kept as they are.
+  function typedStyles(product) {
+    return list(product?.styles).filter((st) => st?.source !== OTHER_LOGO_SOURCE && String(st?.decorationCodes || "").trim());
+  }
+
+  function otherLogosHtml(record, product) {
+    const typed = typedStyles(product);
+    if (typed.length) {
+      return `
+        <div class="ob-styles">
+          <p class="field-label">Styles <small>typed as decoration codes, one row per Style</small></p>
+          <div class="ob-style-list" data-ob-style-list>
+            ${typed.map((style, styleIndex) => styleRowHtml(style, styleIndex)).join("")}
+          </div>
+          <button class="btn btn-ghost btn-sm" type="button" data-ob="add-style">+ Add a Style by codes</button>
+          <p class="hint">Remove these Styles to use “+ Add another logo” instead.</p>
+        </div>`;
+    }
+    const logos = packetLogos(record);
+    const { on } = placementState(product);
+    const spots = PLACEMENTS.filter((p) => on[p.key]);
+    const others = list(product?.otherLogos);
+    const why = otherLogoWhy(spots.length, logos.length, 0);
+    return `
+      <div class="ob-styles ob-other-logos" data-ob-other-logos>
+        <p class="field-label">Another logo on this garment <small>optional · same garment, same spot, a different logo</small></p>
+        <p class="hint">It stays one product in Shopify: shoppers pick the logo with a “Style” option. Style 1 is the logos ticked above; each logo added here is the next Style, in the same spot.</p>
+        <div class="ob-other-logo-list" data-ob-other-logo-list>
+          ${others.length ? OTHER_LOGO_FIRST_HTML : ""}
+          ${others.map((other, index) => otherLogoRowHtml(logos, spots, other, index)).join("")}
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" data-ob="add-other-logo" ${!spots.length || logos.length < 2 ? "disabled" : ""}>+ Add another logo</button>
+        <p class="hint" data-ob-other-logo-why ${why ? "" : "hidden"}>${esc(why)}</p>
+      </div>`;
+  }
+
+  /* A spot that was picked and then unticked above stays picked, saying so,
+     rather than the logo quietly moving to another spot; the save then says
+     what to fix. */
+  function spotOptionsHtml(spots, selected) {
+    const ticked = spots.some((p) => p.key === selected);
+    const lost = !ticked ? PLACEMENTS.find((p) => p.key === selected) : null;
+    const pick = ticked || lost ? selected : (spots.find((p) => p.key === "F") || spots[0])?.key;
+    return [
+      lost ? `<option value="${esc(lost.key)}" selected>on the ${esc(lost.label.toLowerCase())}: tick it above</option>` : "",
+      ...spots.map((p) => `<option value="${esc(p.key)}" ${p.key === pick ? "selected" : ""}>on the ${esc(p.label.toLowerCase())}</option>`)
+    ].join("");
+  }
+
+  function otherLogoRowHtml(logos, spots, other, index) {
+    const n = index + 2;
+    return `
+      <div class="ob-style ob-other-logo" data-ob-other-logo>
+        <span class="ob-style-name">Style ${n}</span>
+        <select data-ob-other-logo-file aria-label="Logo for Style ${n}">
+          <option value="">Pick the other logo…</option>
+          ${logos
+            .map((f) => `<option value="${esc(f.assetId)}" ${other?.logo === f.assetId ? "selected" : ""}>${esc(f.name || "logo")}${f.role ? ` (${esc(f.role)} logo)` : ""}</option>`)
+            .join("")}
+        </select>
+        <select data-ob-other-logo-spot aria-label="Where the Style ${n} logo goes">${spotOptionsHtml(spots, other?.spot || "")}</select>
+        <button class="variant-remove" type="button" data-ob="remove-other-logo" aria-label="Remove Style ${n}">&times;</button>
+      </div>`;
+  }
+
+  /* The spots offered follow the ticks above, and the button says why it is
+     off instead of adding a Style that cannot be built. */
+  function refreshOtherLogos(row) {
+    const box = row?.querySelector("[data-ob-other-logos]");
+    if (!box) return;
+    const spots = PLACEMENTS.filter((p) => row.querySelector(`[data-ob-place='${p.key}'] [data-ob-place-on]`)?.checked);
+    const logos = packetLogos(state.record);
+    const rows = [...box.querySelectorAll("[data-ob-other-logo]")];
+    rows.forEach((node, index) => {
+      const n = index + 2;
+      const name = node.querySelector(".ob-style-name");
+      if (name) name.textContent = `Style ${n}`;
+      node.querySelector("[data-ob-other-logo-file]")?.setAttribute("aria-label", `Logo for Style ${n}`);
+      const spot = node.querySelector("[data-ob-other-logo-spot]");
+      if (spot) {
+        spot.setAttribute("aria-label", `Where the Style ${n} logo goes`);
+        spot.innerHTML = spotOptionsHtml(spots, spot.value);
+      }
+      node.querySelector("[data-ob='remove-other-logo']")?.setAttribute("aria-label", `Remove Style ${n}`);
+    });
+    const holder = box.querySelector("[data-ob-other-logo-list]");
+    const first = holder?.querySelector(".ob-other-logo-first");
+    if (rows.length && !first) holder?.insertAdjacentHTML("afterbegin", OTHER_LOGO_FIRST_HTML);
+    if (!rows.length && first) first.remove();
+    const button = box.querySelector("[data-ob='add-other-logo']");
+    if (button) button.disabled = !spots.length || logos.length < 2;
+    const hint = box.querySelector("[data-ob-other-logo-why]");
+    if (hint) {
+      hint.textContent = otherLogoWhy(spots.length, logos.length, rows.length);
+      hint.hidden = !hint.textContent;
+    }
+  }
+
+  function otherLogoWhy(spots, logos, rows) {
+    if (!spots) return "Tick where the logo goes above first. The other logo goes in the same spot.";
+    if (logos < 2) return "Only one logo is uploaded. Add the department’s other logo in step 1 (Packet) first.";
+    return rows ? "Press Save to update the SKUs and the Style option." : "";
   }
 
   function styleRowHtml(style, index) {
@@ -1869,9 +1975,11 @@
   function placementsHtml(record, product) {
     const logos = packetLogos(record);
     const { on, custom } = placementState(product);
-    /* A row sold in Styles takes its codes from the style rows below, so the
-       placements here would change nothing it builds — say so instead. */
-    if (list(product?.styles).filter((st) => String(st?.decorationCodes || "").trim()).length) {
+    /* A row sold in Styles typed as codes takes its codes from the style rows
+       below, so the placements here would change nothing it builds — say so
+       instead. Styles made by "Another logo on this garment" are built FROM
+       these placements, so the grid stays. */
+    if (typedStyles(product).length) {
       return `<div class="ob-placements" data-ob-placements><p class="field-label">Where the logos go</p><p class="hint">This row is sold in Styles, so each Style row below carries its own codes. Remove the Styles to use the placements here.</p></div>`;
     }
     const defaultFor = (key) => (key === "B" ? "back" : "chest");
@@ -2744,10 +2852,12 @@
       }
       if (event.target.closest("[data-ob-place]") || event.target.matches("[data-ob-field='decorationMethod']")) {
         syncPlacements(row, { fromPlacement: Boolean(event.target.closest("[data-ob-place]")) });
+        refreshOtherLogos(row);
         return;
       }
       if (event.target.matches("[data-ob-field='decorationCodes']")) {
         retickPlacements(row);
+        refreshOtherLogos(row);
         return;
       }
     }
@@ -2916,6 +3026,24 @@
       const holder = trigger.closest("[data-ob-style-list]");
       trigger.closest("[data-ob-style]")?.remove();
       renumberStyles(holder);
+      return;
+    }
+    if (action === "add-other-logo") {
+      const row = trigger.closest("[data-ob-product]");
+      const holder = row?.querySelector("[data-ob-other-logo-list]");
+      if (!holder) return;
+      const spots = PLACEMENTS.filter((p) => row.querySelector(`[data-ob-place='${p.key}'] [data-ob-place-on]`)?.checked);
+      const index = holder.querySelectorAll("[data-ob-other-logo]").length;
+      holder.insertAdjacentHTML("beforeend", otherLogoRowHtml(packetLogos(record), spots, {}, index));
+      refreshOtherLogos(row);
+      holder.lastElementChild?.querySelector("[data-ob-other-logo-file]")?.focus();
+      return;
+    }
+    if (action === "remove-other-logo") {
+      const row = trigger.closest("[data-ob-product]");
+      trigger.closest("[data-ob-other-logo]")?.remove();
+      refreshOtherLogos(row);
+      row?.querySelector("[data-ob='add-other-logo']")?.focus();
     }
   }
 
@@ -3162,6 +3290,14 @@
       const styles = [...node.querySelectorAll("[data-ob-style]")]
         .map((styleNode) => ({ decorationCodes: styleNode.querySelector("[data-ob-field='styleCodes']")?.value.trim() || "" }))
         .filter((style) => style.decorationCodes);
+      /* Every other logo is sent, a Style still without its logo too: the
+         save says "pick which logo" instead of the row quietly losing it. */
+      const otherLogos = node.querySelector("[data-ob-other-logos]")
+        ? [...node.querySelectorAll("[data-ob-other-logo]")].map((other) => ({
+            logo: other.querySelector("[data-ob-other-logo-file]")?.value || "",
+            spot: other.querySelector("[data-ob-other-logo-spot]")?.value || ""
+          }))
+        : null;
       return {
         ...previous,
         id,
@@ -3174,6 +3310,7 @@
         decorationMethod: read("decorationMethod"),
         decorationCodes: read("decorationCodes"),
         styles,
+        ...(otherLogos ? { otherLogos } : {}),
         fulfillment: read("fulfillment"),
         classB: node.querySelector("[data-ob-field='classB']")?.checked === true,
         notes: read("notes"),

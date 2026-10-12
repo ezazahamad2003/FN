@@ -608,6 +608,17 @@
   white-space: nowrap;
 }
 
+/* Another logo on this garment: Style N · which logo · which spot · remove. */
+.ob-other-logos {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  width: 100%;
+}
+.ob-other-logos .hint { margin: 0; }
+.ob-style.ob-other-logo { grid-template-columns: auto minmax(0, 240px) minmax(0, 280px) auto; }
+.ob-other-logo-first { display: flex; gap: var(--space-3); align-items: baseline; margin: 0; color: var(--text-muted); font-size: var(--fs-sm); }
+
 /* ---- Blank photo / proof slots ------------------------------------------ */
 .ob-slots {
   display: grid;
@@ -1273,6 +1284,8 @@
   .ob-slot-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .ob-style { grid-template-columns: minmax(0, 1fr) auto; }
   .ob-style-name { grid-column: 1 / -1; }
+  .ob-style.ob-other-logo { grid-template-columns: minmax(0, 1fr) auto; }
+  .ob-style.ob-other-logo [data-ob-other-logo-spot] { grid-column: 1; }
   .ob-contact { grid-template-columns: minmax(0, 1fr); }
   .ob-contact .variant-remove { justify-self: end; }
   .ob-shared-actions .btn { flex: 1; }

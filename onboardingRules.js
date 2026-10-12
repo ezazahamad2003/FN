@@ -856,6 +856,139 @@ function defaultProductTitle(product) {
   return [brand, type].filter(Boolean).join(" ");
 }
 
+/*
+ * "Another logo on this garment" — §9.6 Styles without typing codes. The same
+ * blank with the logo in ONE spot swapped for a different logo is sold as one
+ * product, not two: Style 1 is the row's own codes and logos, Style 2 the
+ * first other logo, and so on. Each Style needs SKUs of its own, so the
+ * swapped spot takes the next free number of its code (F01 → F02, E01 → E02)
+ * and the row's logo map points that code at the other logo. Every other spot
+ * is the same in each Style.
+ *
+ *   product.otherLogos = [{ logo: assetId, spot?: "F" | "B" | "RS" | "LS" }]
+ *
+ * `spot` defaults to the front when the row has a front logo, otherwise to the
+ * row's first logo. The Styles made here are marked `source: "other-logo"`, so
+ * removing the last other logo drops them while Styles typed as codes by hand
+ * are kept exactly as they are.
+ *
+ * Returns { styles, logoMap, placements, otherLogos, errors } — the row's new
+ * values for those fields, and why an other logo could not be placed.
+ */
+const OTHER_LOGOS_MAX = 5;
+const OTHER_LOGO_SOURCE = "other-logo";
+const SPOT_LABELS = { F: "front", B: "back", RS: "right sleeve", LS: "left sleeve" };
+
+// Where a decoration code sits: F/B/RS/LS by its letters, an E/P code where
+// the row ticked it — or, never placed, where the mockups draw it (the Class B
+// shirt's E01/E02 shoulder patches, the front everywhere else).
+function decorationSpot(code, product, placements) {
+  const parsed = parseDecorationCode(code);
+  if (parsed.error) return "";
+  if (PRINT_PREFIXES.includes(parsed.prefix)) return parsed.prefix;
+  if (SPOT_LABELS[placements?.[parsed.code]]) return placements[parsed.code];
+  const type = String(product?.type || "").trim();
+  const classBShirt = Boolean(product?.classB) && (/shirt/i.test(type) || /^class\s*b$/i.test(type));
+  if (classBShirt && parsed.number === 1) return "LS";
+  if (classBShirt && parsed.number === 2) return "RS";
+  return "F";
+}
+
+function logoStyles(product, { previous = null } = {}) {
+  const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  const logoMap = { ...(isObject(product?.logoMap) ? product.logoMap : {}) };
+  const placements = { ...(isObject(product?.placements) ? product.placements : {}) };
+  const otherLogos = (Array.isArray(product?.otherLogos) ? product.otherLogos : [])
+    .filter(isObject)
+    .map((other) => ({ logo: String(other.logo || "").trim(), spot: String(other.spot || "").trim().toUpperCase() }));
+  const allStyles = Array.isArray(product?.styles) ? product.styles : [];
+  const typed = allStyles.filter((style) => style?.source !== OTHER_LOGO_SOURCE);
+  const base = normalizeDecorations(product.decorationCodes);
+  /* A code an earlier save made for an other logo (F02, F03…) that no Style
+     uses any more leaves the logo and spot maps; nothing else is touched.
+     `previous` is the row as stored: the console sends a row back without
+     the Styles made here, so only the stored row still knows them. */
+  const madeStyles = [...allStyles, ...(Array.isArray(previous?.styles) ? previous.styles : [])];
+  const made = new Set(
+    madeStyles.filter((style) => style?.source === OTHER_LOGO_SOURCE).flatMap((style) => normalizeDecorations(style.decorationCodes).codes)
+  );
+  const settle = (styles, errors = []) => {
+    const inUse = new Set([...base.codes, ...styles.flatMap((style) => normalizeDecorations(style.decorationCodes).codes)]);
+    for (const map of [logoMap, placements]) {
+      for (const code of Object.keys(map)) if (made.has(code) && !inUse.has(code)) delete map[code];
+    }
+    return { styles, logoMap, placements, otherLogos, errors };
+  };
+  if (!otherLogos.length) return settle(typed);
+
+  const errors = [];
+  if (typed.length) {
+    errors.push("This row already has Styles typed as codes. Remove them to add another logo instead.");
+    return settle(typed, errors);
+  }
+  if (!base.codes.length) {
+    errors.push('Tick where the logo goes under "Where the logos go" first. Another logo goes in the same spot, as Style 2.');
+    return settle([], errors);
+  }
+  if (otherLogos.length > OTHER_LOGOS_MAX) {
+    errors.push(`One product takes at most ${OTHER_LOGOS_MAX} other logos (Style 2 to Style ${OTHER_LOGOS_MAX + 1}). Remove ${otherLogos.length - OTHER_LOGOS_MAX}.`);
+  }
+
+  const spots = base.codes.map((code) => ({ code, spot: decorationSpot(code, product, placements) }));
+  const used = new Set(base.codes);
+  const nextCode = (prefix) => {
+    for (let n = 1; n < 100; n += 1) {
+      const code = `${prefix}${String(n).padStart(2, "0")}`;
+      if (!used.has(code)) return code;
+    }
+    return null;
+  };
+  const styles = [{ decorationCodes: base.codes.join("/"), source: OTHER_LOGO_SOURCE }];
+  const derived = {};
+  const seen = new Map();
+  otherLogos.slice(0, OTHER_LOGOS_MAX).forEach((other, i) => {
+    const name = styleName(i + 2);
+    const target = other.spot ? spots.find((s) => s.spot === other.spot) : spots.find((s) => s.spot === "F") || spots[0];
+    if (!target) {
+      errors.push(`${name}: nothing is ticked on the ${SPOT_LABELS[other.spot] || other.spot}. Tick it under "Where the logos go", or put this logo in another spot.`);
+      return;
+    }
+    const where = SPOT_LABELS[target.spot] || "garment";
+    if (!other.logo) {
+      errors.push(`${name}: pick which logo goes on the ${where}.`);
+      return;
+    }
+    if (logoMap[target.code] === other.logo) {
+      errors.push(`${name} puts the same logo on the ${where} as Style 1. Pick a different logo.`);
+      return;
+    }
+    const key = `${target.spot}|${other.logo}`;
+    if (seen.has(key)) {
+      errors.push(`${name} is the same logo on the ${where} as ${seen.get(key)}. Remove one of them.`);
+      return;
+    }
+    seen.set(key, name);
+    const prefix = parseDecorationCode(target.code).prefix;
+    const code = nextCode(prefix);
+    if (!code) {
+      errors.push(`${name}: no free ${prefix} code left for the ${where}.`);
+      return;
+    }
+    used.add(code);
+    derived[code] = { logo: other.logo, spot: target.spot, embroidered: !PRINT_PREFIXES.includes(prefix) };
+    // In SKU order, as every other code list on the row is kept.
+    const codes = normalizeDecorations(base.codes.map((c) => (c === target.code ? code : c))).codes;
+    styles.push({ decorationCodes: codes.join("/"), source: OTHER_LOGO_SOURCE });
+  });
+
+  // Each code made here points at its logo and, embroidered, at its spot.
+  for (const [code, entry] of Object.entries(derived)) {
+    logoMap[code] = entry.logo;
+    if (entry.embroidered) placements[code] = entry.spot;
+  }
+  return settle(styles.length > 1 ? styles : [], errors);
+}
+
 /* ---------------------------------------------------------------------------
    §11 product description, §6 collection description
    ------------------------------------------------------------------------- */
@@ -1082,6 +1215,10 @@ module.exports = {
   parseSku,
   expandProduct,
   defaultProductTitle,
+  OTHER_LOGOS_MAX,
+  OTHER_LOGO_SOURCE,
+  decorationSpot,
+  logoStyles,
   // descriptions
   buildProductDescriptionHtml,
   collectionDescriptionHtml,

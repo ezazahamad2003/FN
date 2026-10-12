@@ -1761,3 +1761,108 @@ test("an empty product row is not saved as a product", async () => {
   assert.deepEqual(saved.products.map((p) => p.id), ["p1"]);
   assert.match(saved.events[saved.events.length - 1].message, /1 product row\(s\) saved; 0 need attention/);
 });
+
+/* ---------------------------------------------------------------------------
+   Another logo on this garment — a Style of the same product
+   ------------------------------------------------------------------------- */
+
+async function twoLogoStore(options = {}) {
+  // No Omni print files yet, so every code's mockup uses a packet logo.
+  const deps = harness({ productionFiles: [], ...options });
+  await seedVacavilleOnList();
+  const created = await agent.createOnboarding({
+    payload: { departmentName: DEPARTMENT, state: "CA" },
+    files: {
+      artwork: [packetFile("artwork", "VFD-chest.png", "image/png"), packetFile("artwork", "VFD-ems.png", "image/png")],
+      policies: [packetFile("policies", "policy.pdf")]
+    }
+  });
+  await agent.runSetup(created.id, { by: "dan" });
+  const record = await store.getOnboarding(created.id);
+  const [chest, ems] = record.packet.files.filter((f) => f.kind === "artwork");
+  const row = {
+    ...TEE_ROW,
+    colors: ["Navy"],
+    styles: [],
+    decorationMethod: "print",
+    decorationCodes: "F01/B01",
+    logoMap: { F01: chest.assetId },
+    otherLogos: [{ logo: ems.assetId }]
+  };
+  return { deps, id: created.id, chest, ems, row };
+}
+
+test("another logo on the same garment is a Style of ONE product, not a second product", async () => {
+  const { id, ems, row } = await twoLogoStore();
+  const record = await agent.saveProducts(id, [row], { by: "dan" });
+  assert.equal(record.products.length, 1);
+  const tee = record.products[0];
+  assert.equal(tee.validation.ok, true, tee.validation.errors.join(" "));
+  assert.deepEqual(tee.styles.map((s) => s.decorationCodes), ["F01/B01", "F02/B01"]);
+  assert.equal(tee.logoMap.F02, ems.assetId);
+  assert.deepEqual(tee.validation.skuPreview, [
+    "NL3600-S-NVY-VAC-F01/B01",
+    "NL3600-S-NVY-VAC-F02/B01",
+    "NL3600-M-NVY-VAC-F01/B01",
+    "NL3600-M-NVY-VAC-F02/B01"
+  ]);
+
+  // The console sends the row back with no Style rows of its own: the Styles
+  // are worked out again from the other logo, not lost.
+  const again = await agent.saveProducts(id, [{ ...tee, styles: [] }], { by: "dan" });
+  assert.deepEqual(again.products[0].styles.map((s) => s.decorationCodes), ["F01/B01", "F02/B01"]);
+  assert.doesNotMatch(again.products[0].validation.warnings.join(" "), /Already built/);
+
+  // Without the other logo it is a one-Style product again.
+  const single = await agent.saveProducts(id, [{ ...again.products[0], styles: [], otherLogos: [] }], { by: "dan" });
+  assert.deepEqual(single.products[0].styles, []);
+  assert.equal(single.products[0].logoMap.F02, undefined);
+  assert.deepEqual(single.products[0].validation.skuPreview, ["NL3600-S-NVY-VAC-F01/B01", "NL3600-M-NVY-VAC-F01/B01"]);
+});
+
+test("an other logo with no logo picked blocks the row and says why", async () => {
+  const { id, row } = await twoLogoStore();
+  const record = await agent.saveProducts(id, [{ ...row, otherLogos: [{ logo: "" }] }], { by: "dan" });
+  assert.equal(record.products[0].validation.ok, false);
+  assert.match(record.products[0].validation.errors.join(" "), /Style 2: pick which logo goes on the front/);
+});
+
+test("the build makes one product with a Style option; each Style's front shows its own logo, the shared back once", async () => {
+  const seen = {};
+  const base = fakeMockups();
+  const mockups = {
+    ...base,
+    async renderProductMockups(args) {
+      seen.artwork = Object.fromEntries(Object.entries(args.artwork).map(([code, art]) => [code, art.name]));
+      const out = await base.renderProductMockups(args);
+      // The back is the same in both Styles; the real renderer marks it so.
+      for (const m of out) {
+        if (m.style === "Style 2" && m.face === "back") m.sameAs = out.find((o) => o.style === "Style 1" && o.face === "back" && o.color === m.color).fileName;
+      }
+      return out;
+    }
+  };
+  const { deps, id, row } = await twoLogoStore({ mockups });
+  await agent.saveProducts(id, [row], { by: "dan" });
+  await agent.startBuild(id, { by: "dan", wait: true });
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+
+  assert.equal(deps.shopify.calls.setProduct.length, 1, "one product");
+  const input = deps.shopify.calls.setProduct[0];
+  assert.deepEqual(input.options.map((o) => o.name), [rules.OPTION_COLOR, rules.OPTION_SIZE, rules.OPTION_STYLE]);
+  assert.deepEqual(input.options[2].values, ["Style 1", "Style 2"]);
+  assert.equal(seen.artwork.F01, "VFD-chest.png");
+  assert.equal(seen.artwork.F02, "VFD-ems.png", "Style 2's front uses the other logo");
+
+  const images = deps.shopify.calls.attachMockups[0].images;
+  assert.deepEqual(images.map((i) => i.alt), [
+    `${input.title} — Navy Style 1 front`,
+    `${input.title} — Navy Style 2 front`,
+    `${input.title} — Navy Style 1 back`
+  ]);
+  const skuOf = (variantId) => input.variants[Number(variantId.split("/").pop()) - 1].sku;
+  assert.deepEqual(images[0].variantIds.map(skuOf), ["NL3600-S-NVY-VAC-F01/B01", "NL3600-M-NVY-VAC-F01/B01"]);
+  assert.deepEqual(images[1].variantIds.map(skuOf), ["NL3600-S-NVY-VAC-F02/B01", "NL3600-M-NVY-VAC-F02/B01"]);
+  assert.equal(record.products[0].mockups.find((m) => m.style === "Style 2" && m.face === "back").sameAs, "VAC_NL3600_NVY_Style1_BACK.png");
+});

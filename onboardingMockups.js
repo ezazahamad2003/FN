@@ -502,6 +502,12 @@ async function renderProductMockups({
     });
     colorWarnings.push(...bases.warnings);
 
+    /* A face carrying the same codes in two Styles is the same picture: the
+       other logo on the front leaves Style 2's back exactly Style 1's. It is
+       rendered once — not paid for and verified again — and marked `sameAs`
+       the first, so the build does not put it in the gallery twice. */
+    const rendersByCodes = new Map();
+
     for (const plan of plans) {
       const fileNameFor = (face) => rules.mockupFileName({ departmentCode, styleNumber, colorCode, style: plan.style, face });
       const tag = `${styleNumber} ${color.name}${plan.style ? ` ${plan.style}` : ""}`;
@@ -565,6 +571,19 @@ async function renderProductMockups({
           continue;
         }
 
+        const sameKey = `${face}|${decorations.map((d) => d.code).join("/")}`;
+        const earlier = rendersByCodes.get(sameKey);
+        if (earlier) {
+          entry.path = earlier.path;
+          entry.buffer = earlier.buffer;
+          entry.verified = earlier.verified;
+          entry.warnings.push(...earlier.renderWarnings);
+          entry.sameAs = earlier.fileName;
+          log(`${tag} ${face}: same as ${earlier.fileName}; reused`);
+          results.push(entry);
+          continue;
+        }
+
         const rendered = await renderFace({
           bases,
           face,
@@ -582,6 +601,7 @@ async function renderProductMockups({
           log: (message) => log(`${tag} ${face}: ${message}`)
         });
         entry.path = rendered.path;
+        const ownWarningsFrom = entry.warnings.length;
         entry.warnings.push(...rendered.warnings);
         entry.buffer = rendered.path === "render" ? await toSquare(rendered.buffer, size) : await stockImage(faceBase, size);
 
@@ -595,6 +615,16 @@ async function renderProductMockups({
             expectation: { face, labels: decorations.map((d) => d.label), productType }
           });
           if (entry.verified.ok === false) entry.warnings.push(`Vision check flagged the ${face} image: ${entry.verified.notes}`);
+        }
+        // Only a picture that rendered is reused; a failed one gets its own try.
+        if (plans.length > 1 && entry.path === "render") {
+          rendersByCodes.set(sameKey, {
+            fileName: entry.fileName,
+            path: entry.path,
+            buffer: entry.buffer,
+            verified: entry.verified,
+            renderWarnings: entry.warnings.slice(ownWarningsFrom)
+          });
         }
         results.push(entry);
       }

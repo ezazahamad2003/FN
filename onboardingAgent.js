@@ -1112,6 +1112,16 @@ async function saveProducts(id, products, { by = "" } = {}) {
     // A saved row carries state the console form does not send back (photos,
     // proofs, mockups, the Shopify ids); merging keeps a re-save from wiping it.
     const merged = store().normalizeProduct({ ...carried, ...incoming, id: nextId }, i);
+    /* "Another logo on this garment": the Styles, the logo for each Style's
+       code and the spot of each embroidered one are worked out from the row's
+       placements and its other logos on every save — before the spec check
+       below, so adding a logo to a built product drops its old mockups and
+       says it must be rebuilt. */
+    const logoSetup = rules.logoStyles(merged, { previous: existing });
+    merged.styles = logoSetup.styles;
+    merged.logoMap = logoSetup.logoMap;
+    merged.placements = logoSetup.placements;
+    merged.otherLogos = logoSetup.otherLogos;
     if (styleChanged) {
       warnedStyleChanges.push(`${merged.styleNumber || "a row"} replaced ${existing.styleNumber} — its mockups and Shopify product were not carried over.`);
     }
@@ -1192,6 +1202,10 @@ async function saveProducts(id, products, { by = "" } = {}) {
       skuPreview: expanded.variants.map((v) => v.sku).filter(Boolean)
     };
     if (specWarning) merged.validation.warnings = [...merged.validation.warnings, specWarning];
+    if (logoSetup.errors.length) {
+      merged.validation.ok = false;
+      merged.validation.errors = [...merged.validation.errors, ...logoSetup.errors];
+    }
     /* "S-3XL" is saved as the sizes it means, so the row shows exactly which
        variants the build will create. Only when every size was understood —
        a typo stays as typed, next to its error. */
@@ -1839,6 +1853,9 @@ async function buildMockups(id, record, product, log) {
          identical everywhere downstream. */
       base: image.base || null,
       verified: image.verified || null,
+      // The earlier Style's file this one is the same picture as (a back that
+      // does not change between Styles); it stays out of the Shopify gallery.
+      sameAs: image.sameAs || "",
       warnings: image.warnings || []
     };
     warnings.push(...(image.warnings || []));
@@ -2090,7 +2107,9 @@ function mockupAlt(title, mockup) {
 }
 
 async function mockupImages(id, product, variants, title) {
-  const usable = (product.mockups || []).filter((m) => m.assetId);
+  /* A back that is the same in every Style goes in the gallery once. A front
+     is never dropped: each Style's variants are bound to their own. */
+  const usable = (product.mockups || []).filter((m) => m.assetId && !(m.sameAs && m.face !== "front"));
   const ordered = [...usable.filter((m) => m.face === "front"), ...usable.filter((m) => m.face !== "front")];
   const images = [];
   for (const mockup of ordered) {

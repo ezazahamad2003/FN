@@ -229,8 +229,17 @@ test("renderProductMockups: one render per face per Style per colour, size first
     assert.deepEqual(await dims(m.buffer), { width: SIZE, height: SIZE, format: "png" });
     assert.equal(m.verified, null);
   }
-  // 8 faces + 1 retry after the first size-bearing call failed.
-  assert.equal(calls.render.length, 9);
+  /* 8 faces, but Style 2's back carries the same B01 as Style 1's, so each
+     colour's back is rendered once and reused (6 renders) + 1 retry after
+     the first size-bearing call failed. */
+  assert.equal(calls.render.length, 7);
+  assert.deepEqual(out.map((m) => m.sameAs || ""), ["", "", "", "VAC_NL3600_NVY_Style1_BACK.png", "", "", "", "VAC_NL3600_MN_Style1_BACK.png"]);
+  assert.ok(out[3].buffer.equals(out[1].buffer), "the reused back is the same picture");
+  // Each Style's front is its own render, with its own logo.
+  assert.deepEqual(
+    calls.render.filter((c) => c.face === "front").map((c) => c.decorations.map((d) => d.logo.originalName).join("+")),
+    ["VAC-F01.png", "VAC-F01.png", "VAC-F02.png", "VAC-F01.png", "VAC-F02.png"]
+  );
   assert.equal(calls.render[0].size, `${SIZE}x${SIZE}`);
   assert.equal(calls.render[0].quality, "high");
   assert.equal(calls.render[0].throwOnFailure, true);
