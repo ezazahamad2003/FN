@@ -25,18 +25,22 @@ const { editImage } = require("./azureOpenai");
 // The customer picks a size tier on the intake form. It is their instruction,
 // not a measurement, so it travels as the words a decorator would use.
 //
-// The words are not a ruler. The model holds a strong prior for how big a
-// chest crest is: "about 3 inches", "2.5 inches", "one sixth of the chest"
-// and "smaller than a usual crest" all came back the same size as "about the
-// size of a chest crest". Only "pocket-sized … 2 inches" moved it, ~14%
-// smaller at the 2000px production size: a slight trim, not a different look.
-// "Filling most of the print area" ran the back graphic nearly seam to seam;
-// naming half the torso and the cloth around it brought it in by about a
-// quarter while it still reads as a full back.
+// The words are not a ruler, so every size here was measured, not assumed:
+// the same Ripon rows, logos and supplier photos through the real pipeline at
+// the 2000px production size, logo width against the garment's body.
+//
+// Small: the model holds a strong prior for a chest crest. "About 3 inches",
+// "2.5 inches", "one sixth of the chest" and "smaller than a usual crest" all
+// came back the size of "about the size of a chest crest"; "pocket-sized … 2
+// inches" is ~11% under it, and that is the size the store wants. (A coin
+// "1.5 inches" went ~18% smaller again and was judged too small.)
+// Large: a fraction of the torso is what the model follows; an inch figure
+// ("8 inches") did not move it. Against "half" (back text ~72% of the torso),
+// "a third" came out ~22% smaller and "a quarter" ~28%; the store wants ~24%.
 const TIER_PHRASE = {
   small: "small — a pocket-sized crest about 2 inches wide",
   standard: "a medium size",
-  large: "large but not edge to edge — about half as wide as the torso, with plain fabric showing all around it"
+  large: "a little under a third as wide as the torso, with wide plain fabric showing all around it"
 };
 
 function tierPhrase(tier) {
