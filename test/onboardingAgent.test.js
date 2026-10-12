@@ -1561,3 +1561,16 @@ test("deleteStore deletes a lock Locksmith returns with _id", async () => {
   assert.deepEqual(calls.locks, [852901]);
   assert.match(result.done.join(" "), /Deleted Locksmith lock 852901/);
 });
+
+test("deleteStore finishes a delete whose collection is already gone", async () => {
+  const { id, calls, deps } = await builtStore();
+  const shopify = deps?.shopify;
+  // The first attempt removed the collection, then a Drive failure kept the record.
+  agent.setDeps({ shopify: { ...(shopify || fakeShopify()), storeProducts: async () => { throw new Error("Collection gid://shopify/Collection/111 was not found in Shopify."); }, removeMegaMenuItemsFor: async () => ({ available: true, removed: 0 }) } });
+  const result = await agent.deleteStore("111", { confirmName: COLLECTION_TITLE, by: "dan" });
+  assert.match(result.done.join(" "), /already deleted/);
+  assert.deepEqual(calls.deletedCollections, [], "nothing to delete twice");
+  assert.deepEqual(calls.locks, [4242], "the lock still goes");
+  assert.deepEqual(calls.trashed, ["dept-folder", "print-folder"], "the folders still go");
+  await assert.rejects(() => store.getOnboarding(id), "the record goes once everything else did");
+});

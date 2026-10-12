@@ -2783,7 +2783,18 @@ async function deleteStore(collectionId, { confirmName = "", by = "" } = {}) {
 
   const gid = record.collection.gid || `gid://shopify/Collection/${record.collection.id}`;
   const code = departmentCode(record);
-  const { products } = await shop().storeProducts(gid);
+  /* A delete that stopped half-way (a Drive or Locksmith failure keeps the
+     record) must be finishable. The first attempt already removed the
+     collection, and refusing "not found" here left the lock, the folders and
+     the record stranded with no way to delete them from the console. */
+  let products = [];
+  let collectionGone = false;
+  try {
+    ({ products } = await shop().storeProducts(gid));
+  } catch (error) {
+    if (!/not found/i.test(errorText(error))) throw error;
+    collectionGone = true;
+  }
   const live = products.filter((p) => p.status === "ACTIVE");
   if (live.length) {
     throw badRequest(`${live.length} product(s) are Active and selling (${live.map((p) => p.title).join(", ")}). Set them to Draft first — a live store is never deleted from here.`);
@@ -2854,6 +2865,7 @@ async function deleteStore(collectionId, { confirmName = "", by = "" } = {}) {
   if (foreign.length) done.push(`Also deleted products from another department that were built into this collection: ${foreign.join("; ")}.`);
 
   await step("Collection", async () => {
+    if (collectionGone) return `The collection "${record.collection.title}" was already deleted.`;
     await shop().deleteCollection(gid);
     return `Deleted the collection "${record.collection.title}".`;
   });
