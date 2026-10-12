@@ -1502,3 +1502,6 @@
 @media (max-width: 620px) {
   .ob-lookup-bar { flex-direction: column; }
 }
+
+.ob-size-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.ob-size-presets .hint { margin: 0; }

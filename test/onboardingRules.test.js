@@ -307,3 +307,24 @@ test("expandProduct: a decoration method with no codes is an error, not a plain 
   const plain = r.expandProduct({ ...base, decorationMethod: "", decorationCodes: "" }, { departmentCode: "PIN" });
   assert.equal(plain.ok, true);
 });
+
+test("size ranges expand to every size in between, in the store's order", () => {
+  const r = require("../onboardingRules");
+  assert.deepEqual(r.expandSizeRange("S-3XL"), ["S", "M", "L", "XL", "2XL", "3XL"]);
+  assert.deepEqual(r.expandSizeRange("XS–5XL"), ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]);
+  assert.deepEqual(r.expandSizeRange("s to xxl"), ["S", "M", "L", "XL", "2XL"]);
+  assert.deepEqual(r.expandSizeRange("LT-4XLT"), ["LT", "XLT", "2XLT", "3XLT", "4XLT"]);
+  assert.deepEqual(r.expandSizeRange("28-34"), ["28", "30", "32", "34"]);
+  assert.deepEqual(r.expandSizeRange("29-31"), ["29", "30", "31"]);
+  // On a hat, S-M and L-XL are the hat sizes, not ranges.
+  assert.deepEqual(r.expandSizeRange("S-M", { hat: true }), ["S-M"]);
+  // Not a range, or a range the rules cannot read: unchanged, for normalizeSize to judge.
+  assert.deepEqual(r.expandSizeRange("7 1/8"), ["7 1/8"]);
+  assert.deepEqual(r.expandSizeRange("3XL-S"), ["3XL-S"]);
+
+  const polo = r.expandProduct({ brand: "5.11", styleNumber: "71049", type: "Polo", colors: ["Navy"], sizes: ["S-3XL"], fulfillment: "One Week Item" }, { departmentCode: "PIN" });
+  assert.equal(polo.ok, true, polo.errors.join("; "));
+  assert.deepEqual(polo.product.sizes, ["S", "M", "L", "XL", "2XL", "3XL"]);
+  const hat = r.expandProduct({ brand: "Richardson", styleNumber: "R585", type: "Hat", colors: ["Navy"], sizes: ["S-M", "L-XL"], decorationCodes: "E01", fulfillment: "One Week Item" }, { departmentCode: "PIN" });
+  assert.deepEqual(hat.product.sizes, ["S/M", "L/XL"]);
+});

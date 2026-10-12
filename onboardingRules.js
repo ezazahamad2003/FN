@@ -177,6 +177,48 @@ function normalizeSize(input) {
   return { error: `Unrecognised size "${input}"` };
 }
 
+/*
+ * A size range as people write it — "S-3XL", "XS–5XL", "S to 3XL",
+ * "LT-4XLT", "YXS-YXL", "28-44" — expanded to every size in between, in
+ * the store's order. Anything that is not a range comes back unchanged for
+ * normalizeSize to judge. "S-M" and "L-XL" on a hat are the hat sizes S/M
+ * and L/XL, not ranges. Waists step by 2 when both ends are even (28, 30,
+ * 32…), by 1 otherwise.
+ */
+const RANGE_SPLIT = /^(.+?)\s*(?:-|–|—|\bTO\b|\bTHRU\b|\bTHROUGH\b)\s*(.+)$/;
+
+function expandSizeRange(token, { hat = false } = {}) {
+  const original = String(token == null ? "" : token).trim();
+  const raw = original.toUpperCase().replace(/\s+/g, " ");
+  if (!raw) return [];
+  if (SIZE_ALIASES[raw] && (hat || !RANGE_SPLIT.test(raw))) return [original];
+  const m = raw.match(RANGE_SPLIT);
+  if (!m) return [original];
+  const end = (s) => SIZE_ALIASES[s.trim()] && !HAT_SIZES.includes(SIZE_ALIASES[s.trim()]) ? SIZE_ALIASES[s.trim()] : s.trim();
+  const a = end(m[1]);
+  const b = end(m[2]);
+  for (const ladder of [ALPHA_SIZES, TALL_SIZES, YOUTH_SIZES]) {
+    const i = ladder.indexOf(a);
+    const j = ladder.indexOf(b);
+    if (i >= 0 && j >= 0 && i <= j) return ladder.slice(i, j + 1);
+  }
+  if (/^\d{2}$/.test(a) && /^\d{2}$/.test(b)) {
+    const from = Number(a);
+    const to = Number(b);
+    if (from <= to && from >= NUMERIC_MIN && to <= NUMERIC_MAX) {
+      const step = from % 2 === 0 && to % 2 === 0 ? 2 : 1;
+      const out = [];
+      for (let n = from; n <= to; n += step) out.push(String(n));
+      return out;
+    }
+  }
+  return [original];
+}
+
+function expandSizeList(inputs, { hat = false } = {}) {
+  return (Array.isArray(inputs) ? inputs : [inputs]).flatMap((s) => expandSizeRange(s, { hat }));
+}
+
 /* ---------------------------------------------------------------------------
    §10 decoration codes
    ------------------------------------------------------------------------- */
@@ -653,7 +695,9 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED,
   }
 
   // Sizes — always an option (§9.6).
-  const sizeInputs = Array.isArray(product.sizes) ? product.sizes : String(product.sizes || "").split(/[,\s]+/);
+  const hat = /\b(hat|cap|snapback|beanie|visor|headwear|trucker)\b/i.test(`${product.type || ""} ${product.title || ""}`);
+  const rawSizes = Array.isArray(product.sizes) ? product.sizes : String(product.sizes || "").split(/\s*,\s*/);
+  const sizeInputs = expandSizeList(rawSizes, { hat });
   const sizes = [];
   for (const s of sizeInputs) {
     if (!String(s || "").trim()) continue;
@@ -977,6 +1021,8 @@ module.exports = {
   PATCH_PREFIXES,
   // sizes / decorations / colours
   normalizeSize,
+  expandSizeRange,
+  expandSizeList,
   parseDecorationCode,
   normalizeDecorations,
   decorationFileStem,

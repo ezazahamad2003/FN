@@ -1144,6 +1144,11 @@ async function saveProducts(id, products, { by = "" } = {}) {
       skuPreview: expanded.variants.map((v) => v.sku).filter(Boolean)
     };
     if (specWarning) merged.validation.warnings = [...merged.validation.warnings, specWarning];
+    /* "S-3XL" is saved as the sizes it means, so the row shows exactly which
+       variants the build will create. Only when every size was understood —
+       a typo stays as typed, next to its error. */
+    const sizeTrouble = expanded.errors.some((e) => /size|waist|inseam/i.test(e) && !/at least one size/i.test(e));
+    if (!sizeTrouble && expanded.product.sizes.length) merged.sizes = expanded.product.sizes;
     /* The build duplicates the style's master. A style the store has never
        sold has none, and the build failed on it ("No product to duplicate").
        Say so on the row, where "Create the master" fixes it in one click. A

@@ -131,7 +131,19 @@
 
   const FULFILLMENTS = ["One Week Item", "Non Stock Item"];
 
-  const SIZE_HINT = "Comma separated. XS–3XL · talls LT, XLT, 2XLT, 3XLT · numeric 28–56 · hats OSFA or S/M, L/XL.";
+  const SIZE_HINT = "Comma separated, or a range: S-3XL, XS-5XL, LT-4XLT, 28-44. Hats: OSFA or S/M, L/XL.";
+
+  // One-click size runs for the product rows. "add" appends (talls go on top
+  // of a regular run); everything else replaces the field.
+  const SIZE_PRESETS = [
+    { label: "S–XL", sizes: "S, M, L, XL" },
+    { label: "S–3XL", sizes: "S, M, L, XL, 2XL, 3XL" },
+    { label: "XS–5XL", sizes: "XS, S, M, L, XL, 2XL, 3XL, 4XL, 5XL" },
+    { label: "+ Talls LT–4XLT", sizes: "LT, XLT, 2XLT, 3XLT, 4XLT", add: true },
+    { label: "OSFA", sizes: "OSFA" },
+    { label: "S/M, L/XL", sizes: "S/M, L/XL" },
+    { label: "Waist 28–44", sizes: "28, 30, 32, 34, 36, 38, 40, 42, 44" }
+  ];
   const DECORATION_HINT = "Front, back, then sleeve, joined with “/” — F01/B01, E01, F01/B01/RS01. Print and embroidery never mix.";
 
   const SHARED_KINDS = [
@@ -1698,7 +1710,7 @@
         </div>
         ${storeProfileHtml(record, product)}
         ${placementsHtml(record, product)}
-        <p class="hint">${esc(SIZE_HINT)}</p>
+        <div class="ob-size-presets"><span class="hint">Sizes:</span>${SIZE_PRESETS.map((preset) => `<button type="button" class="ob-color-chip" data-ob="size-preset" data-ob-sizes="${esc(preset.sizes)}" ${preset.add ? "data-ob-add=\"true\"" : ""}>${esc(preset.label)}</button>`).join("")}<span class="hint">${esc(SIZE_HINT)}</span></div>
         ${logosHtml(record, product, saved)}
         <div class="ob-styles">
           <p class="field-label">Styles <small>rare — only when this same blank is sold with a second logo setup, as a "Style" option</small></p>
@@ -2619,6 +2631,14 @@
     if (action === "save-products") return saveProducts(trigger);
     if (action === "build") return startBuild(trigger);
     if (action === "redo-images") return redoImages(trigger);
+    if (action === "size-preset") {
+      const input = trigger.closest("[data-ob-product]")?.querySelector("[data-ob-field='sizes']");
+      if (!input) return;
+      const add = trigger.dataset.obAdd === "true";
+      const next = add ? [...new Set([...parseList(input.value), ...parseList(trigger.dataset.obSizes)])] : parseList(trigger.dataset.obSizes);
+      input.value = next.join(", ");
+      return;
+    }
     if (action === "lookup-garment") return lookupGarment(trigger);
     if (action === "create-master") return createMaster(trigger);
     if (action === "add-color") {
