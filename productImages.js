@@ -31,27 +31,33 @@ const { editImage } = require("./azureOpenai");
 //
 // Small: the model holds a strong prior for a chest crest. "About 3 inches",
 // "2.5 inches", "one sixth of the chest" and "smaller than a usual crest" all
-// came back the size of "about the size of a chest crest"; "pocket-sized … 2
-// inches" is ~11% under it, and that is the size the store wants. (A coin
-// "1.5 inches" went ~18% smaller again and was judged too small.)
+// came back the size of "about the size of a chest crest". A coin moves it:
+// this phrasing is ~18% under "pocket-sized … 2 inches", the chest size the
+// store wants ("1.25 inches" overshot to ~28%).
 // Large: a fraction of the torso is what the model follows; an inch figure
 // ("8 inches") did not move it. Against "half" (back text ~72% of the torso),
 // "a third" came out ~22% smaller and "a quarter" ~28%; the store wants ~24%.
 const TIER_PHRASE = {
-  small: "small — a pocket-sized crest about 2 inches wide",
+  small: "very small — a little crest about 1.5 inches wide, no bigger than a coin",
   standard: "a medium size",
   large: "a little under a third as wide as the torso, with wide plain fabric showing all around it"
 };
 
-function tierPhrase(tier) {
+// Shorts keep the larger leg mark: the store judged the leg mark right at
+// "pocket-sized … 2 inches" and the chest one too big at the same words.
+const SMALL_ON_LEG = "small — a pocket-sized crest about 2 inches wide";
+const LEG_PLACEMENT = /\b(legs?|thigh)\b/i;
+
+function tierPhrase(tier, label = "") {
   const value = String(tier || "").toLowerCase();
+  const small = LEG_PLACEMENT.test(String(label)) ? SMALL_ON_LEG : TIER_PHRASE.small;
   if (value.startsWith("custom")) {
     const inches = (value.match(/(\d+(?:\.\d+)?)/) || [])[1];
-    return inches ? "about " + inches + " inches wide" : TIER_PHRASE.small;
+    return inches ? "about " + inches + " inches wide" : small;
   }
   if (value.startsWith("large")) return TIER_PHRASE.large;
   if (value.startsWith("standard")) return TIER_PHRASE.standard;
-  return TIER_PHRASE.small;
+  return small;
 }
 
 function finishPhrase(method) {
@@ -239,7 +245,7 @@ async function renderFaceImage({
       const asBadge = /embroider|patch/i.test(method) ? " as a badge," : "";
       return (
         "Put the logo in image " + index + " on the " + String(decoration.label || "front left chest").toLowerCase() +
-        asBadge + " " + tierPhrase(decoration.tier) + "."
+        asBadge + " " + tierPhrase(decoration.tier, decoration.label) + "."
       );
     })
     .join(" ");
