@@ -1746,6 +1746,29 @@ test("Redo images re-renders one product and swaps the images on its existing dr
   assert.equal(after.products[0].replaceImages, undefined, "the flag is cleared once done");
 });
 
+test("Redo images leaves one copy of each image in Product Images — the older ones go to the trash", async () => {
+  const { deps, id, record } = await builtOnboarding();
+  deps.shopify.replaceProductImages = async (gid, images) => ({ removed: 8, added: images.length });
+  const firstIds = record.products[0].mockups.map((m) => m.driveFileId);
+  // Drive as it stands: every image uploaded so far, plus a file Dan put there himself.
+  const listOther = deps.drive.listFilesInFolder;
+  deps.drive.listFilesInFolder = async (folderId) =>
+    folderId === "folder-Product Images"
+      ? [...deps.drive.calls.images.map((c, i) => ({ id: `img-${i + 1}`, name: c.name })), { id: "dans-own", name: "size-chart.png" }]
+      : listOther(folderId);
+  const trashed = [];
+  deps.drive.trashFile = async (fileId) => trashed.push(fileId);
+
+  await agent.redoProductImages(id, record.products[0].id, { by: "dan", wait: true });
+
+  const after = await store.getOnboarding(id);
+  assert.equal(after.build.state, "complete", after.build.error || "");
+  assert.deepEqual(trashed.sort(), [...firstIds].sort(), "exactly the replaced copies were trashed");
+  const kept = after.products[0].mockups.map((m) => m.driveFileId);
+  assert.ok(kept.every((fileId) => fileId && !trashed.includes(fileId)), "the new copies stay");
+  assert.ok(!trashed.includes("dans-own"), "files with other names are never touched");
+});
+
 test("a logo picked for a placement is the one the mockups use", async () => {
   const seen = [];
   const base = fakeMockups();

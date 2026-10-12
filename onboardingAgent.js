@@ -1515,6 +1515,7 @@ async function runBuild(id, build, { by = "" } = {}) {
         }
         for (const w of made.warnings) note(r, { type: "warning", message: w, by }, build);
       });
+      await trashSupersededImages(record, made.mockups, log);
       stepDone(step, `${made.mockups.length} image(s)`);
     } catch (error) {
       stepFail(step, error);
@@ -1818,6 +1819,39 @@ async function buildMockups(id, record, product, log) {
   }
   log(`${product.title || product.id}: ${out.length} mockup image(s).`);
   return { mockups: out, warnings };
+}
+
+/*
+ * A re-render uploads every mockup again under the same file name and Drive
+ * keeps both: after Ripon's tee was redone, Product Images held two
+ * RIPO_NL3600_MN_FRONT.png and nothing said which one was current. Once the
+ * new copies are up, older files with those names go to the Drive trash
+ * (recoverable for 30 days). The new file always stays, so a name is never
+ * left with no file. Best effort: a failure is logged, never fails the build.
+ */
+async function trashSupersededImages(record, mockups, log) {
+  const folderId = record.drive?.productImagesFolderId;
+  const uploaded = (mockups || []).filter((m) => m.driveFileId);
+  if (!folderId || !uploaded.length) return;
+  const names = new Set(uploaded.map((m) => m.fileName));
+  const keep = new Set(uploaded.map((m) => m.driveFileId));
+  let stale = [];
+  try {
+    stale = (await drive().listFilesInFolder(folderId)).filter((f) => names.has(f.name) && !keep.has(f.id));
+  } catch (error) {
+    log(`Product Images: could not check for older copies (${errorText(error)}).`);
+    return;
+  }
+  let trashed = 0;
+  for (const file of stale) {
+    try {
+      await drive().trashFile(file.id);
+      trashed += 1;
+    } catch (error) {
+      log(`Product Images: could not move the older ${file.name} to the trash (${errorText(error)}).`);
+    }
+  }
+  if (trashed) log(`Product Images: moved ${trashed} older cop${trashed === 1 ? "y" : "ies"} of these images to the Drive trash.`);
 }
 
 /* §6 collection: title, banner (§6.3 logo order), Non-Stock notice. */
