@@ -174,6 +174,18 @@ test("decorationPlan: pants have nothing; both sleeves land on the front", () =>
   assert.deepEqual(mockups.decorationPlan({ type: "Tee", decorationCodes: "X99" }), { front: [], back: [] });
 });
 
+test("decorationPlan: legwear has no chest — shorts low on the left leg, pants on the left thigh", () => {
+  // Told "front left chest" on shorts the model put the crest anywhere from the thigh to the hem.
+  const label = (product) => mockups.decorationPlan(product).front[0].label;
+  assert.equal(label({ type: "Shorts", decorationCodes: "F01" }), "Lower left leg");
+  assert.equal(label({ type: "Athletic Shorts", decorationCodes: "E01" }), "Lower left leg");
+  assert.equal(label({ type: "Shorts", decorationCodes: "E01", placements: { E01: "F" } }), "Lower left leg");
+  assert.equal(label({ type: "Sweatpants", decorationCodes: "F01" }), "Left thigh");
+  // A short-SLEEVE shirt is a top.
+  assert.equal(label({ type: "Short Sleeve Shirt", decorationCodes: "F01" }), "Front left chest");
+  assert.equal(label({ type: "Tee", title: "Station Short Sleeve Tee", decorationCodes: "E01" }), "Front left chest");
+});
+
 test("stylePlans: one plan per Style, null style for a single set-up", () => {
   const single = mockups.stylePlans(tee());
   assert.equal(single.length, 1);

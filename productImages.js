@@ -24,10 +24,19 @@ const { editImage } = require("./azureOpenai");
 
 // The customer picks a size tier on the intake form. It is their instruction,
 // not a measurement, so it travels as the words a decorator would use.
+//
+// The words are not a ruler. The model holds a strong prior for how big a
+// chest crest is: "about 3 inches", "2.5 inches", "one sixth of the chest"
+// and "smaller than a usual crest" all came back the same size as "about the
+// size of a chest crest". Only "pocket-sized … 2 inches" moved it, ~14%
+// smaller at the 2000px production size: a slight trim, not a different look.
+// "Filling most of the print area" ran the back graphic nearly seam to seam;
+// naming half the torso and the cloth around it brought it in by about a
+// quarter while it still reads as a full back.
 const TIER_PHRASE = {
-  small: "small — about the size of a chest crest",
+  small: "small — a pocket-sized crest about 2 inches wide",
   standard: "a medium size",
-  large: "large, filling most of the print area"
+  large: "large but not edge to edge — about half as wide as the torso, with plain fabric showing all around it"
 };
 
 function tierPhrase(tier) {

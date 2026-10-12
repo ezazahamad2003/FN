@@ -171,6 +171,20 @@ function isHeadwear(product) {
 }
 
 /*
+ * Legwear has no chest. Told "front left chest" on shorts the model guessed —
+ * the same crest landed high on the thigh in one render and by the hem in the
+ * next. Shorts wear their mark low on the wearer's left leg (the house
+ * convention, mockup.js), pants on the left thigh. "Shorts" only in the
+ * plural: a "Short Sleeve Shirt" is a top.
+ */
+function frontMark(code, product) {
+  const text = `${product.type || ""} ${product.title || ""}`;
+  if (/\bshorts\b/i.test(text)) return { code, label: "Lower left leg", tier: TIER_SMALL, face: "front" };
+  if (/\b(pants|trousers|sweatpants|joggers)\b/i.test(text)) return { code, label: "Left thigh", tier: TIER_SMALL, face: "front" };
+  return { code, label: "Front left chest", tier: TIER_SMALL, face: "front" };
+}
+
+/*
  * Spec §5 lists "Class B" as a product type of its own, next to "pants", so a
  * row typed exactly "Class B" is the shirt; "Class B uniform pants" is not.
  */
@@ -194,7 +208,7 @@ function isClassBShirt(product) {
  */
 function placeDecoration(parsed, product) {
   const { code, prefix, number } = parsed;
-  if (prefix === "F") return { code, label: "Front left chest", tier: TIER_SMALL, face: "front" };
+  if (prefix === "F") return frontMark(code, product);
   if (prefix === "B") return { code, label: "Center back", tier: TIER_LARGE, face: "back" };
   if (prefix === "RS") return { code, label: "Right sleeve", tier: TIER_SMALL, face: "front" };
   if (prefix === "LS") return { code, label: "Left sleeve", tier: TIER_SMALL, face: "front" };
@@ -208,14 +222,14 @@ function placeDecoration(parsed, product) {
   if (ticked === "LS") return { code, label: "Left sleeve", tier: TIER_SMALL, face: "front" };
   if (ticked === "F") {
     if (isHeadwear(product)) return { code, label: "Front center", tier: TIER_STANDARD, face: "front" };
-    return { code, label: "Front left chest", tier: TIER_SMALL, face: "front" };
+    return frontMark(code, product);
   }
   if (isHeadwear(product)) return { code, label: "Front center", tier: TIER_STANDARD, face: "front" };
   if (isClassBShirt(product)) {
     if (number === 1) return { code, label: "Left sleeve", tier: TIER_SMALL, face: "front" };
     if (number === 2) return { code, label: "Right sleeve", tier: TIER_SMALL, face: "front" };
   }
-  return { code, label: "Front left chest", tier: TIER_SMALL, face: "front" };
+  return frontMark(code, product);
 }
 
 function planCodes(codes, product) {
