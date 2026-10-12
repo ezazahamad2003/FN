@@ -50,18 +50,56 @@
      positions) belongs to onboardingRules.js on the server — the lists below
      are only what the operator picks FROM, and the server validates the pick.
      ------------------------------------------------------------------------ */
-  const PHASES = [
-    { key: "packet", label: "Packet", panel: "packet" },
-    { key: "setup", label: "Setup", panel: "setup" },
-    { key: "inputs", label: "Build inputs", panel: "inputs" },
-    { key: "build", label: "Build", panel: "build" },
-    /* The approvals step. It was missing from this list, so the one panel
-       holding the buttons that finish an onboarding — Mega Menu, Flow, Helium,
-       the lock — had no way to navigate to it. On a 17,000px page that means
-       it may as well not have existed. Its phase is "build": the record has no
-       separate phase for approvals, and the step is about reaching the panel. */
-    { key: "build", label: "Approvals", panel: "shared" },
-    { key: "report", label: "Report", panel: "report" }
+  /* The detail page is a wizard: one step on screen at a time, in the order
+     the work has to happen. It used to be every panel stacked on one 17,000px
+     page, and an operator who had just created a record landed on a "Ready to
+     finish?" card with no idea the next thing was to upload the policy.
+
+     `what` is the plain sentence at the top of each step: what happens on this
+     page and what the agent does when you press the button. */
+  const STEPS = [
+    {
+      key: "packet",
+      label: "Packet",
+      title: "Upload what the department sent",
+      what: "Add the uniform policy and the artwork. The agent reads the policy for garments, colours and placement, and the artwork becomes the mockups and the collection banner. Continuing looks the department up on the Department Code List."
+    },
+    {
+      key: "code",
+      label: "Code",
+      title: "Approve the department code",
+      what: "The code goes into every SKU, tag, folder and print-file name, so nothing is created until it is approved. Approving creates the Drive folders, uploads the packet, reviews the policy, and drafts the rep email. That takes about a minute."
+    },
+    {
+      key: "review",
+      label: "Policy review",
+      title: "Check the policy review and the rep email",
+      what: "What the policy confirmed, what is missing, and a draft email asking the rep for the rest. The agent never sends it. Before the build, put the print-ready files in the Omni Printer folder named CODE-F01, CODE-B01 and so on."
+    },
+    {
+      key: "products",
+      label: "Products",
+      title: "List the products",
+      what: "One row per garment. Save once to get the blank-photo and proof slots for each colour, add the photos, then save again. Every row has to validate before the build can run."
+    },
+    {
+      key: "build",
+      label: "Build",
+      title: "Build the store",
+      what: "The agent makes the mockups, creates the collection with its banner, creates the Locksmith lock, then creates every product as a Draft with its SKUs and images. Nothing is published."
+    },
+    {
+      key: "finish",
+      label: "Finish",
+      title: "Mega Menu, Shopify Flow and Helium",
+      what: "Flow and Helium have no API, so you add the department tag in each by hand using the steps below. Then press finish: the agent adds the store to the Mega Menu and runs the final check."
+    },
+    {
+      key: "done",
+      label: "Done",
+      title: "Onboarding complete",
+      what: "Everything the agent can do and check is done. What is left happens in Shopify: prices, cost, Easify options, and setting the products Active."
+    }
   ];
 
   // Upload kinds accepted by POST …/files (record schema §2, packet.files.kind).
@@ -177,7 +215,9 @@
     // Capabilities are read on the list view but needed on the detail view too
     // (the lock card offers to create a lock only when Locksmith is reachable).
     caps: null,
-    pollTimer: null
+    pollTimer: null,
+    // The wizard step on screen; null means "wherever the work is".
+    step: null
   };
   const objectUrls = new Set();
   // asset URL -> object URL, so a repaint reuses what was already fetched.
@@ -334,9 +374,18 @@
 
   function codeChip(department) {
     const code = department?.code || {};
-    const value = code.value || "no code";
-    const tone = code.approved ? "ok" : code.value ? "warn" : "muted";
-    const suffix = code.approved ? "approved" : code.value ? `${code.source || "proposed"} · needs approval` : "not looked up";
+    // The lookup leaves a recommendation, not a value, so "not looked up" was
+    // shown beside the very recommendation it had produced.
+    const proposed = code.value || code.recommendation?.code || "";
+    const value = proposed || "no code";
+    const tone = code.approved ? "ok" : proposed ? "warn" : "muted";
+    const suffix = code.approved
+      ? "approved"
+      : proposed
+        ? `${code.value ? code.source || "proposed" : "recommended"} · needs approval`
+        : list(code.candidates).length || list(code.matches).length
+          ? "pick a code"
+          : "not looked up";
     return `<span class="ob-code-chip" data-tone="${esc(tone)}"><b>${esc(value)}</b><small>${esc(suffix)}</small></span>`;
   }
 
@@ -744,29 +793,13 @@
   }
 
   function phaseLabel(phase) {
-    return PHASES.find((entry) => entry.key === phase)?.label || "Packet";
+    // The record's own phase vocabulary (server-side), not the wizard steps.
+    return { packet: "Packet", setup: "Setup", inputs: "Products", build: "Build", report: "Report" }[phase] || "Packet";
   }
 
   /* ---------------------------------------------------------------------------
      New onboarding modal
      ------------------------------------------------------------------------ */
-  function dropzoneField({ name, label, hint, accept, multiple = true }) {
-    return `
-      <div class="field">
-        <label for="${esc(name)}">${esc(label)}</label>
-        <div class="dropzone" data-dropzone="${esc(name)}">
-          <input id="${esc(name)}" name="${esc(name)}" type="file" ${multiple ? "multiple" : ""} ${accept ? `accept="${esc(accept)}"` : ""} aria-describedby="${esc(name)}Hint">
-          <span class="dz-glyph" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-          </span>
-          <span class="dz-title"><b>Click to upload</b> or drag &amp; drop</span>
-          <span class="dz-sub">${esc(hint)}</span>
-        </div>
-        <div class="ob-filelist" data-ob-filelist="${esc(name)}"></div>
-        <p class="hint" id="${esc(name)}Hint">${esc(hint)}</p>
-      </div>`;
-  }
-
   function contactRowHtml(index) {
     return `
       <div class="ob-contact" data-ob-contact>
@@ -824,16 +857,11 @@
             <label for="obNewNotes">Notes</label>
             <textarea id="obNewNotes" rows="3" placeholder="Anything Dan already knows: preferred garments, deadlines, who to ask."></textarea>
           </div>
-          <div class="ob-upload-grid">
-            ${dropzoneField({ name: "policies", label: "Policy documents", hint: "PDF, Word, or text. The agent reads these for garments, colours, and placement.", accept: ".pdf,.doc,.docx,.txt" })}
-            ${dropzoneField({ name: "artwork", label: "Artwork", hint: "Logos as images. Scramble, chest, and back art become mockups and the banner.", accept: "image/*" })}
-            ${dropzoneField({ name: "contacts", label: "Contact list", hint: "The roster or contact sheet from the department.", accept: ".pdf,.doc,.docx,.txt,.csv,.xlsx" })}
-            ${dropzoneField({ name: "other", label: "Other packet files", hint: "Anything else that arrived with the packet." })}
-          </div>
+          <p class="hint">The files come next: the first step after this asks for the uniform policy and the artwork.</p>
           ${banner("obNewError")}
           <div class="modal-actions">
             <button class="btn btn-ghost" type="button" data-ob="cancel-new">Cancel</button>
-            <button class="btn btn-primary" type="submit" data-ob-submit><span class="btn-label">Create onboarding</span></button>
+            <button class="btn btn-primary" type="submit" data-ob-submit><span class="btn-label">Create and continue</span></button>
           </div>
         </form>`
     });
@@ -844,13 +872,6 @@
 
     ordinal.addEventListener("change", () => {
       storeNameField.hidden = Number(ordinal.value) <= 1;
-    });
-
-    ["policies", "artwork", "contacts", "other"].forEach((name) => {
-      const input = overlay.querySelector(`#${name}`);
-      const render = () => renderPickedFiles(overlay, name, input);
-      wireDropzone(name, input, render, () => true);
-      render();
     });
 
     overlay.addEventListener("click", (event) => {
@@ -874,14 +895,6 @@
         overlay.querySelector("[data-ob='add-contact']")?.focus();
         return;
       }
-      const remove = event.target.closest("[data-ob-remove-picked]");
-      if (remove) {
-        const zone = remove.dataset.obRemovePicked;
-        const input = overlay.querySelector(`#${zone}`);
-        const index = Number(remove.dataset.obIndex);
-        setInputFiles(input, [...input.files].filter((_, i) => i !== index));
-        renderPickedFiles(overlay, zone, input);
-      }
     });
 
     form.addEventListener("submit", (event) => submitNewOnboarding(event, overlay));
@@ -895,44 +908,6 @@
         remove.hidden = rows.length === 1;
         remove.setAttribute("aria-label", `Remove contact ${index + 1}`);
       }
-    });
-  }
-
-  function renderPickedFiles(overlay, name, input) {
-    const holder = overlay.querySelector(`[data-ob-filelist="${name}"]`);
-    const zone = overlay.querySelector(`.dropzone[data-dropzone="${name}"]`);
-    const files = [...input.files];
-    if (zone) zone.dataset.hasFiles = files.length ? "true" : "false";
-    if (!holder) return;
-    // Previews are re-created on every change, so the previous batch's object
-    // URLs are released here rather than leaking until the page unloads.
-    holder.querySelectorAll("img[src^='blob:']").forEach((img) => {
-      URL.revokeObjectURL(img.src);
-      objectUrls.delete(img.src);
-    });
-    holder.innerHTML = files
-      .map(
-        (file, index) => `
-          <span class="ob-picked">
-            <span class="ob-picked-thumb" ${isImage(file) ? `data-ob-preview="${index}"` : ""}>${isImage(file) ? "" : `<span class="ob-file-glyph" aria-hidden="true">${ICON_FILE}</span>`}</span>
-            <span class="ob-picked-name">${esc(file.name)}</span>
-            <small>${esc(formatBytes(file.size))}</small>
-            <button class="file-remove" type="button" data-ob-remove-picked="${esc(name)}" data-ob-index="${index}" aria-label="Remove ${esc(file.name)}">${ICON_CLOSE}</button>
-          </span>`
-      )
-      .join("");
-    // The src is assigned from the File rather than interpolated into the
-    // markup: a blob: URL never goes through the HTML escaper by accident.
-    holder.querySelectorAll("[data-ob-preview]").forEach((slot) => {
-      const index = Number(slot.dataset.obPreview);
-      const file = files[index];
-      if (!file || !isImage(file)) return;
-      const url = URL.createObjectURL(file);
-      objectUrls.add(url);
-      const img = document.createElement("img");
-      img.src = url;
-      img.alt = "";
-      slot.appendChild(img);
     });
   }
 
@@ -980,10 +955,6 @@
 
     const body = new FormData();
     body.append("payload", JSON.stringify(payload));
-    ["policies", "artwork", "contacts", "other"].forEach((name) => {
-      const input = overlay.querySelector(`#${name}`);
-      [...input.files].forEach((file) => body.append(name, file));
-    });
 
     const submit = overlay.querySelector("[data-ob-submit]");
     const cancel = overlay.querySelector("[data-ob='cancel-new']");
@@ -1069,10 +1040,76 @@
     return out;
   }
 
+  /* ---- Wizard state ---------------------------------------------------------
+     Each step is "done" from the record alone, so a reload, a second operator,
+     or a deploy mid-onboarding all land on the same step. The only client-side
+     state is which step is on screen (state.step), and it can never be past
+     the first step that is not done. */
+  function hasFileKind(record, kind) {
+    return list(record?.packet?.files).some((file) => (file?.kind || "other") === kind);
+  }
+
+  function codeLookedUp(record) {
+    const code = record?.department?.code || {};
+    return Boolean(code.approved || code.recommendation || list(code.candidates).length || list(code.matches).length);
+  }
+
+  function collectionExists(record) {
+    return Boolean(record?.collection?.gid || record?.collection?.id);
+  }
+
+  function stepDone(record, key) {
+    const buildState = record?.build?.state;
+    switch (key) {
+      case "packet":
+        return hasFileKind(record, "policy") && hasFileKind(record, "artwork") && codeLookedUp(record);
+      case "code":
+        return Boolean(record?.department?.code?.approved && record?.drive?.departmentFolderId);
+      case "review":
+        return Boolean(record?.policyReview?.reviewedAt);
+      case "products":
+        return buildBlockers(record).length === 0;
+      case "build":
+        return (buildState === "complete" || buildState === "partial") && collectionExists(record);
+      case "finish":
+        return record?.status === "complete";
+      default:
+        return false;
+    }
+  }
+
+  // The first step that is not done: where the work is, and the furthest the
+  // operator can go.
+  function currentStepKey(record) {
+    return (STEPS.find((step) => !stepDone(record, step.key)) || STEPS[STEPS.length - 1]).key;
+  }
+
+  function stepIndex(key) {
+    return STEPS.findIndex((step) => step.key === key);
+  }
+
+  function viewedStepKey(record) {
+    const reachable = stepIndex(currentStepKey(record));
+    const viewed = stepIndex(state.step);
+    if (viewed === -1 || viewed > reachable) state.step = STEPS[reachable].key;
+    return state.step;
+  }
+
+  function goToStep(key) {
+    state.step = key;
+    renderDetail();
+    // Instant: a smooth scroll did not move this page at all (see goto).
+    window.scrollTo(0, 0);
+    page()?.querySelector("[data-ob-step-title]")?.focus({ preventScroll: true });
+  }
+
   function renderDetail() {
     const node = root();
     const record = state.record;
     if (!node || !record) return;
+    const key = viewedStepKey(record);
+    const index = stepIndex(key);
+    const step = STEPS[index];
     node.innerHTML = `
       <div class="ob-detail" data-ob-page="detail" data-ob-id="${esc(record.id || "")}">
         <nav class="crumbs" aria-label="Breadcrumb">
@@ -1080,23 +1117,22 @@
           <span aria-hidden="true">/</span>
           <span aria-current="page">${esc(record.department?.name || "Department")}</span>
         </nav>
-        ${banner("obDetailError")}
-        ${finishCard(record)}
         ${detailHeader(record)}
         ${stepperHtml(record)}
         <div class="ob-layout">
           <div class="ob-main">
-            ${packetPanel(record)}
-            ${setupPanel(record)}
-            ${inputsPanel(record)}
-            ${buildPanel(record)}
-            ${sharedPanel(record)}
-            ${reportPanel(record)}
+            <section class="card card-pad ob-step-intro" data-ob-step="${esc(key)}">
+              <p class="eyebrow">Step ${index + 1} of ${STEPS.length}</p>
+              <h2 tabindex="-1" data-ob-step-title>${esc(step.title)}</h2>
+              <p class="muted">${esc(step.what)}</p>
+            </section>
+            ${banner("obDetailError")}
+            ${stepBodyHtml(record, key)}
+            ${stepNavHtml(record, key)}
           </div>
-          <aside class="ob-rail" aria-label="Approvals, log, and links">
-            ${needsDanCard(record)}
-            ${logCard(record)}
+          <aside class="ob-rail" aria-label="Log and links">
             ${linksCard(record)}
+            ${logCard(record)}
           </aside>
         </div>
       </div>`;
@@ -1104,8 +1140,75 @@
     const detailPage = node.querySelector("[data-ob-page='detail']");
     detailPage.addEventListener("click", onDetailClick);
     detailPage.addEventListener("change", onDetailChange);
+    wirePacketDropzones(detailPage);
     hydrateAssetImages(detailPage);
     maybePoll();
+  }
+
+  function stepBodyHtml(record, key) {
+    switch (key) {
+      case "packet":
+        return packetStepHtml(record);
+      case "code":
+        return codeCard(record);
+      case "review":
+        return setupPanel(record);
+      case "products":
+        return inputsPanel(record);
+      case "build":
+        return buildPanel(record);
+      case "finish":
+        return `${finishCard(record)}${sharedPanel(record)}`;
+      default:
+        return `${finishCard(record)}${reportPanel(record)}`;
+    }
+  }
+
+  /* Back, and the one button that moves this step forward. Where the step's
+     own panel already holds the action (approve the code, build the store,
+     finish), "Next" only unlocks once the record says the step is done, and
+     the hint says what is still in the way. */
+  function stepNavHtml(record, key) {
+    const index = stepIndex(key);
+    const prev = STEPS[index - 1];
+    const next = STEPS[index + 1];
+    const done = stepDone(record, key);
+    let forward = "";
+    let hint = "";
+    if (key === "packet") {
+      const ready = hasFileKind(record, "policy") && hasFileKind(record, "artwork");
+      forward = codeLookedUp(record)
+        ? `<button class="btn btn-primary" type="button" data-ob="step" data-ob-step="code">Next: the department code</button>`
+        : `<button class="btn btn-primary" type="button" data-ob="wizard-lookup" ${ready ? "" : "disabled"}>Continue — look up the code</button>`;
+      if (!ready) hint = `Still needed: ${[!hasFileKind(record, "policy") && "the uniform policy", !hasFileKind(record, "artwork") && "at least one artwork file"].filter(Boolean).join(" and ")}.`;
+    } else if (key === "products") {
+      forward = `<button class="btn btn-primary" type="button" data-ob="wizard-save-products">Save and continue</button>`;
+      hint = "Saving validates every row. You move on once they all pass.";
+    } else if (key === "review") {
+      forward = `<button class="btn btn-primary" type="button" data-ob="step" data-ob-step="products">Next: the products</button>`;
+    } else if (next && key !== "finish") {
+      forward = `<button class="btn ${done ? "btn-primary" : "btn-secondary"}" type="button" data-ob="step" data-ob-step="${esc(next.key)}" ${done ? "" : "disabled"}>Next: ${esc(next.label.toLowerCase())}</button>`;
+      if (!done) {
+        hint =
+          key === "code"
+            ? record.department?.code?.approved
+              ? "The code is approved but the folders were not created. Run setup again from the code card."
+              : "Approve a code above to continue."
+            : key === "build"
+              ? record.build?.state === "running" || record.build?.state === "starting"
+                ? "The build is running. Next unlocks when it finishes."
+                : "Build the store above. Next unlocks once the collection exists."
+              : "";
+      }
+    }
+    return `
+      <nav class="ob-step-nav" aria-label="Step navigation">
+        ${prev ? `<button class="btn btn-ghost" type="button" data-ob="step" data-ob-step="${esc(prev.key)}">← Back: ${esc(prev.label.toLowerCase())}</button>` : "<span></span>"}
+        <div class="ob-step-forward">
+          ${hint ? `<span class="hint">${esc(hint)}</span>` : ""}
+          ${forward}
+        </div>
+      </nav>`;
   }
 
   function detailHeader(record) {
@@ -1129,8 +1232,7 @@
           <button class="btn btn-ghost btn-sm" type="button" data-ob="reload">Refresh</button>
           <button class="btn btn-danger-ghost btn-sm" type="button" data-ob="delete">Delete record</button>
         </div>
-      </header>
-      ${codeCard(record)}`;
+      </header>`;
   }
 
   function codeCard(record) {
@@ -1279,12 +1381,16 @@
                 </li>`
               )
               .join("")}</ul>
-             <p class="hint">The exact steps are in the Approvals panel. Neither app has an API to write, so the agent cannot do these for you.</p>`
+             <p class="hint">The exact steps for each are in the Shopify Flow and Helium cards below. Neither app has an API to write, so the agent cannot do these for you.</p>`
           : `<p class="muted">Flow and Helium are already recorded.</p>`}
         ${blockers.length
           ? `<div class="ob-finish-blockers"><p><b>Still unresolved:</b></p><ul>${blockers.slice(0, 4).map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`
           : ""}
         <p class="muted">Pressing yes will ${esc(willDo.join(", then "))}.</p>
+        <div class="field ob-operator">
+          <label for="obRailOperator">Recorded as</label>
+          <input id="obRailOperator" type="text" value="${esc(operator())}" placeholder="Dan" autocomplete="off" data-ob-operator>
+        </div>
         <div class="ob-finish-actions">
           <button class="btn btn-primary" type="button" data-ob="finish" ${asks.length ? "disabled" : ""}>Yes — finish this onboarding</button>
           ${!menuWritable && !done("megaMenu") ? `<span class="hint" data-tone="warn">The Mega Menu has to be edited by hand — no navigation scope.</span>` : ""}
@@ -1292,77 +1398,81 @@
       </section>`;
   }
 
+  /* Every step is a button. Steps up to the first unfinished one can be
+     revisited; the ones after it are disabled, because there is nothing on
+     them yet that can be done. */
   function stepperHtml(record) {
-    const current = PHASES.findIndex((phase) => phase.key === record.phase);
-    const index = current === -1 ? 0 : current;
+    const viewed = stepIndex(viewedStepKey(record));
+    const reachable = stepIndex(currentStepKey(record));
     return `
-      <ol class="wizard-rail ob-stepper" data-ob-stepper aria-label="Onboarding phases">
-        ${PHASES.map((phase, i) => {
-          /* Position alone is not completion. The Approvals step sits before
-             Report, so it inherited a tick the moment the build finished —
-             claiming Mega Menu, Flow and Helium were handled while they were
-             still "proposed". It is done when they actually are. */
-          const settings = record.sharedSettings || {};
-          const approvalsDone = ["megaMenu", "flow", "helium"].every((key) =>
-            ["applied", "verified", "confirmed"].includes(settings[key]?.status)
-          );
-          const positional = i < index ? "done" : i === index ? "current" : "todo";
-          const phaseState = phase.panel === "shared" && !approvalsDone ? (i === index ? "current" : "todo") : positional;
+      <ol class="wizard-rail ob-stepper" data-ob-stepper aria-label="Onboarding steps">
+        ${STEPS.map((step, i) => {
+          const done = step.key === "done" ? record.status === "complete" : stepDone(record, step.key);
+          const stepState = i === viewed ? "current" : done ? "done" : "todo";
           return `
-          <li data-state="${phaseState}">
-            <button type="button" data-ob="goto" data-ob-target="${esc(phase.panel)}" ${i === index ? 'aria-current="step"' : ""}>
-              <span class="wr-num" aria-hidden="true">${phaseState === "done" ? "" : i + 1}</span>
-              <span class="wr-label">${esc(phase.label)}</span>
+          <li data-state="${stepState}">
+            <button type="button" data-ob="step" data-ob-step="${esc(step.key)}" ${i === viewed ? 'aria-current="step"' : ""} ${i > reachable ? "disabled" : ""}>
+              <span class="wr-num" aria-hidden="true">${stepState === "done" ? "" : i + 1}</span>
+              <span class="wr-label">${esc(step.label)}</span>
             </button>
           </li>`;
         }).join("")}
       </ol>`;
   }
 
-  /* ---- Packet -------------------------------------------------------------- */
-  function packetPanel(record) {
+  /* ---- Step 1: packet ------------------------------------------------------
+     One drop zone per kind of file, so the policy and the artwork cannot be
+     missed and never land under the wrong kind. Each upload is sent the
+     moment it is picked or dropped. */
+  const PACKET_SLOTS = [
+    { kind: "policy", label: "Uniform policy", required: true, hint: "PDF, Word, or text. Read for garments, colours, decoration and placement.", accept: ".pdf,.doc,.docx,.txt" },
+    { kind: "artwork", label: "Artwork", required: true, hint: "Logos as images. They become the mockups and the collection banner.", accept: "image/*" },
+    { kind: "contacts", label: "Contact list", required: false, hint: "The roster or contact sheet, if the department sent one.", accept: ".pdf,.doc,.docx,.txt,.csv,.xlsx" },
+    { kind: "other", label: "Anything else", required: false, hint: "Other files that came with the packet." }
+  ];
+
+  function packetStepHtml(record) {
     const files = list(record.packet?.files);
-    const groups = FILE_KINDS.map((kind) => ({ kind, files: files.filter((file) => (file?.kind || "other") === kind.key) })).filter((group) => group.files.length);
     return `
       <section class="card card-pad ob-panel" id="obPanel-packet" data-ob-panel="packet">
-        <div class="card-head">
-          <div>
-            <p class="eyebrow">Phase 1 · Packet</p>
-            <h3>What arrived with the department</h3>
-            <p class="muted">Policies are read for garments, colours, decoration method and placement. Artwork roles decide the collection banner.</p>
-          </div>
-          <button class="${btnClass(record, "setup")}" type="button" data-ob="run-setup">${record.drive?.departmentFolderId ? "Re-run setup" : "Run setup"}</button>
+        <div class="ob-packet-slots">
+          ${PACKET_SLOTS.map((slot) => {
+            const mine = files.filter((file) => (file?.kind || "other") === slot.kind);
+            const zone = `obPacket-${slot.kind}`;
+            return `
+            <div class="ob-packet-slot" data-done="${mine.length ? "true" : "false"}">
+              <div class="ob-packet-slot-head">
+                <p class="field-label"><label for="${esc(zone)}">${esc(slot.label)}</label> ${slot.required ? `<span class="req" aria-hidden="true">*</span>` : `<small>optional</small>`}</p>
+                ${mine.length ? chip(`${mine.length} uploaded`, "ok") : slot.required ? chip("required", "warn") : ""}
+              </div>
+              ${mine.length ? `<div class="ob-files">${mine.map((file) => packetFileHtml(record, file)).join("")}</div>` : ""}
+              <div class="dropzone" data-dropzone="${esc(zone)}">
+                <input id="${esc(zone)}" type="file" multiple ${slot.accept ? `accept="${esc(slot.accept)}"` : ""} data-ob-packet-kind="${esc(slot.kind)}" aria-describedby="${esc(zone)}Hint">
+                <span class="dz-title"><b>${mine.length ? "Add more" : "Click to upload"}</b> or drag &amp; drop</span>
+                <span class="dz-sub" id="${esc(zone)}Hint">${esc(slot.hint)}</span>
+              </div>
+            </div>`;
+          }).join("")}
         </div>
-        <div class="ob-addfiles">
-          <label class="field-label" for="obAddKind">Add files as</label>
-          <select id="obAddKind" data-ob-add-kind>
-            ${FILE_KINDS.map((kind) => `<option value="${esc(kind.key)}">${esc(kind.label)}</option>`).join("")}
-          </select>
-          <label class="btn btn-secondary btn-sm ob-upload">
-            <span>Choose files</span>
-            <input type="file" multiple data-ob-upload="packet" aria-label="Add packet files">
-          </label>
-        </div>
-        ${groups.length
-          ? groups
-              .map(
-                (group) => `
-          <div class="ob-kind-group">
-            <p class="field-label">${esc(group.kind.label)} <small>${group.files.length} file${plural(group.files.length, "", "s")}</small></p>
-            <div class="ob-files">${group.files.map((file) => packetFileHtml(record, file)).join("")}</div>
-          </div>`
-              )
-              .join("")
-          : stateBlock({ title: "No packet files yet", sub: "Add the uniform policy, the artwork, and the contact list — the agent reads them in setup." })}
         <div class="field ob-notes">
           <label for="obPacketNotes">Packet notes</label>
           <textarea id="obPacketNotes" rows="3" data-ob-field="packetNotes">${esc(record.packet?.notes || "")}</textarea>
-          <p class="hint">Saved on the record, shown to the model when it reviews the policy.</p>
+          <p class="hint">Shown to the model when it reviews the policy.</p>
         </div>
         <div class="ob-panel-actions">
           <button class="btn btn-secondary btn-sm" type="button" data-ob="save-notes">Save notes</button>
         </div>
       </section>`;
+  }
+
+  // main.js's wireDropzone handles drag-and-drop and the picker alike; the
+  // callback uploads straight away, so there is no separate "send" button.
+  function wirePacketDropzones(scope) {
+    scope.querySelectorAll("input[data-ob-packet-kind]").forEach((input) => {
+      const zone = input.closest(".dropzone")?.dataset.dropzone;
+      if (!zone) return;
+      wireDropzone(zone, input, () => uploadFiles(input, input.dataset.obPacketKind), () => true);
+    });
   }
 
   function packetFileHtml(record, file) {
@@ -1400,7 +1510,7 @@
       <section class="card card-pad ob-panel" id="obPanel-setup" data-ob-panel="setup">
         <div class="card-head">
           <div>
-            <p class="eyebrow">Phase 2 · Setup</p>
+            <p class="eyebrow">Drive and policy review</p>
             <h3>Folders, policy review, and the rep email</h3>
             <p class="muted">The agent never sends the email — it drafts it into the department's Drive folder for Dan to send.</p>
           </div>
@@ -1469,13 +1579,13 @@
       <section class="card card-pad ob-panel" id="obPanel-inputs" data-ob-panel="inputs">
         <div class="card-head">
           <div>
-            <p class="eyebrow">Phase 3 · Build inputs</p>
+            <p class="eyebrow">Product list</p>
             <h3>The product list</h3>
             <p class="muted">One row per product. Every size × colour × style gets its own SKU, and the decoration codes must match the file names in the Omni Printer folder.</p>
           </div>
           <div class="ob-head-actions">
             <button class="btn btn-ghost btn-sm" type="button" data-ob="add-product">+ Add product</button>
-            <button class="${btnClass(record, "save-products")}" type="button" data-ob="save-products">Save products</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-ob="save-products">Save</button>
           </div>
         </div>
         ${suggested.length && !products.length
@@ -1731,7 +1841,7 @@
       <section class="card card-pad ob-panel" id="obPanel-build" data-ob-panel="build">
         <div class="card-head">
           <div>
-            <p class="eyebrow">Phase 4 · Build</p>
+            <p class="eyebrow">Build</p>
             <h3>Mockups, collection, lock, products</h3>
             <p class="muted">Persisted and resumable: a re-run skips every product that already exists and never deletes anything.</p>
           </div>
@@ -1990,7 +2100,7 @@
       <section class="card card-pad ob-panel" id="obPanel-report" data-ob-panel="report">
         <div class="card-head">
           <div>
-            <p class="eyebrow">Phase 5 · Report</p>
+            <p class="eyebrow">Final report</p>
             <h3>What is done and what needs Dan</h3>
             <p class="muted">An onboarding is never complete while anything is unresolved.</p>
           </div>
@@ -2018,62 +2128,6 @@
   }
 
   /* ---- Right rail ---------------------------------------------------------- */
-  function needsDanCard(record) {
-    const items = [];
-    const code = record.department?.code || {};
-    if (!code.approved) {
-      items.push({ label: "Approve the department code", detail: code.value ? `Proposed ${code.value}` : "No code looked up yet", target: "code" });
-    }
-    SHARED_KINDS.forEach((kind) => {
-      const node = record.sharedSettings?.[kind.key] || {};
-      const status = node.status || "pending";
-      if (status !== "applied" && status !== "verified" && status !== "confirmed") {
-        items.push({ label: `${kind.label}: ${status}`, detail: sharedSentence(record, kind.key, node) || kind.sub, target: "shared" });
-      }
-    });
-    const lockStatus = record.lock?.status || "pending";
-    if (lockStatus !== "verified" && lockStatus !== "created") {
-      items.push({ label: `Lock: ${lockStatus}`, detail: "Create the lock with the four settings and both keys, then record the secret link.", target: "shared" });
-    }
-    /* The standing §12 items — pricing, cost, Easify, launch — are done in
-       Shopify, not here. They used to carry a jump button to the report panel
-       the reader is already looking at. A checklist line is the honest shape;
-       the ones that are about the store link straight to it. */
-    const collectionUrl = record.collection?.url || "";
-    list(record.report?.needsDan).forEach((item) =>
-      items.push({
-        label: item,
-        detail: "",
-        target: "",
-        href: /pricing|cost|easify|active|review/i.test(item) ? collectionUrl : ""
-      })
-    );
-
-    return `
-      <section class="rail-card ob-needs">
-        <p class="rail-title">Needs Dan <span class="ob-needs-count" data-tone="${items.length ? "warn" : "ok"}">${items.length}</span></p>
-        <div class="field ob-operator">
-          <label for="obRailOperator">Approvals recorded as</label>
-          <input id="obRailOperator" type="text" value="${esc(operator())}" placeholder="Dan" autocomplete="off" data-ob-operator>
-        </div>
-        ${items.length
-          ? `<ul class="ob-needs-list">${items
-              .map(
-                (item) => `<li>
-                  <b>${esc(item.label)}</b>
-                  ${item.detail ? `<span>${esc(item.detail)}</span>` : ""}
-                  ${item.target
-                    ? `<button class="btn btn-ghost btn-sm" type="button" data-ob="goto" data-ob-target="${esc(item.target)}">Show me</button>`
-                    : item.href
-                      ? `<a class="btn btn-ghost btn-sm" href="${esc(item.href)}" target="_blank" rel="noreferrer">In Shopify</a>`
-                      : ""}
-                </li>`
-              )
-              .join("")}</ul>`
-          : `<p class="hint">Nothing waiting on an approval.</p>`}
-      </section>`;
-  }
-
   function logCard(record) {
     const log = list(record.build?.log).slice(-LOG_TAIL);
     return `
@@ -2153,17 +2207,6 @@
     const record = state.record;
     if (!record) return;
 
-    if (action === "goto") {
-      const target = document.getElementById(`obPanel-${trigger.dataset.obTarget}`) || page()?.querySelector(`[data-ob-panel="${trigger.dataset.obTarget}"]`);
-      if (!target) return;
-      /* Instant, not smooth. A smooth scrollIntoView did not move this page at
-         all — focus landed on the target panel while the scroll position
-         stayed at 0 — so the panel still looked unreachable. Across 11,000px
-         an animated scroll is the wrong behaviour anyway. */
-      target.scrollIntoView({ block: "start" });
-      target.querySelector("button, input, select, textarea, a[href]")?.focus({ preventScroll: true });
-      return;
-    }
     if (action === "copy") {
       const targetId = trigger.dataset.obCopyTarget;
       const text = targetId ? document.getElementById(targetId)?.value || "" : trigger.dataset.obCopyText || "";
@@ -2191,9 +2234,17 @@
     if (action === "use-recommendation") {
       const reco = record.department?.code?.recommendation;
       if (!reco?.code) return;
-      return runSimple(trigger, "Approving…", "/code", { code: reco.code, name: reco.name || "", by: currentOperator() });
+      return runSimple(trigger, "Approving — creating folders and reviewing the policy…", "/code", { code: reco.code, name: reco.name || "", by: currentOperator() }, afterCodeApproval);
     }
-    if (action === "run-setup") return runSimple(trigger, "Running…", "/setup");
+    if (action === "step") return goToStep(trigger.dataset.obStep);
+    /* Step 1's continue: the code lookup. When the department is on the code
+       list in its own state, setup approves the code and carries on with the
+       folders and the review in the same call, so the next step may already
+       be the review. */
+    if (action === "wizard-lookup")
+      return runSimple(trigger, "Looking up the department…", "/setup", {}, (record) => goToStep(stepDone(record, "code") ? "review" : "code"));
+    if (action === "wizard-save-products") return saveProducts(trigger, true);
+    if (action === "run-setup") return runSimple(trigger, "Running…", "/setup", {}, afterCodeApproval);
     if (action === "run-review") return runSimple(trigger, "Reviewing…", "/review");
     if (action === "refresh-production") return runSimple(trigger, "Reading…", "/production-files");
     if (action === "final-check") return runSimple(trigger, "Checking…", "/final-check");
@@ -2274,7 +2325,7 @@
     return value;
   }
 
-  function runSimple(button, busyLabel, suffix, body) {
+  function runSimple(button, busyLabel, suffix, body, after) {
     const id = state.record?.id;
     if (!id) return;
     return runAction(
@@ -2284,10 +2335,17 @@
         const payload = await api(recordPath(id, suffix), { method: "POST", body: JSON.stringify(body || {}) });
         if (!isCurrent("detail", id)) return;
         applyRecord(payload);
+        if (after) after(state.record);
       },
       page(),
       "obDetailError"
     );
+  }
+
+  // After a code approval the agent has made the folders and reviewed the
+  // policy, so the review is the next thing to look at.
+  function afterCodeApproval(record) {
+    if (stepDone(record, "code")) goToStep("review");
   }
 
   function approveCode(button) {
@@ -2314,7 +2372,7 @@
         return;
       }
     }
-    return runSimple(button, "Approving…", "/code", { code: value, by: currentOperator() });
+    return runSimple(button, "Approving — creating folders and reviewing the policy…", "/code", { code: value, by: currentOperator() }, afterCodeApproval);
   }
 
   /*
@@ -2373,7 +2431,7 @@
             `Everything else is recorded, but the Mega Menu was not saved${menu.error ? ` (${menu.error})` : ""}. Add the item by hand with the checklist in Approvals, then press finish again.`
           );
         } else if (record.status === "complete") {
-          showBanner(page(), "obDetailError", "Done. Set prices and make the products Active in Shopify to put the store live.", "ok");
+          goToStep("done");
         }
       },
       page(),
@@ -2472,7 +2530,7 @@
     });
   }
 
-  function saveProducts(button) {
+  function saveProducts(button, advance = false) {
     const id = state.record?.id;
     if (!id) return;
     const products = collectProducts();
@@ -2483,6 +2541,9 @@
         const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
         if (!isCurrent("detail", id)) return;
         applyRecord(payload);
+        if (!advance) return;
+        if (stepDone(state.record, "products")) goToStep("build");
+        else fail(products.length ? "Saved. Fix the rows marked “has errors” (and add any missing photos) before the build." : "Add at least one product row first.");
       },
       page(),
       "obDetailError"
@@ -2535,11 +2596,11 @@
       .catch((error) => fail(error.message));
   }
 
-  async function uploadFiles(input) {
+  async function uploadFiles(input, kindOverride) {
     const id = state.record?.id;
     const files = [...input.files];
     if (!id || !files.length) return;
-    const kind = input.dataset.obUpload === "packet" ? page()?.querySelector("[data-ob-add-kind]")?.value || "other" : input.dataset.obUpload;
+    const kind = kindOverride || input.dataset.obUpload;
     const body = new FormData();
     files.forEach((file) => body.append("files", file));
     body.append("kind", kind);
@@ -2548,6 +2609,11 @@
     if (input.dataset.obFace) body.append("face", input.dataset.obFace);
     if (input.dataset.obDecorationcode) body.append("decorationCode", input.dataset.obDecorationcode);
     input.disabled = true;
+    // A policy PDF is read and artwork is described on upload, which takes a
+    // few seconds; without this the zone looked like nothing had happened.
+    const title = input.closest(".dropzone")?.querySelector(".dz-title");
+    const before = title?.innerHTML;
+    if (title) title.textContent = `Uploading ${files.length} file${plural(files.length, "", "s")}…`;
     try {
       const payload = await api(recordPath(id, "/files"), { method: "POST", body });
       if (!isCurrent("detail", id)) return;
@@ -2555,6 +2621,7 @@
     } catch (error) {
       input.disabled = false;
       input.value = "";
+      if (title && before !== undefined) title.innerHTML = before;
       fail(error.message);
     }
   }
@@ -2971,6 +3038,7 @@
     state.view = view;
     state.id = id || null;
     state.record = null;
+    state.step = null;
     if (view === "detail") {
       // A deep link opens the detail view without the list ever rendering, so
       // the capabilities it reads (can Locksmith be called? is the menu
