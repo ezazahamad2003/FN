@@ -729,7 +729,11 @@ async function verifyMockup({ buffer, artwork = [], expectation = {} } = {}) {
           '{"artworkVisible": true|false, "placementMatches": true|false, "inventedText": true|false, "notes": "one or two short sentences"}. ' +
           "artworkVisible is true when the artwork is reproduced with the same text, colours and shapes as its file. " +
           "placementMatches is true when each mark sits on the named location. " +
-          "inventedText is true when the garment carries any lettering, logo or graphic that is not in the artwork files."
+          "inventedText is true when the garment carries any lettering, logo or graphic that is not in the artwork files. " +
+          /* The blank itself carries the maker's mark — Carhartt's pocket label,
+             a Richardson side tab — and the check flagged it as invented on
+             every Carhartt render, a warning Dan cannot act on. */
+          "The manufacturer's own sewn label, woven tab or small brand patch that the blank garment ships with (such as a Carhartt pocket label) is part of the garment, not invented text, and does not count."
       },
       { type: "image_url", image_url: { url: dataUrl(preview) } }
     ];
