@@ -488,10 +488,30 @@ function typeFamily(productType) {
   return "";
 }
 
+/*
+ * The same style under its other spelling. The store writes the Richardson
+ * cap as R112 and the supplier as 112; the link book had a verified navy 112
+ * photo, and a build that asked for R112 missed it, searched, rejected every
+ * candidate and drew the hat instead. A leading brand-letter prefix is
+ * dropped (R112 → 112, NL3600 → 3600); nothing is ever added.
+ */
+function styleAliases(brandStyle) {
+  const s = String(brandStyle || "").trim();
+  const out = [];
+  const m = s.match(/^([A-Za-z]{1,3})(\d[\w.\-]*)$/);
+  if (m) out.push(m[2]);
+  return out;
+}
+
 function familyKeys(product) {
   const family = typeFamily(product.productType);
-  if (!family) return [];
-  return [blankCacheKey({ ...product, productType: family })];
+  const types = [...new Set([product.productType, family].filter(Boolean))];
+  const styles = [String(product.brandStyle || "").trim(), ...styleAliases(product.brandStyle)].filter(Boolean);
+  const keys = [];
+  for (const brandStyle of styles) {
+    for (const productType of types) keys.push(blankCacheKey({ ...product, brandStyle, productType }));
+  }
+  return [...new Set(keys)];
 }
 
 /** Drop one combination from the in-process cache, so a link the operator
@@ -871,6 +891,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
 
 module.exports = {
   blankCacheKey,
+  familyKeys,
   typeFamily,
   clearCachedBlank,
   findSupplierBlank,
