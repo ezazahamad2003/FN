@@ -1670,3 +1670,34 @@ test("an unknown colour offers its proposed code and the nearest list colour, an
   const pending = await referenceTables.pendingProposals("color-codes");
   assert.ok(!pending.some((p) => p.row.color === "Deep Navy"), "no stale proposal left for the colour");
 });
+
+test("switching a built row to another garment drops the old garment's product, images and master", async () => {
+  const { id, record } = await builtOnboarding();
+  const old = record.products[0];
+  assert.ok(old.shopify?.gid && old.mockups.length && old.sourceProduct?.id);
+  // The console sends the saved row back with the new garment typed on top.
+  const switched = { ...old, brand: "Next Level", styleNumber: "NL3601", type: "Long Sleeve Shirt" };
+  const saved = await agent.saveProducts(id, [switched], { by: "dan" });
+  const row = saved.products[0];
+  assert.ok(!row.shopify?.gid, "the old Shopify product is not the new garment's");
+  assert.deepEqual(row.mockups || [], []);
+  assert.ok(!row.sourceProduct?.id, "the old garment's master is not the new one's");
+  assert.notEqual(row.buildState, "created");
+});
+
+test("Redo images that renders nothing keeps the product's existing Shopify images", async () => {
+  let call = 0;
+  const base = fakeMockups();
+  const mockups = { ...base, async renderProductMockups(args) { call += 1; return call === 1 ? base.renderProductMockups(args) : []; } };
+  const { deps, id, record } = await builtOnboarding({ mockups });
+  let replaced = 0;
+  deps.shopify.replaceProductImages = async () => {
+    replaced += 1;
+    return { removed: 4, added: 0 };
+  };
+  await agent.redoProductImages(id, record.products[0].id, { by: "dan", wait: true });
+  assert.equal(replaced, 0, "nothing was deleted from Shopify");
+  const after = await store.getOnboarding(id);
+  assert.match(after.build.error || JSON.stringify(after.build.steps), /existing Shopify images were kept/);
+  assert.equal(after.products[0].replaceImages, undefined, "the flag does not linger");
+});

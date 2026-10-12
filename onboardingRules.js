@@ -197,6 +197,12 @@ function expandSizeRange(token, { hat = false } = {}) {
   const end = (s) => SIZE_ALIASES[s.trim()] && !HAT_SIZES.includes(SIZE_ALIASES[s.trim()]) ? SIZE_ALIASES[s.trim()] : s.trim();
   const a = end(m[1]);
   const b = end(m[2]);
+  /* S–M and L–XL are the two-size hat fits (S/M, L/XL), however they are
+     written ("S-M", "S – M", "S to M") and whatever the row's type says.
+     Expanding them made a "Hats" or "Caps" row (or one with no type) sell
+     S, M, L, XL — four sizes a fitted cap does not come in. */
+  if (a === "S" && b === "M") return ["S/M"];
+  if (a === "L" && b === "XL") return ["L/XL"];
   for (const ladder of [ALPHA_SIZES, TALL_SIZES, YOUTH_SIZES]) {
     const i = ladder.indexOf(a);
     const j = ladder.indexOf(b);
@@ -695,7 +701,7 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED,
   }
 
   // Sizes — always an option (§9.6).
-  const hat = /\b(hat|cap|snapback|beanie|visor|headwear|trucker)\b/i.test(`${product.type || ""} ${product.title || ""}`);
+  const hat = /\b(hats?|caps?|snapbacks?|beanies?|visors?|headwear|truckers?|flex\s*fit|flexfit|fitted)\b/i.test(`${product.type || ""} ${product.title || ""}`);
   const rawSizes = Array.isArray(product.sizes) ? product.sizes : String(product.sizes || "").split(/\s*,\s*/);
   const sizeInputs = expandSizeList(rawSizes, { hat });
   const sizes = [];

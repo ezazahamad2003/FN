@@ -955,6 +955,16 @@ const GARMENT_TYPES = [
   "Other"
 ];
 
+/* Talls the way the store writes them: "Tall XXL", "XL Tall", "2XL-Tall",
+   "Tall L" → 2XLT, XLT, 2XLT, LT. Anything else is returned unchanged. */
+const TALL_BASE = { L: "L", XL: "XL", XXL: "2XL", "2XL": "2XL", XXXL: "3XL", "3XL": "3XL", XXXXL: "4XL", "4XL": "4XL" };
+function tallSize(size) {
+  const m = String(size || "").trim().match(/^(?:tall[\s-]*([a-z0-9]+)|([a-z0-9]+)[\s-]*tall)$/i);
+  if (!m) return size;
+  const base = TALL_BASE[(m[1] || m[2]).toUpperCase()];
+  return base ? `${base}T` : size;
+}
+
 async function lookupGarment(query) {
   const q = String(query || "").trim().slice(0, 200);
   if (!q) throw new Error("Type a brand and style, for example Independent SS4500.");
@@ -996,7 +1006,7 @@ Only report what the search results show. If you cannot identify one exact style
     sizes: [
       ...new Set(
         listOf(parsed.sizes, 20).map((size) =>
-          /^(osfm|osfa|os|one size( fits (all|most))?)$/i.test(size) ? "OSFA" : size.replace(/^tall\s+(\S+)$/i, (_, base) => `${base.toUpperCase()}T`)
+          /^(osfm|osfa|os|one size( fits (all|most))?)$/i.test(size) ? "OSFA" : tallSize(size)
         )
       )
     ],

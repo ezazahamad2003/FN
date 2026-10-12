@@ -146,8 +146,15 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
       if (garment.styleNumber) {
         const style = await shop.resolveStyleNumber(garment.brand, garment.styleNumber).catch(() => garment.styleNumber);
         garment.styleNumber = style;
-        const found = await shop.findSourceProduct(style).catch(() => null);
-        master = found ? { exists: true, title: found.title || "", url: found.url || "" } : { exists: false };
+        /* "No master" only on a clean not-found. A Shopify error or a style
+           the rules reject is reported as unknown — offering "Create the
+           master" then could make a second master for a style that has one. */
+        try {
+          const found = await shop.findSourceProduct(style);
+          master = found ? { exists: true, title: found.title || "", url: found.url || "" } : { exists: false };
+        } catch (error) {
+          master = { exists: null, error: error.message };
+        }
       }
       res.json({ garment, master });
     } catch (error) {

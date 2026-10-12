@@ -673,3 +673,11 @@ test("backUrlCandidates swaps only the face word in the file name", () => {
   );
   assert.deepEqual(blanks.backUrlCandidates("https://x.test/cap-navy.jpg"), [], "no face word, no guess");
 });
+
+test("embroidery codes are placed where the row ticked them", () => {
+  const plan = mockups.decorationPlan({ type: "Hoodie", decorationCodes: "E01/E02", placements: { E01: "F", E02: "B" } });
+  assert.deepEqual(plan.front.map((d) => d.label), ["Front left chest"]);
+  assert.deepEqual(plan.back.map((d) => d.label), ["Center back"]);
+  const classB = mockups.decorationPlan({ type: "Class B Shirt", classB: true, decorationCodes: "E01/E02", placements: { E01: "RS", E02: "LS" } });
+  assert.deepEqual(classB.front.map((d) => `${d.code}:${d.label}`), ["E01:Right sleeve", "E02:Left sleeve"]);
+});

@@ -1053,7 +1053,7 @@ async function saveProducts(id, products, { by = "" } = {}) {
   const claimed = new Set();
   const usedIds = new Set();
   for (let i = 0; i < products.length; i++) {
-    const incoming = products[i] || {};
+    const incoming = { ...(products[i] || {}) };
     // A row the console sends back carries its id; a row typed fresh does not,
     // so an unambiguous style number is the fallback key — without it a re-save
     // would silently drop the photos and proofs already attached to that row.
@@ -1069,7 +1069,26 @@ async function saveProducts(id, products, { by = "" } = {}) {
     const styleChanged =
       existing && clean(existing.styleNumber).toUpperCase() !== clean(incoming.styleNumber).toUpperCase() && clean(incoming.styleNumber);
     const carried = existing ? { ...existing } : {};
-    if (styleChanged) for (const key of BUILD_OWNED) delete carried[key];
+    /* The console sends the saved row back with its edits on top, so the old
+       garment's Shopify product, mockups and master came back in through
+       `incoming` too — dropping them from `carried` alone did nothing, and the
+       masterMissing check was skipped because sourceProduct was still set.
+       Anything derived from the old garment goes, on both sides: the build
+       history, and the title and Vendor that were filled from its store
+       profile (a title or Vendor Dan typed himself is kept). */
+    const STYLE_DERIVED = [...BUILD_OWNED, "storeProfile", "masterMissing", "colorIssues", "replaceImages"];
+    if (styleChanged) {
+      for (const key of STYLE_DERIVED) {
+        // Only the old garment's value echoed back goes; something new the
+        // console set on purpose (the master just created for the new
+        // garment) is kept.
+        if (key in incoming && JSON.stringify(incoming[key]) === JSON.stringify(existing[key])) delete incoming[key];
+        delete carried[key];
+      }
+      const oldTitle = clean(existing.title);
+      if (oldTitle && clean(incoming.title) === oldTitle && existing.storeProfile?.name && oldTitle.startsWith(existing.storeProfile.name)) incoming.title = "";
+      if (clean(incoming.fulfillment) && clean(incoming.fulfillment) === clean(existing.storeProfile?.vendor) && clean(incoming.fulfillment) === clean(existing.fulfillment)) incoming.fulfillment = "";
+    }
 
     let nextId = incoming.id || existing?.id || `p${i + 1}`;
     while (usedIds.has(nextId)) nextId = `p${rows.length + 1}-${usedIds.size}`;
@@ -1094,7 +1113,12 @@ async function saveProducts(id, products, { by = "" } = {}) {
         clean(p?.decorationCodes).toUpperCase(),
         (Array.isArray(p?.styles) ? p.styles : []).map((s) => clean(s?.decorationCodes).toUpperCase()),
         (Array.isArray(p?.colors) ? p.colors : []).map((c) => clean(c).toLowerCase()),
-        (Array.isArray(p?.sizes) ? p.sizes : []).map((s) => clean(s).toUpperCase()),
+        // Compared as the sizes they mean: "S-3XL" and "S, M, L, XL, 2XL, 3XL"
+        // are the same spec (saving writes the expanded form back).
+        rules.expandSizeList(Array.isArray(p?.sizes) ? p.sizes : []).map((s) => {
+          const n = rules.normalizeSize(s);
+          return n.error ? clean(s).toUpperCase() : n.size;
+        }),
         // Which uploaded logo each placement uses changes the picture too.
         Object.entries(p?.logoMap && typeof p.logoMap === "object" ? p.logoMap : {})
           .filter(([, v]) => v)
@@ -1547,6 +1571,16 @@ async function runBuild(id, build, { by = "" } = {}) {
         const title = fresh.title || product.title || "";
         const snapshot = await shop().productSnapshot(product.shopify.gid);
         const images = await mockupImages(id, fresh, snapshot?.variants || [], title);
+        /* Never strip a product bare: replacing deletes every image first, so
+           a re-render that produced nothing usable (all faces failed, assets
+           missing) would leave the Shopify product with no pictures at all. */
+        if (!images.length) {
+          await saveBuild(id, build, (r) => {
+            const target = productById(r, product.id);
+            if (target) delete target.replaceImages;
+          });
+          throw new Error(`No new images were made for ${title || product.id}, so its existing Shopify images were kept. Check the mockup step above and try Redo images again.`);
+        }
         const replaced = await shop().replaceProductImages(product.shopify.gid, images, { onLog: log });
         record = await saveBuild(id, build, (r) => {
           const target = productById(r, product.id);
@@ -1576,6 +1610,10 @@ async function runBuild(id, build, { by = "" } = {}) {
           target.shopify = built.shopify;
           target.buildState = "created";
           target.buildError = "";
+          // A "Redo images" whose product had been deleted in Shopify lands
+          // here (built fresh). Left set, the flag would make every later
+          // build delete all of the new product's images.
+          delete target.replaceImages;
         }
         for (const w of built.warnings) note(r, { type: "warning", message: w, by }, build);
       });
@@ -1692,9 +1730,11 @@ async function buildMockups(id, record, product, log) {
     // artwork roles are only the default when nothing was picked.
     const chosenId = product.logoMap && typeof product.logoMap === "object" ? product.logoMap[decoration] : "";
     const chosen = chosenId ? packetArt.find((f) => f.assetId === chosenId) : null;
+    // An embroidered code ticked on the Back takes the back logo too.
+    const onBack = prefix === "B" || (product.placements && product.placements[decoration] === "B");
     const file =
       chosen ||
-      (prefix === "B"
+      (onBack
         ? byRole(["back", "scramble"])
         : byRole(["chest", "pick", "scramble", ""]) || packetArt.find((f) => (f.role || "") !== "back") || null);
     if (!file) {

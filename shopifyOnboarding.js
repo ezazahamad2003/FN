@@ -179,14 +179,19 @@ async function findSourceProduct(styleNumber) {
   const bySku = await gql(SOURCE_PRODUCTS_QUERY, { query: `sku:${style}*` });
   const skuHits = (bySku?.products?.nodes || []).filter((p) => skuMatchesStyle(firstSku(p), style));
   const fromSku = pickSourceProduct(skuHits);
-  if (fromSku) return fromSku;
+  if (fromSku && fromSku.kind === "master") return fromSku;
 
   // Older listings carry the style only in the title, "Next Level … (NL3600)".
   // Parentheses are grouping syntax in Shopify search, so search the bare
   // style and match the "(STYLE)" form locally.
   const byTitle = await gql(SOURCE_PRODUCTS_QUERY, { query: style });
   const titleHits = (byTitle?.products?.nodes || []).filter((p) => titleMentionsStyle(p.title, style));
-  return pickSourceProduct(titleHits);
+  /* §9.1 duplicates the MASTER. A master that has no SKUs (one made by the
+     agent, or by hand) is only found by its "(STYLE)" title, so it must win
+     over a department product the SKU search found first. */
+  const fromTitle = pickSourceProduct(titleHits);
+  if (fromTitle && fromTitle.kind === "master") return fromTitle;
+  return fromSku || fromTitle;
 }
 
 /* ---------------------------------------------------------------------------
@@ -274,12 +279,20 @@ function decodeEntities(s) {
 // names both, so reading it first made every tee a tank top).
 function garmentType(title, productType) {
   const read = (t) => {
-    if (/beanie|watch cap|knit/.test(t)) return "Beanie";
-    if (/hat|cap|snapback|trucker|flex fit|headwear/.test(t)) return "Hat";
+    // Garment words that contain a headwear word come first: a "Knit Polo"
+    // is a polo, a "Cap Sleeve Tee" is a tee, a crewneck is a sweatshirt.
+    if (/polo/.test(t)) return "Polo";
+    if (/hood/.test(t)) return "Hoodie";
+    if (/quarter[\s-]*zip|1\/4[\s-]*zip/.test(t)) return "Quarter Zip";
+    if (/sweatshirt|crewneck|crew neck|fleece crew/.test(t)) return "Sweatshirt";
+    if (/jacket|soft ?shell|parka/.test(t)) return "Jacket";
+    if (/\bvest\b/.test(t)) return "Vest";
+    if (/beanie|watch cap|knit cap|knit hat|toque/.test(t)) return "Beanie";
+    if (/\b(hat|snapback|trucker|flex ?fit|headwear|visor)\b/.test(t) || (/\bcaps?\b/.test(t) && !/cap sleeve/.test(t))) return "Hat";
     if (/tank/.test(t)) return "Tank Top";
     if (/long sleeve/.test(t)) return "Long Sleeve Shirt";
-    if (/hood/.test(t)) return "Hoodie";
-    if (/polo/.test(t)) return "Polo";
+    if (/\bshorts?\b/.test(t)) return "Shorts";
+    if (/pants?|trousers?/.test(t)) return "Pants";
     if (/tee|t-shirt|shirt/.test(t)) return "T-shirt";
     return "";
   };
@@ -324,8 +337,35 @@ async function createMasterDraft({ brand = "", styleNumber = "", name = "", type
   const log = logger(onLog);
   const sn = rules.normalizeStyleNumber(styleNumber);
   if (sn.error) throw new Error(sn.error);
-  const existing = await findSourceProduct(sn.styleNumber);
-  if (existing) return { created: false, id: existing.id, title: existing.title, url: existing.url || "" };
+  /* Never a second master for a style the store already has under another
+     spelling: the policy's "112" is the store's R112, "3600" is NL3600. */
+  const resolved = await resolveStyleNumber(brand, sn.styleNumber).catch(() => sn.styleNumber);
+  for (const style of [...new Set([resolved, sn.styleNumber])]) {
+    const existing = await findSourceProduct(style);
+    if (existing) return { created: false, id: existing.id, legacyId: existing.legacyId || "", title: existing.title, url: existing.url || "", styleNumber: style };
+  }
+  const digits = sn.styleNumber.replace(/^[A-Z]+/, "");
+  const brandWord = String(brand || "").trim().split(/\s+/)[0].toLowerCase();
+  const twin = (await masterGarments().catch(() => [])).find(
+    (g) => g.styleNumber.replace(/^[A-Z]+/, "") === digits && /\d/.test(digits) && (!brandWord || g.brand.toLowerCase().startsWith(brandWord))
+  );
+  if (twin) {
+    const existing = await findSourceProduct(twin.styleNumber).catch(() => null);
+    if (existing) return { created: false, id: existing.id, legacyId: existing.legacyId || "", title: existing.title, url: existing.url || "", styleNumber: twin.styleNumber };
+  }
+
+  /* Real sizes only: ranges expanded ("S-3XL"), each one a size the rules
+     accept. An empty list used to become XS–3XL even on a hat. */
+  const hat = /\b(hats?|caps?|snapbacks?|beanies?|visors?|headwear|truckers?|flex\s*fit|flexfit|fitted)\b/i.test(`${type} ${name}`);
+  const variantsSizes = [];
+  for (const raw of rules.expandSizeList((Array.isArray(sizes) ? sizes : []).map((s) => String(s).trim()).filter(Boolean), { hat })) {
+    const n = rules.normalizeSize(raw);
+    if (!n.error && !variantsSizes.includes(n.size)) variantsSizes.push(n.size);
+  }
+  if (!variantsSizes.length) {
+    if (hat) variantsSizes.push("OSFA");
+    else throw new Error("Fill in the sizes on the row first (e.g. S-3XL) — the master gets one variant per size.");
+  }
   const cleanName = String(name || type || "Garment").trim();
   const cleanBrand = String(brand || "").trim();
   const title = `${cleanBrand && !cleanName.toLowerCase().startsWith(cleanBrand.toLowerCase()) ? `${cleanBrand} ` : ""}${cleanName} (${sn.styleNumber})`;
@@ -336,12 +376,12 @@ async function createMasterDraft({ brand = "", styleNumber = "", name = "", type
     productType: String(type || "").trim(),
     vendor: cleanBrand,
     tags: [MASTER_REFERENCE_TAG, "Needs Review", "Agent Created"],
-    sizes: (Array.isArray(sizes) ? sizes : []).map((s) => String(s).trim()).filter(Boolean),
+    sizes: variantsSizes,
     status: "DRAFT"
   });
   garmentCache = { at: 0, list: null };
   log(`Created the master draft "${title}".`);
-  return { created: true, id: result.productGid, title, url: shopify.adminProductUrl ? shopify.adminProductUrl(result.productId) : "" };
+  return { created: true, id: result.productGid, legacyId: result.productId, title, url: shopify.adminProductUrl ? shopify.adminProductUrl(result.productId) : "", styleNumber: sn.styleNumber, sizes: variantsSizes };
 }
 
 /*

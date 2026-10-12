@@ -1614,10 +1614,12 @@
   function styleKey(value) {
     return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
   }
-  function suggestionInList(products, suggestion) {
+  function suggestionInList(products, suggestion, index = -1) {
     const want = styleKey(suggestion?.styleNumber);
-    const digits = String(suggestion?.styleNumber || "").match(/[0-9]+/)?.[0] || "";
+    // "112 snapback" is the store's R112; "K500" is never "L500".
+    const digits = /^[0-9]/.test(want) ? want.match(/^[0-9]+/)[0] : "";
     return list(products).some((p) => {
+      if (index >= 0 && p?.fromSuggestion === index) return true;
       const have = styleKey(p?.styleNumber);
       if (!have) return false;
       return (want && have === want) || (digits && have.replace(/^[A-Z]+/, "") === digits);
@@ -1627,7 +1629,7 @@
   function inputsPanel(record) {
     const products = list(record.products);
     const suggested = list(record.policyReview?.suggestedProducts);
-    const missing = suggested.map((s, index) => ({ s, index })).filter(({ s }) => !suggestionInList(products, s));
+    const missing = suggested.map((s, index) => ({ s, index })).filter(({ s, index }) => !suggestionInList(products, s, index));
     return `
       <section class="card card-pad ob-panel" id="obPanel-inputs" data-ob-panel="inputs">
         <div class="card-head">
@@ -1751,7 +1753,9 @@
 
   function garmentPickerHtml(product) {
     const garments = list(state.garments);
-    if (!garments.length) return "";
+    // Without the store's garment list (still loading, or it failed) the
+    // lookup and "Create the master" must still be there.
+    if (!garments.length) return lookupHtml(product, { open: true });
     const current = String(product?.styleNumber || "").toUpperCase();
     const known = garments.some((g) => g.styleNumber === current);
     const groups = [...new Set(garments.map((g) => g.group || "Other"))];
@@ -1777,9 +1781,9 @@
      asked for, the agent looks it up on the manufacturer's or a
      distributor's site and fills the row. Colours come back as chips to
      click. A style the store has never sold gets "Create the master". */
-  function lookupHtml(product) {
+  function lookupHtml(product, { open: forceOpen = false } = {}) {
     const style = String(product?.styleNumber || "").toUpperCase();
-    const open = Boolean(style) && !list(state.garments).some((g) => g.styleNumber === style);
+    const open = forceOpen || (Boolean(style) && !list(state.garments).some((g) => g.styleNumber === style));
     return `
       <div class="ob-lookup" data-ob-lookup ${open || product?.masterMissing ? "" : "hidden"}>
         <div class="ob-lookup-bar">
@@ -1802,21 +1806,44 @@
   }
 
   // Which placements a row's codes already describe, and the logo on each.
+  // Codes as the server reads them: split on "/", commas or spaces.
+  function codeList(value) {
+    return [
+      ...new Set(
+        String(value || "")
+          .split(/[\/,\s]+/)
+          .map((c) => c.trim().toUpperCase())
+          .filter(Boolean)
+      )
+    ];
+  }
+
+  // Which placement each embroidery code sits on: the saved map, or — for a
+  // row that has none (a policy suggestion) — E01 on the front.
+  function embroideryKeys(codes, placements) {
+    const map = {};
+    const hasMap = Object.keys(placements || {}).length > 0;
+    for (const code of codes) {
+      if (!/^[EP]\d{2}$/.test(code)) continue;
+      if (placements?.[code]) map[code] = placements[code];
+      else if (!hasMap && code === "E01") map[code] = "F";
+    }
+    return map;
+  }
+
+  // Which placements a row's codes already describe, and the logo on each.
   function placementState(product) {
-    const codes = String(product?.decorationCodes || "")
-      .split("/")
-      .map((c) => c.trim().toUpperCase())
-      .filter(Boolean);
+    const codes = codeList(product?.decorationCodes);
     const logoMap = product?.logoMap && typeof product.logoMap === "object" ? product.logoMap : {};
     const placements = product?.placements && typeof product.placements === "object" ? product.placements : {};
+    const eKeys = embroideryKeys(codes, placements);
     const out = {};
     let custom = false;
     for (const code of codes) {
       const m = code.match(/^(F|B|RS|LS|E|P)(\d{2})$/);
       if (!m) continue;
       if (m[1] === "E" || m[1] === "P") {
-        const key = placements[code] || (code === "E01" ? "F" : "");
-        if (key) out[key] = { code, logo: logoMap[code] || "" };
+        if (eKeys[code] && !out[eKeys[code]]) out[eKeys[code]] = { code, logo: logoMap[code] || "" };
         else custom = true;
       } else if (m[2] === "01") {
         out[m[1]] = { code, logo: logoMap[code] || "" };
@@ -1830,11 +1857,16 @@
   function placementsHtml(record, product) {
     const logos = packetLogos(record);
     const { on, custom } = placementState(product);
+    /* A row sold in Styles takes its codes from the style rows below, so the
+       placements here would change nothing it builds — say so instead. */
+    if (list(product?.styles).filter((st) => String(st?.decorationCodes || "").trim()).length) {
+      return `<div class="ob-placements" data-ob-placements><p class="field-label">Where the logos go</p><p class="hint">This row is sold in Styles, so each Style row below carries its own codes. Remove the Styles to use the placements here.</p></div>`;
+    }
     const defaultFor = (key) => (key === "B" ? "back" : "chest");
     return `
       <div class="ob-placements" data-ob-placements>
         <p class="field-label">Where the logos go <small>tick each placement and pick the logo for it</small></p>
-        ${custom ? `<p class="hint" data-tone="warn">This row uses custom codes (e.g. F02) — edit them in "Decoration codes" above.</p>` : ""}
+        ${custom ? `<p class="hint" data-tone="warn">This row also has codes the four placements do not cover (e.g. F02, P01). Ticking placements keeps them; change them in "Decoration codes" above.</p>` : ""}
         <div class="ob-placement-grid">
           ${PLACEMENTS.map((p) => {
             const placed = on[p.key];
@@ -1856,11 +1888,16 @@
   }
 
   /* Placements → decoration codes, the logo per code and, for embroidery,
-     where each E code sits. Print: F01 / B01 / RS01 / LS01 in that order.
-     Embroidery: E01, E02… in the same order, one per ticked placement. */
+     where each E code sits. Only the codes the four placements own change:
+     F01 / B01 / RS01 / LS01 for print, and the E codes mapped to a placement.
+     Anything else on the row — F02, P01, an E02 from the policy, codes typed
+     by hand — is kept exactly as it is. An embroidery placement keeps its E
+     number when others are unticked, so proofs (filed by code) stay put. */
   function syncPlacements(row, { fromPlacement = true } = {}) {
     const method = row.querySelector("[data-ob-field='decorationMethod']")?.value || "";
-    const ticked = [...row.querySelectorAll("[data-ob-place]")].filter((node) => node.querySelector("[data-ob-place-on]")?.checked);
+    const ticked = PLACEMENTS.map((p) => row.querySelector(`[data-ob-place='${p.key}']`)).filter(
+      (node) => node && node.querySelector("[data-ob-place-on]")?.checked
+    );
     // Codes typed by hand (no placement ticked) are left alone when only the
     // method changes.
     if (!ticked.length && !fromPlacement) return;
@@ -1874,22 +1911,59 @@
       if (select) select.value = /hat|cap|beanie|snapback/.test(type) ? "embroidery" : "print";
     }
     const embroidered = (row.querySelector("[data-ob-field='decorationMethod']")?.value || "") === "embroidery";
+    const codesInput = row.querySelector("[data-ob-field='decorationCodes']");
+    const mapInput = row.querySelector("[data-ob-field='logoMap']");
+    const placeInput = row.querySelector("[data-ob-field='placements']");
+    const readJson = (input) => {
+      try {
+        const value = JSON.parse(input?.value || "{}");
+        return value && typeof value === "object" ? value : {};
+      } catch {
+        return {};
+      }
+    };
+    const current = codeList(codesInput?.value);
+    const oldLogos = readJson(mapInput);
+    const oldPlacements = readJson(placeInput);
+    const eKeys = embroideryKeys(current, oldPlacements);
+    const owned = new Set(["F01", "B01", "RS01", "LS01", ...Object.keys(eKeys)]);
+    const kept = current.filter((code) => !owned.has(code));
+
     const codes = [];
     const logoMap = {};
     const placements = {};
-    ticked.forEach((node, index) => {
+    const used = new Set(kept);
+    const eFor = {};
+    for (const [code, key] of Object.entries(eKeys)) eFor[key] = code;
+    const nextE = () => {
+      for (let n = 1; n < 100; n += 1) {
+        const code = `E${String(n).padStart(2, "0")}`;
+        if (!used.has(code) && !Object.values(eFor).includes(code)) return code;
+      }
+      return "E99";
+    };
+    for (const node of ticked) {
       const key = node.dataset.obPlace;
-      const code = embroidered ? `E${String(index + 1).padStart(2, "0")}` : `${key}01`;
+      let code;
+      if (embroidered) {
+        code = eFor[key] && !used.has(eFor[key]) ? eFor[key] : nextE();
+        eFor[key] = code;
+        placements[code] = key;
+      } else {
+        code = `${key}01`;
+      }
+      used.add(code);
       codes.push(code);
       const logo = node.querySelector("[data-ob-place-logo]")?.value || "";
       if (logo) logoMap[code] = logo;
-      if (embroidered) placements[code] = key;
-    });
-    const codesInput = row.querySelector("[data-ob-field='decorationCodes']");
-    if (codesInput) codesInput.value = codes.join("/");
-    const mapInput = row.querySelector("[data-ob-field='logoMap']");
+    }
+    // What the placements do not own keeps its logo and placement as saved.
+    for (const code of kept) {
+      if (oldLogos[code]) logoMap[code] = oldLogos[code];
+      if (oldPlacements[code]) placements[code] = oldPlacements[code];
+    }
+    if (codesInput) codesInput.value = [...codes, ...kept].join("/");
     if (mapInput) mapInput.value = JSON.stringify(logoMap);
-    const placeInput = row.querySelector("[data-ob-field='placements']");
     if (placeInput) placeInput.value = JSON.stringify(placements);
   }
 
@@ -1910,10 +1984,20 @@
       if (!input || (onlyIfEmpty && input.value.trim())) return;
       input.value = value;
     };
+    /* A different garment on a row that already had one: its sizes, and the
+       title and Vendor the save filled from the old garment, belong to that
+       garment — they are replaced, not kept (the save fills them again). */
+    const previous = (row.querySelector("[data-ob-field='styleNumber']")?.value || "").trim().toUpperCase();
+    const switching = Boolean(previous) && previous !== garment.styleNumber;
+    if (switching) {
+      set("title", "");
+      set("fulfillment", "");
+      row.querySelector(".ob-master-missing")?.remove();
+    }
     set("brand", garment.brand);
     set("styleNumber", garment.styleNumber);
     set("type", garment.type);
-    set("sizes", list(garment.sizes).join(", "), true);
+    set("sizes", list(garment.sizes).join(", "), !switching);
     // A new row with no placements yet starts with the front logo.
     if (![...row.querySelectorAll("[data-ob-place-on]")].some((box) => box.checked)) {
       const front = row.querySelector("[data-ob-place='F'] [data-ob-place-on]");
@@ -2730,7 +2814,9 @@
       row.remove();
       if (!saved) return;
       const save = page()?.querySelector("[data-ob='save-products']");
-      if (save) saveProducts(save);
+      // Rows just added and still empty stay on screen but are not saved
+      // (and validated as broken) just because another row was removed.
+      if (save) saveProducts(save, false, { skipBlank: true });
       return;
     }
     if (action === "add-style") {
@@ -2935,14 +3021,14 @@
   }
 
   function useSuggestions(button) {
-    const all = list(state.record?.policyReview?.suggestedProducts);
+    const all = list(state.record?.policyReview?.suggestedProducts).map((row, index) => ({ ...row, fromSuggestion: index }));
     const pick = button?.dataset?.obSuggestion;
     const suggestions = pick !== undefined && pick !== "" ? [all[Number(pick)]].filter(Boolean) : all;
     if (!suggestions.length) return;
     // Keep what is already on screen (unsaved edits included) and add only
     // the suggestions that are not in the list yet.
     const current = page()?.querySelector(".ob-products") ? collectProducts() : list(state.record?.products);
-    const fresh = suggestions.filter((s) => !suggestionInList(current, s));
+    const fresh = suggestions.filter((s) => !suggestionInList(current, s, s.fromSuggestion));
     if (!fresh.length) return;
     let n = current.length;
     const used = new Set(current.map((p) => p?.id));
@@ -3007,10 +3093,12 @@
     }
   }
 
-  function saveProducts(button, advance = false) {
+  function saveProducts(button, advance = false, { skipBlank = false } = {}) {
     const id = state.record?.id;
     if (!id) return;
-    const products = collectProducts();
+    const savedIds = new Set(list(state.record?.products).map((p) => p?.id));
+    const blank = (p) => !savedIds.has(p.id) && ![p.brand, p.styleNumber, p.type, p.title].some((v) => String(v || "").trim());
+    const products = collectProducts().filter((p) => !(skipBlank && blank(p)));
     return runAction(
       button,
       "Saving…",
@@ -3067,6 +3155,13 @@ They are rebuilt from the current logos and blank photos. The product's title, S
       button,
       "Starting…",
       async () => {
+        /* Edits on the Products step (a logo just picked for a placement) are
+           saved first, so the new images are made from what is on screen. */
+        if (page()?.querySelector(".ob-products")) {
+          const products = collectProducts();
+          await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
+          if (!isCurrent("detail", id)) return;
+        }
         const started = await api(`${recordPath(id)}/products/${encodeURIComponent(productId)}/redo-images`, { method: "POST", body: "{}" });
         if (!isCurrent("detail", id)) return;
         const fresh = await api(recordPath(id));
@@ -3095,11 +3190,39 @@ They are rebuilt from the current logos and blank photos. The product's title, S
     button.textContent = "Looking up…";
     out.innerHTML = `<p class="hint"><span class="spinner" aria-hidden="true"></span> Searching the manufacturer and distributors for “${esc(query)}” — about 5 seconds.</p>`;
     try {
-      const { garment, master } = await api(`${API}/garments/lookup`, { method: "POST", body: JSON.stringify({ query }) });
+      const rowId = row.dataset.obProduct;
+      const answer = await api(`${API}/garments/lookup`, { method: "POST", body: JSON.stringify({ query }) });
+      // The page may have been re-rendered during the search; find the row again.
+      const live = page()?.querySelector(`[data-ob-product="${CSS.escape(rowId)}"]`);
+      if (live && live !== row) return lookupInto(live, answer, query);
+      return lookupInto(row, answer, query);
+    } catch (error) {
+      out.innerHTML = `<p class="hint" data-tone="danger">Could not look that up: ${esc(error.message)}</p>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
+  function lookupInto(row, { garment, master }, query) {
+    const out = row.querySelector("[data-ob-lookup-result]");
+    if (!out) return;
+    const box = row.querySelector("[data-ob-lookup]");
+    if (box) box.hidden = false;
+    {
       const set = (field, value) => {
         const input = row.querySelector(`[data-ob-field='${field}']`);
         if (input && value) input.value = value;
       };
+      // A different garment: the old one's title and Vendor go (the save
+      // fills them again for the new one).
+      const previous = (row.querySelector("[data-ob-field='styleNumber']")?.value || "").trim().toUpperCase();
+      if (previous && garment.styleNumber && previous !== garment.styleNumber.toUpperCase()) {
+        for (const field of ["title", "fulfillment"]) {
+          const input = row.querySelector(`[data-ob-field='${field}']`);
+          if (input) input.value = "";
+        }
+      }
       set("brand", garment.brand);
       set("styleNumber", garment.styleNumber);
       set("type", garment.type !== "Other" ? garment.type : "");
@@ -3122,13 +3245,14 @@ They are rebuilt from the current logos and blank photos. The product's title, S
           ${garment.found ? "" : `<p class="hint" data-tone="warn">Not sure this is the exact style — check the brand and style number above.</p>`}
           ${garment.note ? `<p class="hint">${esc(garment.note)}</p>` : ""}
           ${chips ? `<p class="field-label">Colours it comes in <small>click to add to the row</small></p><div class="ob-color-chips">${chips}</div>` : ""}
-          ${master && !master.exists ? masterMissingHtml(garment.styleNumber) : master?.exists ? `<p class="hint">The store already has “${esc(master.title)}” to copy from.</p>` : ""}
+          ${master?.exists === false
+            ? masterMissingHtml(garment.styleNumber)
+            : master?.exists
+              ? `<p class="hint">The store already has “${esc(master.title)}” to copy from.</p>`
+              : master?.error
+                ? `<p class="hint" data-tone="warn">Could not check the store for a master (${esc(master.error)}). Save the row — the check runs again then.</p>`
+                : ""}
         </div>`;
-    } catch (error) {
-      out.innerHTML = `<p class="hint" data-tone="danger">Could not look that up: ${esc(error.message)}</p>`;
-    } finally {
-      button.disabled = false;
-      button.textContent = label;
     }
   }
 
@@ -3145,21 +3269,31 @@ They are rebuilt from the current logos and blank photos. The product's title, S
     }
     const name = row.dataset.obLookupName || read("type") || "Garment";
     if (!window.confirm(`Create a Draft master product "${read("brand")} ${name} (${styleNumber})" in Shopify?\n\nIt is tagged Master Reference and Needs Review, has one variant per size and a price of 0 for you to set. Department products are copied from it.`)) return;
+    const id = state.record?.id;
+    const rowId = row.dataset.obProduct;
     return runAction(
       button,
       "Creating…",
       async () => {
-        await api(`${API}/garments/master`, {
+        const { master } = await api(`${API}/garments/master`, {
           method: "POST",
           body: JSON.stringify({ brand: read("brand"), styleNumber, name, type: read("type"), sizes: parseList(read("sizes")) })
         });
+        /* The new master is put on the row directly. Re-checking by search
+           right after creating it could miss it (Shopify search lags), leave
+           the row saying "no master", and a second click made a duplicate. */
+        const products = collectProducts().map((p) =>
+          p.id === rowId ? { ...p, styleNumber: master.styleNumber || p.styleNumber, sourceProduct: { id: master.id, legacyId: master.legacyId || "", title: master.title, kind: "master", url: master.url || "" }, masterMissing: false } : p
+        );
+        const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
+        if (!isCurrent("detail", id)) return;
+        applyRecord(payload);
+        if (!master.created) showBanner(page(), "obDetailError", `The store already had a master for this garment: ${master.title}. The row now copies from it.`, "ok");
         api(`${API}/garments`)
-          .then((payload) => {
-            state.garments = list(payload?.garments);
+          .then((more) => {
+            state.garments = list(more?.garments);
           })
           .catch(() => {});
-        const save = page()?.querySelector("[data-ob='save-products']");
-        if (save) await saveProducts(save);
       },
       page(),
       "obDetailError"

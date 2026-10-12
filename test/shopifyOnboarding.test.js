@@ -142,7 +142,8 @@ test("findSourceProduct matches the style exactly: NL3600 is never NL36001 or NL
 
   const source = await shopifyOnboarding.findSourceProduct("NL3600");
   assert.equal(source.id, "gid://shopify/Product/2001");
-  assert.equal(calls.length, 1, "an exact SKU hit means no title fallback");
+  // A SKU hit that is not the master still looks for a master by title.
+  assert.equal(calls.length, 2);
 
   assert.equal(shopifyOnboarding.skuMatchesStyle("NL3600-S-NVY", "NL3600"), true);
   assert.equal(shopifyOnboarding.skuMatchesStyle("nl3600-s-nvy", "NL3600"), true);
@@ -1616,4 +1617,17 @@ test("stagedFileUrl: a bucket-only resourceUrl is completed with the upload key"
   // A resourceUrl that already names the file is used as-is (products, files).
   const full = { url: "https://x/", resourceUrl: "https://x/tmp/file.png", parameters: [{ name: "key", value: "other" }] };
   assert.equal(s.stagedFileUrl(full), "https://x/tmp/file.png");
+});
+
+test("findSourceProduct prefers a SKU-less master found by title over a department product found by SKU", async (t) => {
+  t.after(resetShopify);
+  stubGraphql({
+    sourceProducts: (vars) =>
+      vars.query === "sku:SS4500*"
+        ? sourceProductsData([productNode({ id: 7001, title: "SYLP Embroidered Independent Hoodie", sku: "SS4500-S-BLK-SYLP-E01", createdAt: "2026-05-01T00:00:00Z" })])
+        : sourceProductsData([productNode({ id: 7002, title: "Independent Midweight Hooded Sweatshirt (SS4500)", createdAt: "2026-10-12T00:00:00Z", tags: ["Master Reference", "Needs Review"] })])
+  });
+  const source = await shopifyOnboarding.findSourceProduct("SS4500");
+  assert.equal(source.id, "gid://shopify/Product/7002");
+  assert.equal(source.kind, "master");
 });

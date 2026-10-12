@@ -328,3 +328,12 @@ test("size ranges expand to every size in between, in the store's order", () => 
   const hat = r.expandProduct({ brand: "Richardson", styleNumber: "R585", type: "Hat", colors: ["Navy"], sizes: ["S-M", "L-XL"], decorationCodes: "E01", fulfillment: "One Week Item" }, { departmentCode: "PIN" });
   assert.deepEqual(hat.product.sizes, ["S/M", "L/XL"]);
 });
+
+test("hat fits stay S/M and L/XL however they are written and whatever the type says", () => {
+  const r = require("../onboardingRules");
+  for (const type of ["Hats", "Caps", "Ball Caps", "Flexfit", ""]) {
+    const e = r.expandProduct({ brand: "Richardson", styleNumber: "R585", type, colors: ["Navy"], sizes: ["S – M", "L to XL"], decorationCodes: "E01", fulfillment: "One Week Item" }, { departmentCode: "PIN" });
+    assert.deepEqual(e.product.sizes, ["S/M", "L/XL"], `type "${type}"`);
+  }
+  assert.deepEqual(r.expandSizeRange("S-XL"), ["S", "M", "L", "XL"], "a real range is still a range");
+});

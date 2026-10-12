@@ -198,7 +198,18 @@ function placeDecoration(parsed, product) {
   if (prefix === "B") return { code, label: "Center back", tier: TIER_LARGE, face: "back" };
   if (prefix === "RS") return { code, label: "Right sleeve", tier: TIER_SMALL, face: "front" };
   if (prefix === "LS") return { code, label: "Left sleeve", tier: TIER_SMALL, face: "front" };
-  // E##
+  // E## / P##: where the operator ticked it on the row wins (product.placements
+  // maps E01 → "F" | "B" | "RS" | "LS"). Without this a ticked Back or sleeve
+  // embroidery was drawn on the front chest, and Class B sleeves came out
+  // swapped against the logos picked for them.
+  const ticked = product?.placements && typeof product.placements === "object" ? product.placements[code] : "";
+  if (ticked === "B") return { code, label: "Center back", tier: isHeadwear(product) ? TIER_SMALL : TIER_LARGE, face: "back" };
+  if (ticked === "RS") return { code, label: "Right sleeve", tier: TIER_SMALL, face: "front" };
+  if (ticked === "LS") return { code, label: "Left sleeve", tier: TIER_SMALL, face: "front" };
+  if (ticked === "F") {
+    if (isHeadwear(product)) return { code, label: "Front center", tier: TIER_STANDARD, face: "front" };
+    return { code, label: "Front left chest", tier: TIER_SMALL, face: "front" };
+  }
   if (isHeadwear(product)) return { code, label: "Front center", tier: TIER_STANDARD, face: "front" };
   if (isClassBShirt(product)) {
     if (number === 1) return { code, label: "Left sleeve", tier: TIER_SMALL, face: "front" };
