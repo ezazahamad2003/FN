@@ -199,7 +199,7 @@ Return JSON only, in this shape:
   "confirmed": [{ "topic": "<one of the seven>", "detail": "what the policy states, in plain language", "source": "short quote, or where it came from (policy, artwork: <file>, notes)" }],
   "missing": [{ "topic": "<one of the seven>", "detail": "what is not stated, and for which garments", "question": "one plain-language question for the department rep" }],
   "questions": ["any further plain-language question the rep must answer that does not fit the seven topics"],
-  "suggestedProducts": [{ "brand": "", "styleNumber": "", "type": "T-shirt | hat | hoodie | Class B | pants | ...", "colors": [], "sizes": [], "decorationMethod": "print | embroidery | ", "classB": false, "confidence": "high | medium | low", "evidence": "the wording this row comes from" }],
+  "suggestedProducts": [{ "brand": "", "styleNumber": "", "type": "T-shirt | hat | hoodie | Class B | pants | ...", "colors": [], "sizes": [], "decorationMethod": "print | embroidery | ", "placements": ["front | back | right sleeve | left sleeve — only where the policy or the artwork puts a logo on THIS garment"], "classB": false, "confidence": "high | medium | low", "evidence": "the wording this row comes from" }],
   "emailIntro": "one or two friendly sentences from Dan to the department rep introducing the questions — no greeting, no sign-off, no list",
   "notes": "anything Dan should know about how readable or complete the policy was"
 }
@@ -404,6 +404,32 @@ function phraseInSources(phrase, index) {
   return words.every((w) => index.words.has(w));
 }
 
+/*
+ * Decoration codes from where the policy puts the logos: print front F01,
+ * back B01, sleeves RS01/LS01 (front, back, then sleeves, joined with "/");
+ * embroidery E01, E02… one per placement. The suggestions used to leave the
+ * codes empty even when the policy spelled out every placement, so the rows
+ * built as plain blanks unless the operator knew to type them.
+ */
+const PLACEMENT_CODES = [
+  [/front|chest|centre|center|panel/, "F"],
+  [/back/, "B"],
+  [/right sleeve|right arm/, "RS"],
+  [/left sleeve|left arm/, "LS"]
+];
+
+function decorationCodesFor(method, placements) {
+  const wanted = asArray(placements).map((p) => cleanText(p, 60).toLowerCase()).filter(Boolean);
+  if (!wanted.length || !method) return "";
+  const prefixes = [];
+  for (const [pattern, prefix] of PLACEMENT_CODES) {
+    if (wanted.some((p) => pattern.test(p)) && !prefixes.includes(prefix)) prefixes.push(prefix);
+  }
+  if (!prefixes.length) return "";
+  if (method === rules.DECORATION_EMBROIDERY) return prefixes.map((_, i) => `E${String(i + 1).padStart(2, "0")}`).join("/");
+  return prefixes.map((prefix) => `${prefix}01`).join("/");
+}
+
 function normaliseDecorationMethod(value) {
   const v = cleanText(value, 40).toLowerCase();
   if (/embroider/.test(v)) return rules.DECORATION_EMBROIDERY;
@@ -455,7 +481,7 @@ function sanitiseSuggestedProducts(items, index, clearedNotes) {
       colors: keptColors,
       sizes,
       decorationMethod: normaliseDecorationMethod(item.decorationMethod),
-      decorationCodes: "",
+      decorationCodes: decorationCodesFor(normaliseDecorationMethod(item.decorationMethod), item.placements),
       fulfillment: "",
       classB: item.classB === true || /class\s*b/i.test(type),
       source: "policy",

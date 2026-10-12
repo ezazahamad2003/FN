@@ -537,3 +537,28 @@ test("setModel merges overrides, returns the previous set, and null restores def
   assert.equal(review.missing.length, 7);
   assert.match(review.notes, /unavailable/);
 });
+
+test("suggested products get decoration codes from the policy's placements", async () => {
+  policy.setModel({
+    reason: fakeReason(
+      JSON.stringify({
+        confirmed: policy.REVIEW_TOPICS.map((topic) => ({ topic, detail: "Stated.", source: "policy" })),
+        missing: [],
+        suggestedProducts: [
+          { type: "T-shirt", brand: "Next Level", styleNumber: "NL3600", decorationMethod: "screen printed", placements: ["left chest", "full back"], evidence: "NL3600" },
+          { type: "Hat", brand: "Richardson", styleNumber: "", decorationMethod: "embroidered", placements: ["front panel"], evidence: "Richardson 112" },
+          { type: "Hoodie", brand: "", styleNumber: "", decorationMethod: "print", placements: ["front", "back", "right sleeve"], evidence: "hoodie" },
+          { type: "Pants", brand: "", styleNumber: "", decorationMethod: "", placements: [], evidence: "pants" }
+        ]
+      })
+    )
+  });
+  const review = await policy.reviewPolicy({
+    departmentName: "Pine Hollow Fire Department",
+    policyText: "Next Level NL3600 tee, Richardson 112 cap, a hoodie and pants."
+  });
+  assert.deepEqual(
+    review.suggestedProducts.map((p) => p.decorationCodes),
+    ["F01/B01", "E01", "F01/B01/RS01", ""]
+  );
+});
