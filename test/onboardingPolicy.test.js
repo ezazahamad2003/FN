@@ -102,9 +102,9 @@ test("reviewPolicy: canned model output is completed and sanitised in code", asy
   assert.match(body, /Thanks for sending the policy and the artwork/);
   review.questions.forEach((q, i) => assert.ok(body.includes(`\n${i + 1}. ${q}\n`), `question ${i + 1} numbered in the email`));
   // The fill-in list: only the missing columns, one line per suggested garment.
-  assert.ok(body.includes("\n   Garment — Logo (file name) — Print or embroidery — Approx. width in inches\n"));
-  assert.ok(body.includes("\n   T-shirt: ___ — ___ — ___\n"));
-  assert.ok(body.includes("\n   Hat: ___ — ___ — ___\n"));
+  assert.ok(body.includes("\n   T-shirt\n   - Logo (file name):\n   - Print or embroidery:\n   - Approx. width in inches:\n"));
+  assert.ok(body.includes("\n   Hat\n   - Logo (file name):\n   - Print or embroidery:\n   - Approx. width in inches:\n"));
+  assert.doesNotMatch(body, /___/, "no rows of blanks joined by dashes");
   assert.doesNotMatch(body, /Where it goes|Garment color/, "confirmed details are not asked again");
   assert.ok(body.endsWith("\n\nThanks,\nDan\nFN Simple Uniforms"), "signs off as Dan / FN Simple Uniforms");
   assert.doesNotMatch(body, /\[NAME\]|\[Contact/);
@@ -172,9 +172,67 @@ Uniform items such as T-shirts, sweatshirts, hats and jackets will be purchased 
   assert.doesNotMatch(review.emailDraft.body, /already specifies/, "an intro promising a list the email lacks is replaced");
   assert.match(review.emailDraft.body, /a few details the policy does not cover/);
   const body = review.emailDraft.body;
-  assert.ok(body.indexOf("\n   T-shirt: ") < body.indexOf("\n   Short sleeve uniform shirt: "), "store staples lead the fill-in list");
+  assert.ok(body.indexOf("\n   T-shirt\n") < body.indexOf("\n   Short sleeve uniform shirt\n"), "store staples lead the fill-in list");
   assert.match(body, /fill in the list below\.\n/);
   assert.doesNotMatch(body, /below\?/);
+});
+
+test("reviewPolicy: a confirmed topic the model also lists as missing is not asked again (Pine Hollow run)", async () => {
+  const perGarment = [
+    "Colors",
+    "Decoration method (print or embroidery)",
+    "Decoration location",
+    "Logo size",
+    "Which logo goes on which garment"
+  ];
+  const confirmedTopics = ["Garments, brands and style numbers", ...perGarment];
+  policy.setModel({
+    reason: fakeReason(
+      JSON.stringify({
+        confirmed: confirmedTopics.map((topic) => ({ topic, detail: `${topic}: stated in the policy.`, source: "policy" })),
+        // The same six again, as refinements — plus the one real gap.
+        missing: [
+          ...confirmedTopics.map((topic) => ({ topic, detail: "Exact tolerances / Pantone / other apparel not specified." })),
+          { topic: "Class B shirts: button and patch rules", detail: "Not mentioned." }
+        ],
+        suggestedProducts: [
+          { type: "T-shirt", brand: "Next Level", styleNumber: "NL3600", colors: ["Navy"], evidence: "Next Level NL3600" },
+          { type: "Hat", brand: "Richardson", styleNumber: "R112", colors: ["Navy"], evidence: "Richardson 112" }
+        ]
+      })
+    )
+  });
+  const review = await policy.reviewPolicy({
+    departmentName: "Pine Hollow Fire Department",
+    repName: "Rachel Okafor",
+    policyText: "Station T-shirt: Next Level NL3600, Navy. Duty cap: Richardson 112, Navy.",
+    knownProducts: []
+  });
+  assert.deepEqual(review.missing.map((m) => m.topic), ["Class B shirts: button and patch rules"]);
+  assert.equal(review.questions.length, 1, "only the Class B question is left");
+  assert.doesNotMatch(review.emailDraft.body, /fill in the list|Logo \(file name\)/);
+});
+
+test("reviewPolicy: a garment named without a style keeps the garments question open", async () => {
+  policy.setModel({
+    reason: fakeReason(
+      JSON.stringify({
+        confirmed: [{ topic: "Garments, brands and style numbers", detail: "NL3600 tee.", source: "policy" }],
+        missing: [{ topic: "Garments, brands and style numbers", detail: "The sweatshirt has no brand or style." }],
+        suggestedProducts: [
+          { type: "T-shirt", brand: "Next Level", styleNumber: "NL3600", evidence: "Next Level NL3600" },
+          { type: "Sweatshirt", brand: "", styleNumber: "", evidence: "sweatshirt" }
+        ]
+      })
+    )
+  });
+  const review = await policy.reviewPolicy({
+    departmentName: "Test Fire Department",
+    repName: "",
+    policyText: "T-shirt: Next Level NL3600. Members may buy a sweatshirt.",
+    knownProducts: []
+  });
+  assert.ok(review.missing.some((m) => m.topic === "Garments, brands and style numbers"));
 });
 
 test("questionTopic files free-text questions under the seven topics", () => {
@@ -202,7 +260,7 @@ test("reviewPolicy: garbage or a thrown model falls back to a code-built review"
   assert.match(garbage.notes, /nothing usable/);
   assert.ok(garbage.emailDraft.body.startsWith("Hello,\n\n"), "no rep name → plain greeting");
   assert.ok(garbage.emailDraft.body.includes("\n3. "));
-  assert.ok(garbage.emailDraft.body.includes("\n   Item 1: ___ — ___ — ___ — ___ — ___\n"), "no garments known → blank lines to fill");
+  assert.ok(garbage.emailDraft.body.includes("\n   Item 1\n   - Logo (file name):\n"), "no garments known → labelled lines to fill");
   assert.ok(garbage.emailDraft.body.endsWith("Thanks,\nDan\nFN Simple Uniforms"));
   assert.equal(garbage.emailDraft.subject, "Uniform store details we still need — Bahama Fire Department");
 

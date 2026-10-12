@@ -211,6 +211,7 @@ Suggested products are what FN Simple would sell in the department's store: wear
 - Never suggest non-apparel or issued hardware: boots, shoes, socks, belts, buckles, badges, medallions, collar ornaments or brass, nameplates, ties, helmets or turnout gear.
 - classB is true for the everyday button-up uniform shirt worn on shift (whatever the policy calls it — duty, station, semi-dress or Class B), false for dress (Class A) shirts and for T-shirts.
 
+Put each topic in "confirmed" OR "missing", never both. When the policy answers a topic, finer points it leaves open (exact Pantone or thread codes, size tolerances, print separations, measurements from the collar) are not missing information — do not list them.
 The questions go into one short email to a busy fire captain. Ask each thing once: never ask the same thing twice in different words, and do not put a question in "questions" that belongs to one of the seven topics.
 The emailIntro only leads into the questions. Do not summarise what the policy already covers and do not promise a list of it — the email does not contain one.`;
 
@@ -505,11 +506,17 @@ function buildEmailDraft({ departmentName, repName, questions, intro, confirmed,
     questions.forEach((q, i) => {
       lines.push(`${i + 1}. ${q}`);
       if (grid && q === grid.question) {
-        lines.push("");
-        lines.push(`   Garment — ${grid.columns.join(" — ")}`);
+        /* One labelled line per detail under each garment. It used to be one
+           row of blanks per garment with the columns joined by em dashes
+           ("T-shirt: ___ — ___ — ___"), which in a Google Doc read as a row
+           of dashes with no way to tell which blank was which. */
         const garments = grid.garments.length ? grid.garments : ["Item 1", "Item 2", "Item 3"];
-        for (const g of garments) lines.push(`   ${g}: ${grid.columns.map(() => "___").join(" — ")}`);
-        if (grid.more) lines.push("   (add a line for any other garment you want in the store)");
+        for (const g of garments) {
+          lines.push("");
+          lines.push(`   ${g}`);
+          for (const column of grid.columns) lines.push(`   - ${column}:`);
+        }
+        if (grid.more) lines.push("", "   (add any other garment you want in the store the same way)");
         lines.push("");
       }
     });
@@ -555,6 +562,25 @@ function finalizeReview(raw, ctx) {
     const topic = canonicalTopic(item.topic) || cleanText(item.topic, 120);
     if (!topic) continue;
     missing.push({ topic, detail: cleanText(item.detail, 1500) || NOT_STATED, question: cleanText(item.question, 600) });
+  }
+  /* A topic is confirmed OR missing, never both. The model tends to confirm a
+     topic and then list it again as missing with a refinement nobody needs
+     ("sizes are approximate, not locked", "no Pantone codes") — Pine Hollow's
+     policy answered all six per-garment topics and the email still asked the
+     rep to fill in logo, method, placement, size and colour for the tee and
+     the hat. Confirmed wins. The one partial case that is real is a garment
+     the policy names with no brand or style: that keeps the garments
+     question open, and it is read from the suggested products below. */
+  const suggestedForGaps = sanitiseSuggestedProducts(parsed.suggestedProducts, index, []);
+  // Neither a brand nor a style: the policy names the garment and nothing
+  // else. A style the policy spells differently ("Richardson 112" for R112)
+  // is cleared by the no-invention check, so the brand alone is enough.
+  const garmentWithoutStyle = suggestedForGaps.some((p) => !p.styleNumber && !p.brand);
+  for (let i = missing.length - 1; i >= 0; i -= 1) {
+    const topic = missing[i].topic;
+    if (!confirmed.some((c) => c.topic === topic)) continue;
+    if (topic === "Garments, brands and style numbers" && garmentWithoutStyle) continue;
+    missing.splice(i, 1);
   }
   // Every one of the seven checks is answered one way or the other.
   for (const topic of REVIEW_TOPICS) {
