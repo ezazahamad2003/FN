@@ -506,7 +506,9 @@ test("runSetup auto-approves a department already on the list and continues into
   assert.equal(record.drive.departmentFolderId, `folder-${rules.departmentFolderName(DEPARTMENT, "VAC")}`);
   assert.equal(record.drive.productImagesFolderId, "folder-Product Images");
   assert.equal(record.drive.productionFolderId, `folder-${rules.productionFolderName(DEPARTMENT, "VAC")}`);
-  assert.deepEqual(record.drive.productionFiles.map((f) => f.name), PRODUCTION_FILES);
+  // The Omni Printer folder is created for production but never read: the
+  // agent has no use for print files.
+  assert.deepEqual(record.drive.productionFiles, []);
 
   // §3 the packet is saved in the department folder, §4 the review is written
   assert.equal(deps.drive.calls.uploads.length, 1);
@@ -842,10 +844,9 @@ test("the build creates the collection before any product and writes §9 exactly
   assert.equal(record.products[0].shopify.variantCount, 8);
 });
 
-test("the build never touches the production files — it downloads copies", async () => {
+test("the build never touches the production files — not even to read them", async () => {
   const { deps } = await builtOnboarding();
-  // F01, B01 and F02 are the three codes across both Styles; each is a read.
-  assert.equal(deps.drive.calls.downloads.length, 3);
+  assert.equal(deps.drive.calls.downloads.length, 0);
   assert.ok(!Object.keys(deps.drive).includes("trashFile"));
 });
 
@@ -953,6 +954,102 @@ test("a re-run skips the product that already exists instead of creating a secon
   const record = await store.getOnboarding(id);
   assert.equal(deps.shopify.calls.setProduct.length, 1, "the product was not created twice");
   assert.equal(record.build.steps.find((s) => s.key === "products:p1").state, "skipped");
+});
+
+/* Ripon's hat: the mockups uploaded, a deploy cut the build before they were
+   bound, and the record was repaired by hand without marking the images owed.
+   Every re-run then skipped it as "already created" and the final check
+   failed on "no front image" forever. */
+function interruptedImages(snapshot, record, { inGallery = true } = {}) {
+  const product = record.products[0];
+  const media = inGallery
+    ? product.mockups.map((m, i) => ({
+        id: `gid://shopify/MediaImage/${100 + i}`,
+        url: `https://cdn.test/${m.fileName}`,
+        alt: `${snapshot.title} — ${m.color}${m.style ? ` ${m.style}` : ""} ${m.face}`
+      }))
+    : [];
+  return { ...snapshot, media, variants: snapshot.variants.map((v) => ({ ...v, image: null })) };
+}
+
+const optionOf = (variant, name) => (variant.selectedOptions || []).find((o) => o.name === name)?.value;
+
+test("a re-run binds a front that uploaded but was never attached — no re-upload, nothing deleted", async () => {
+  const { deps, id, record } = await builtOnboarding();
+  const shopify = deps.shopify;
+  const snapshot = await shopify.productSnapshot();
+  const broken = interruptedImages(snapshot, record);
+  shopify.productSnapshot = async () => broken;
+  const links = [];
+  shopify.linkVariantImages = async (gid, list) => {
+    links.push(...list);
+    return list.length;
+  };
+  shopify.replaceProductImages = async () => assert.fail("a repair must not delete the gallery");
+  const uploadsBefore = shopify.calls.attachMockups.length;
+
+  await agent.startBuild(id, { by: "dan", wait: true, force: true });
+  const after = await store.getOnboarding(id);
+
+  assert.equal(shopify.calls.setProduct.length, 1, "the product was not created again");
+  assert.equal(shopify.calls.attachMockups.length, uploadsBefore, "nothing was uploaded again");
+  assert.equal(links.length, broken.variants.length, "every bare variant is bound");
+  for (const link of links) {
+    const variant = broken.variants.find((v) => v.id === link.variantId);
+    const media = broken.media.find((m) => m.id === link.mediaId);
+    const style = optionOf(variant, rules.OPTION_STYLE);
+    assert.equal(media.alt, `${snapshot.title} — ${optionOf(variant, rules.OPTION_COLOR)}${style ? ` ${style}` : ""} front`, "its own colour and style's FRONT, never a back");
+  }
+  const step = after.build.steps.find((s) => s.key === "products:p1");
+  assert.equal(step.state, "complete");
+  assert.match(step.detail, /already created; \d+ variant image\(s\) re-attached/);
+  assert.equal(after.products[0].buildState, "created");
+});
+
+test("a re-run uploads a missing front only when it is not in the gallery at all", async () => {
+  const { deps, id, record } = await builtOnboarding();
+  const shopify = deps.shopify;
+  const snapshot = await shopify.productSnapshot();
+  shopify.productSnapshot = async () => interruptedImages(snapshot, record, { inGallery: false });
+  shopify.linkVariantImages = async () => assert.fail("nothing in the gallery to bind");
+  const uploadsBefore = shopify.calls.attachMockups.length;
+
+  await agent.startBuild(id, { by: "dan", wait: true, force: true });
+
+  const uploads = shopify.calls.attachMockups.slice(uploadsBefore);
+  assert.equal(uploads.length, 1);
+  assert.ok(uploads[0].images.length > 0);
+  assert.ok(uploads[0].images.every((img) => / front$/.test(img.alt) && img.variantIds.length > 0), JSON.stringify(uploads[0].images.map((i) => i.alt)));
+});
+
+test("a re-run still skips a product whose variants all show an image", async () => {
+  const { deps, id } = await builtOnboarding();
+  deps.shopify.linkVariantImages = async () => assert.fail("nothing to repair");
+  const uploadsBefore = deps.shopify.calls.attachMockups.length;
+  await agent.startBuild(id, { by: "dan", wait: true, force: true });
+  const record = await store.getOnboarding(id);
+  assert.equal(deps.shopify.calls.attachMockups.length, uploadsBefore);
+  assert.equal(record.build.steps.find((s) => s.key === "products:p1").state, "skipped");
+});
+
+test("a front that matches no variant's Color is reported at build time, not only by the final check", async () => {
+  const shopify = fakeShopify({ order: [] });
+  const realSet = shopify.setProduct.bind(shopify);
+  shopify.setProduct = async (input) => {
+    const out = await realSet(input);
+    return {
+      ...out,
+      variants: out.variants.map((v) => ({
+        ...v,
+        selectedOptions: v.selectedOptions.map((o) => (o.name === rules.OPTION_COLOR ? { ...o, value: "Unlisted Colour" } : o))
+      }))
+    };
+  };
+  const { record } = await builtOnboarding({ shopify });
+  const warnings = (record.events || []).filter((e) => e.type === "warning" && /matched no variant's Color/.test(e.message));
+  // One per front (colour × style), each naming the image it is about.
+  const fronts = record.products[0].mockups.filter((m) => m.face === "front");
+  assert.equal(warnings.length, fronts.length, JSON.stringify((record.events || []).map((e) => e.message)));
 });
 
 test("one failing product does not sink the run", async () => {
@@ -1593,7 +1690,11 @@ test("deleteStore finishes a delete whose collection is already gone", async () 
   await assert.rejects(() => store.getOnboarding(id), "the record goes once everything else did");
 });
 
-test("with no print-ready files the mockups use the department's own logos, and the build completes", async () => {
+test("the mockups use the department's own logos, and nothing asks for print-ready files", async () => {
+  /* Ezaz, 2026-10-12: the agent builds the store from the logos; Omni's print
+     files are not its business. Even with matching files sitting in the Omni
+     Printer folder, none is fetched, and no row, event or report mentions
+     one. */
   const seen = [];
   const base = fakeMockups();
   const mockups = {
@@ -1603,13 +1704,23 @@ test("with no print-ready files the mockups use the department's own logos, and 
       return base.renderProductMockups(args);
     }
   };
-  const { record } = await builtOnboarding({ productionFiles: [], mockups });
+  const { deps, id, record } = await builtOnboarding({ mockups });
   assert.equal(record.build.state, "complete", record.build.error || "");
   // TEE_ROW is F01/B01 and F02/B01; the only packet artwork is the scramble logo.
   assert.deepEqual(seen[0], { F01: "VFD-scramble.png", F02: "VFD-scramble.png", B01: "VFD-scramble.png" });
+  assert.deepEqual(deps.drive.calls.downloads, [], "no print file was downloaded");
   const tee = record.products[0];
   assert.equal(tee.validation.ok, true);
-  assert.match(tee.validation.warnings.join(" "), /Omni needs the print-ready files VAC-F01, VAC-F02, VAC-B01|Omni needs the print-ready files/);
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  const said = [
+    ...tee.validation.warnings,
+    ...(checked.events || []).map((e) => e.message),
+    ...checked.report.warnings,
+    ...checked.report.missingInformation,
+    ...checked.report.needsDan
+  ];
+  const asks = said.filter((m) => /print-ready|print file/i.test(m));
+  assert.deepEqual(asks, []);
 });
 
 test("Redo images re-renders one product and swaps the images on its existing draft", async () => {

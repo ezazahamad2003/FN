@@ -185,6 +185,26 @@ test("normalizeRecord: the collection title follows the rules until the collecti
   assert.equal(byGid.collection.title, "1. Old Name");
 });
 
+test("normalizeRecord: print-file lines saved before the agent dropped them are not shown again", () => {
+  /* Ripon's rows were saved with "Omni needs the print-ready file…", and the
+     final check copies a row's saved warnings into the report — so without
+     this the retired warning came back on every check until each row was
+     saved again. */
+  const omni = "Omni needs the print-ready files RIPO-F01, RIPO-B01 in the Omni Printer folder before orders are printed. The mockups use the department's uploaded logo until then.";
+  const keep = "Sport-Tek PT Shorts: 1 image(s) show an AI-generated blank, not the real garment (True Navy). Upload blank photos and re-run to replace them.";
+  const record = store.normalizeRecord({
+    department: { name: NAME },
+    products: [{ id: "p1", validation: { ok: true, errors: [], warnings: [omni, "Size 2XL assumed."], assumptions: [] } }],
+    report: {
+      warnings: [`Next Level T-Shirt: ${omni}`, keep, "No print-ready file named RIPO-B01 in the Omni Printer folder yet — Omni needs it before orders are printed."],
+      missingInformation: ["The print file for RIPO-F01 could not be downloaded (timeout)."]
+    }
+  });
+  assert.deepEqual(record.products[0].validation.warnings, ["Size 2XL assumed."]);
+  assert.deepEqual(record.report.warnings, [keep]);
+  assert.deepEqual(record.report.missingInformation, []);
+});
+
 test("normalizeRecord: trims the event and build log rings", () => {
   const events = Array.from({ length: 250 }, (_, i) => ({ at: "", type: "t", message: String(i), by: "" }));
   const log = Array.from({ length: 350 }, (_, i) => `00:00:00 ${i}`);

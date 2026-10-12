@@ -682,7 +682,7 @@ function parseSku(sku, { departmentCode = "" } = {}) {
  *
  * Returns { ok, product (normalised), variants, options, errors, warnings, assumptions }.
  */
-function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED, productionFiles = null } = {}) {
+function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED } = {}) {
   const errors = [];
   const warnings = [];
   const assumptions = [];
@@ -781,19 +781,11 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED,
   if ([...allCodes].some((c) => /^(RS|LS)/.test(c)) && [...allCodes].some((c) => c.startsWith("RS")) && [...allCodes].some((c) => c.startsWith("LS"))) {
     assumptions.push("Both sleeves decorated: SKU order is RS then LS (open item #2).");
   }
-  if (productionFiles && hasDecoration && method === DECORATION_PRINT) {
-    const { missing } = matchDecorationFiles(code, [...allCodes], productionFiles);
-    /* A note for production, not a blocker. The mockups and the Shopify
-       product are made from the department's own logos (the packet artwork);
-       the print-ready file is what Omni prints from, and Dan places it when
-       he has it. Blocking the build on it stopped Pine Hollow at "List the
-       products" with an error nobody could explain. */
-    if (missing.length) {
-      warnings.push(
-        `Omni needs the print-ready file${missing.length === 1 ? "" : "s"} ${missing.map((c) => decorationFileStem(code, c)).join(", ")} in the Omni Printer folder before orders are printed. The mockups use the department's uploaded logo until then.`
-      );
-    }
-  }
+  /* No print-ready files here, not even as a warning. The agent builds the
+     store from the department's own logos; Omni's print files are production's
+     business, outside it. First a blocker (Pine Hollow stuck on "List the
+     products"), then a warning on every printed row of every report — both
+     were the agent asking for something it does not need. */
 
   const options = [
     { name: OPTION_COLOR, values: colors.map((c) => c.name) },

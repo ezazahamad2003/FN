@@ -18,7 +18,6 @@
      GET    /api/onboardings/:id/assets/:assetId     → binary
      POST   /api/onboardings/:id/setup|code|review   → { onboarding }
      PUT    /api/onboardings/:id/products            → { onboarding }
-     POST   /api/onboardings/:id/production-files    → { onboarding }
      POST   /api/onboardings/:id/build               → 202 { started, build }
      POST   /api/onboardings/:id/shared-settings/*   → { onboarding }
      POST   /api/onboardings/:id/lock|final-check    → { onboarding }
@@ -68,7 +67,7 @@
       key: "code",
       label: "Code",
       title: "Approve the department code",
-      what: "The code goes into every SKU, tag, folder and print-file name, so nothing is created until it is approved. Approving creates the Drive folders, uploads the packet, reviews the policy, and drafts the rep email. That takes about a minute."
+      what: "The code goes into every SKU, tag and folder name, so nothing is created until it is approved. Approving creates the Drive folders, uploads the packet, reviews the policy, and drafts the rep email. That takes about a minute."
     },
     {
       key: "review",
@@ -109,7 +108,6 @@
     { key: "contacts", label: "Contact list" },
     { key: "blank", label: "Blank garment photo" },
     { key: "proof", label: "Embroidery proof" },
-    { key: "print", label: "Print file copy" },
     { key: "other", label: "Other" }
   ];
 
@@ -1673,7 +1671,6 @@
         ${products.length
           ? `<div class="ob-products">${products.map((product, index) => productRowHtml(record, product, index)).join("")}</div>`
           : stateBlock({ title: "No products yet", sub: "Add the suggested products above, or press + Add product and pick a garment the store sells." })}
-        ${productionFilesHtml(record)}
       </section>`;
   }
 
@@ -2189,15 +2186,13 @@
       “${esc(profile.name)} ${esc(code)}”${profile.vendor ? `, ${esc(profile.vendor)}` : ""}${list(profile.colorCodes).length ? `, mostly in ${esc(list(profile.colorCodes).join(", "))}` : ""}.</p>`;
   }
 
-  /* Where each logo on this garment comes from. Logos are not uploaded per
-     product: a print code (F01, B01, RS01…) is the print-ready file
-     CODE-F01 in the Omni Printer folder, and an embroidery code (E01) is the
-     proof uploaded here. Without this the row had no "logo" anywhere, and an
-     operator reasonably reached for "+ Add style" looking for one. */
+  /* Where each logo on this garment comes from: the department's own logos
+     from the packet (or the one picked for the code), and an embroidery proof
+     when one is uploaded here. Without this the row had no "logo" anywhere,
+     and an operator reasonably reached for "+ Add style" looking for one. */
   const DECORATION_FACES = { F: "front", B: "back", RS: "right sleeve", LS: "left sleeve", E: "embroidered", P: "patch" };
 
   function logosHtml(record, product, saved) {
-    const deptCode = record.department?.code?.value || "";
     const codes = [
       ...new Set(
         [String(product?.decorationCodes || ""), ...list(product?.styles).map((style) => String(style?.decorationCodes || ""))]
@@ -2213,12 +2208,10 @@
           <p class="hint">Type the decoration codes above, then save: <b>F01</b> = front logo, <b>B01</b> = back logo, <b>RS01</b>/<b>LS01</b> = sleeves, <b>E01</b> = an embroidered logo. Each code is matched to its logo here.</p>
         </div>`;
     }
-    const stems = new Set(list(record.drive?.productionFiles).map((file) => String(file?.name || "").replace(/\.[^.]+$/, "").toUpperCase()));
-    const folder = record.drive?.productionFolderUrl || "";
     /* Which logo the mockups use for each code — the same choice the build
-       makes: Omni's print file if it is there, the embroidery proof if one was
-       uploaded, otherwise the department's own logo from the packet (the back
-       logo for B, the chest logo, pick or scramble for everything else). */
+       makes: the embroidery proof if one was uploaded, otherwise the
+       department's own logo from the packet (the back logo for B, the chest
+       logo, pick or scramble for everything else). */
     const art = list(record.packet?.files).filter((f) => f?.kind === "artwork" && !/proof/i.test(f?.name || ""));
     const byRole = (roles) => roles.map((role) => art.find((f) => (f?.role || "") === role)).find(Boolean) || null;
     const onBack = (c) => /^B\d{2}$/.test(c) || (product?.placements && product.placements[c] === "B");
@@ -2227,24 +2220,13 @@
     const rows = codes
       .map((c) => {
         const print = /^(F|B|RS|LS)\d{2}$/.test(c);
-        const stem = deptCode ? `${deptCode}-${c}` : `CODE-${c}`;
-        const printed = print && stems.has(stem.toUpperCase());
         const proofed = !print && product?.proofs?.[c];
         const picked = product?.logoMap && product.logoMap[c] ? art.find((f) => f?.assetId === product.logoMap[c]) : null;
         const logo = picked || logoFor(c);
         const face = DECORATION_FACES[c.replace(/\d+$/, "")] || "";
-        const source = printed
-          ? `Omni's print file <b>${esc(stem)}</b>`
-          : proofed
-            ? "the embroidery proof below"
-            : logo
-              ? `your uploaded logo <b>${esc(logo.name || "")}</b>`
-              : "";
+        const source = proofed ? "the embroidery proof below" : logo ? `your uploaded logo <b>${esc(logo.name || "")}</b>` : "";
         return `<li data-tone="${source ? "ok" : "warn"}">
           <b class="code-input">${esc(c)}</b> <span>${esc(face)} — ${source ? `mockups use ${source}` : "no logo yet: upload the department's logo in step 1 (Packet)"}</span>
-          ${print && !printed
-            ? `<small class="ob-logo-later">Omni's print-ready file ${esc(stem)} goes in the ${folder ? `<a href="${esc(folder)}" target="_blank" rel="noreferrer">Omni Printer folder</a>` : "Omni Printer folder"} before orders are printed — it does not hold up the build.</small>`
-            : ""}
         </li>`;
       })
       .join("");
@@ -2387,60 +2369,6 @@
               <div class="ob-sku-list">${skus.map((sku) => `<code>${esc(sku)}</code>`).join("")}</div>
             </details>`
           : ""}
-      </div>`;
-  }
-
-  /* Decoration codes are matched against the Omni Printer listing by file
-     stem (CODE-F01). Production uses the SKU to know which logo goes where,
-     so a missing file is a build blocker Dan has to fix in Drive. */
-  function productionFilesHtml(record) {
-    const files = list(record.drive?.productionFiles);
-    const code = record.department?.code?.value || "";
-    const stems = new Set(files.map((file) => String(file?.name || "").replace(/\.[^.]+$/, "").toUpperCase()));
-    const wanted = new Set();
-    list(record.products).forEach((product) => {
-      const codes = [String(product?.decorationCodes || ""), ...list(product?.styles).map((style) => String(style?.decorationCodes || ""))];
-      codes.forEach((group) =>
-        group
-          .split("/")
-          .map((part) => part.trim().toUpperCase())
-          .filter(Boolean)
-          .forEach((part) => {
-            if (/^E\d{2}$/.test(part)) return; // embroidery art comes from the proof, not the print folder
-            wanted.add(part);
-          })
-      );
-    });
-    // Without an approved code there is no file stem to match on, so the codes
-    // are listed without a verdict rather than all flagged missing.
-    const rows = code
-      ? [...wanted].sort().map((part) => ({ part, stem: `${code}-${part}`.toUpperCase(), matched: stems.has(`${code}-${part}`.toUpperCase()) }))
-      : [...wanted].sort().map((part) => ({ part, stem: "", matched: true }));
-    const missing = rows.filter((row) => !row.matched).length;
-    return `
-      <div class="ob-prodfiles" data-tone="${missing ? "warn" : rows.length ? "ok" : "muted"}">
-        <div class="ob-prodfiles-head">
-          <p class="field-label">Omni's print-ready files <small>for printing orders · not needed for the build · ${files.length} in the Omni Printer folder${record.drive?.productionFilesReadAt ? ` · read ${esc(when(record.drive.productionFilesReadAt))}` : ""}</small></p>
-          <button class="btn btn-ghost btn-sm" type="button" data-ob="refresh-production">Refresh listing</button>
-        </div>
-        ${rows.length
-          ? `<div class="ob-prodfile-codes">
-              ${rows
-                .map(
-                  (row) =>
-                    `<span class="m-chip" data-known="${row.matched ? "true" : "false"}"><b>${esc(row.part)}</b> ${esc(row.stem || "code not approved yet")}${row.matched || !row.stem ? "" : " — not there yet"}</span>`
-                )
-                .join("")}
-            </div>`
-          : `<p class="hint">Decoration codes on the rows above are matched here once they are saved.</p>`}
-        ${files.length
-          ? `<ul class="drive-files">${files
-              .slice(0, 24)
-              .map(
-                (file) => `<li><a href="https://drive.google.com/file/d/${encodeURIComponent(file?.id || "")}/view" target="_blank" rel="noreferrer">${ICON_FILE}<span>${esc(file?.name || "")}</span><small>${esc(day(file?.modifiedTime))}</small></a></li>`
-              )
-              .join("")}</ul>`
-          : `<p class="hint">Nothing here yet. Dan puts the print-ready files in the department's Omni Printer folder before orders are printed; until then the mockups use the uploaded logos. The agent only ever reads copies.</p>`}
       </div>`;
   }
 
@@ -2911,7 +2839,6 @@
     if (action === "wizard-save-products") return saveProducts(trigger, true);
     if (action === "run-setup") return runSimple(trigger, "Running…", "/setup", {}, afterCodeApproval);
     if (action === "run-review") return runSimple(trigger, "Reviewing…", "/review");
-    if (action === "refresh-production") return runSimple(trigger, "Reading…", "/production-files");
     if (action === "final-check") return runSimple(trigger, "Checking…", "/final-check");
     if (action === "propose-shared") return runSimple(trigger, "Computing…", "/shared-settings/propose");
     if (action === "verify-shared") return runSimple(trigger, "Verifying…", "/shared-settings/verify");

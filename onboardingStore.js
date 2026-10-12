@@ -329,11 +329,23 @@ function normalizePacketFile(input) {
   return file;
 }
 
+/* Lines the agent used to write about Omni's print-ready files. It no longer
+   has anything to do with them, but rows and reports saved before that still
+   carry the lines, and the final check copies a row's saved warnings into
+   the report — so they are dropped on read rather than waiting for every
+   row of every store to be saved again. */
+const RETIRED_PRINT_FILE_LINE = /Omni needs the print-ready file|No print-ready file named|The print file for \S+ could not be downloaded/i;
+
+function withoutRetiredLines(lines) {
+  return Array.isArray(lines) ? lines.filter((line) => !RETIRED_PRINT_FILE_LINE.test(String(line))) : lines;
+}
+
 /** One product row with every sub-object present. `index` seeds a missing id ("p1", "p2"…). */
 function normalizeProduct(input, index = 0) {
   const product = fill(isPlainObject(input) ? input : {}, PRODUCT_DEFAULTS);
   if (!clean(product.id)) product.id = `p${index + 1}`;
   product.classB = product.classB === true || product.classB === "true" || product.classB === "yes";
+  if (isPlainObject(product.validation)) product.validation.warnings = withoutRetiredLines(product.validation.warnings);
   return product;
 }
 
@@ -481,6 +493,10 @@ function normalizeRecord(input) {
   record.packet.notes = String(record.packet.notes == null ? "" : record.packet.notes);
   record.packet.files = record.packet.files.map(normalizePacketFile);
   record.products = record.products.map((row, index) => normalizeProduct(row, index));
+  if (isPlainObject(record.report)) {
+    record.report.warnings = withoutRetiredLines(record.report.warnings);
+    record.report.missingInformation = withoutRetiredLines(record.report.missingInformation);
+  }
 
   // The title follows the rules until the collection exists in Shopify; after
   // that the live title is the truth, whatever the department is renamed to.

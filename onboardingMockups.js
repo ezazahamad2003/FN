@@ -564,7 +564,7 @@ async function renderProductMockups({
         if (missing.length) {
           entry.path = "missing-artwork";
           entry.buffer = await stockImage(faceBase, size);
-          entry.reason = `No artwork for ${missing.map((c) => `${c} (${rules.decorationFileStem(departmentCode, c)})`).join(", ")}; the ${face} image is the blank.`;
+          entry.reason = `No artwork for ${missing.join(", ")}; the ${face} image is the blank. Upload the department's logo in the packet.`;
           entry.warnings.push(entry.reason);
           log(`${tag} ${face}: missing artwork for ${missing.join(", ")}`);
           results.push(entry);

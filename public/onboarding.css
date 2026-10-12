@@ -62,7 +62,6 @@
 .ob-styles,
 .ob-style-list,
 .ob-validation,
-.ob-prodfiles,
 .ob-mockup-groups,
 .ob-mockup-group,
 .ob-shared,
@@ -717,33 +716,6 @@
   font-size: var(--fs-xs);
 }
 
-/* ---- Production files --------------------------------------------------- */
-.ob-prodfiles {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.ob-prodfiles[data-tone="warn"] { border-color: var(--warn-border); }
-.ob-prodfiles[data-tone="ok"] { border-color: var(--success-border); }
-
-.ob-prodfiles-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-
-.ob-prodfile-codes {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
 /* =============================================================================
    Detail view — build
    ========================================================================== */
@@ -1289,7 +1261,6 @@
   .ob-contact { grid-template-columns: minmax(0, 1fr); }
   .ob-contact .variant-remove { justify-self: end; }
   .ob-shared-actions .btn { flex: 1; }
-  .ob-prodfiles-head { align-items: flex-start; flex-direction: column; }
   .ob-proposal-row { align-items: stretch; flex-direction: column; }
   .ob-proposal-actions .btn { flex: 1; }
   .ob-addfiles select { min-width: 0; width: 100%; }
@@ -1389,7 +1360,6 @@
   background: var(--info-soft, var(--surface-2));
 }
 
-.ob-logo-list .ob-logo-later { flex-basis: 100%; color: var(--text-subtle); }
 
 /* =============================================================================
    Build — the "it is building" panel

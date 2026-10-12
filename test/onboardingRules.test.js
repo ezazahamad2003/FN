@@ -151,7 +151,7 @@ test("expandProduct builds the full variant matrix with unique SKUs and the righ
       fulfillment: "One Week Item",
       classB: false
     },
-    { departmentCode: "VAC", productionFiles: ["VAC-F01.png", "VAC-F02.png", "VAC-B01.png"] }
+    { departmentCode: "VAC" }
   );
   assert.equal(r.ok, true, r.errors.join("; "));
   assert.equal(r.variants.length, 2 * 6 * 2);
@@ -197,15 +197,14 @@ test("expandProduct: errors for mixed methods, missing print files, unknown colo
   assert.equal(mixed.ok, false);
   assert.ok(mixed.errors.some((e) => /all print or all embroidery/.test(e)));
 
-  const missingFile = rules.expandProduct(
+  const printed = rules.expandProduct(
     { brand: "X", styleNumber: "X1", colors: ["Navy"], sizes: ["S"], decorationCodes: "F01/B01", fulfillment: "One Week Item" },
-    { departmentCode: "VAC", productionFiles: ["VAC-F01.png"] }
+    { departmentCode: "VAC" }
   );
-  // A missing print-ready file is a note for Omni, not a blocker: the
-  // mockups are made from the department's uploaded logo.
-  assert.equal(missingFile.ok, true);
-  assert.ok(!missingFile.errors.some((e) => /VAC-B01/.test(e)));
-  assert.ok(missingFile.warnings.some((w) => /Omni needs the print-ready file VAC-B01/.test(w)));
+  // The agent builds the store from the department's own logos. Omni's
+  // print-ready files are not its business — not a blocker, not a warning.
+  assert.equal(printed.ok, true);
+  assert.equal([...printed.errors, ...printed.warnings].some((m) => /print-ready|Omni|VAC-B01/i.test(m)), false, JSON.stringify(printed.warnings));
 
   const unknownColor = rules.expandProduct(
     { brand: "X", styleNumber: "X1", colors: ["University Red"], sizes: ["S"], decorationCodes: "F01", fulfillment: "One Week Item" },

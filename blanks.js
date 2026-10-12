@@ -86,6 +86,24 @@ function absoluteUrl(raw, pageUrl) {
 }
 
 /*
+ * A spec sheet, size chart or technical drawing is not a photo of the garment,
+ * whatever page it sits on. Next Level's own product page carries
+ * "3600-WEBSITE-SPEC.jpg" — an outline tee and a measurement table — and it
+ * was booked as the Midnight Navy blank: Ripon's tee went to Shopify as a
+ * spec sheet with the crest stamped on the line drawing. Read off the file
+ * NAME, so it also catches an entry already in the link book.
+ */
+function isNonPhotoImageUrl(url) {
+  let file = String(url || "").toLowerCase();
+  try {
+    file = new URL(String(url)).pathname.toLowerCase().split("/").pop() || file;
+  } catch {
+    // Not a URL: test the raw string.
+  }
+  return /(^|[^a-z])(spec|specs|specsheet|spec.?sheet|size.?chart|size.?guide|sizing|measurements?|dimensions?|diagram|tech.?pack|tech.?flat|line.?art|sketch|template|blueprint)([^a-z]|$)/.test(file);
+}
+
+/*
  * Score an image URL by what its filename says about the shot. Suppliers encode
  * the view in the filename ("NL3600RedFlatFront8.jpg", "...ModelBack..."), and
  * the declared pixel width ("1200W-", "?width=1200") tells us which size to
@@ -94,6 +112,7 @@ function absoluteUrl(raw, pageUrl) {
 function scoreImageUrl(url) {
   const name = url.toLowerCase();
   if (/(swatch|sprite|icon|logo|placeholder|thumb|favicon|badge|size.?chart)/.test(name)) return -1;
+  if (isNonPhotoImageUrl(url)) return -1;
   // Back and side views cannot take a front-chest logo.
   if (/(modelback|model_back|-back-|back\d|modelside|model_side|-side-|detail)/.test(name)) return -1;
 
@@ -452,6 +471,7 @@ Return JSON only:
   "colourSeen": "the garment's actual colour",
   "undecorated": true|false,      // false if ANY logo, text, emblem, patch or printed graphic appears on the garment
   "decorationSeen": "what decoration is on it, if any",
+  "photograph": true|false,       // false for a drawing, outline or technical flat, a spec sheet, a size or measurement chart, or any image with a table or paragraphs of text
   "shotType": "flat-front" | "flat-back" | "model" | "back" | "side" | "other",
   "backgroundClean": true|false,  // plain white or plain neutral studio background
   "singleGarment": true|false     // false if the image shows several garments, a colour grid, or a collage
@@ -470,6 +490,10 @@ colourMatches is about the WHOLE garment. A garment whose parts are different co
 
   const parsed = parseJsonLoose(response.choices[0]?.message?.content) || {};
   const reasons = [];
+  /* Asked only about garment, colour and view, the model passed Next Level's
+     spec sheet — an outline tee beside a measurement table — as a flat-front
+     Midnight Navy tee. It has to be a photograph first. */
+  if (parsed.photograph !== true) reasons.push("not a photograph of the garment (a drawing, spec sheet or chart)");
   if (parsed.garmentMatches !== true) reasons.push(`wrong garment (saw ${parsed.garmentSeen || "something else"})`);
   if (parsed.colourMatches !== true) reasons.push(`wrong colour (saw ${parsed.colourSeen || "unknown"})`);
   /* Belt and braces: the model has passed a navy/caramel trucker as "Navy"
@@ -625,6 +649,10 @@ async function findSupplierBlank(product, { onLog } = {}) {
   }
   if (supplierBlanksEnabled() && booked?.status === "verified" && booked.imageUrl) {
     try {
+      /* A booked entry is trusted without a vision check, so a spec sheet
+         booked by mistake would be reused on every build. Retire it and
+         search again. */
+      if (isNonPhotoImageUrl(booked.imageUrl)) throw new Error("the booked image is a spec sheet or chart, not a photo of the garment");
       const buffer = await fetchImage(booked.imageUrl);
       const meta = await sharp(buffer).metadata();
       if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_IMAGE_EDGE) {
@@ -1108,6 +1136,7 @@ module.exports = {
   findSupplierBlank,
   // exported for tests
   scoreImageUrl,
+  isNonPhotoImageUrl,
   imageCandidatesFromPage,
   styleTokens,
   matchesStyle

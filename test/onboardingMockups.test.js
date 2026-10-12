@@ -284,7 +284,9 @@ test("renderProductMockups: missing artwork ships the blank and names the code",
     size: SIZE
   });
   assert.deepEqual(out.map((m) => [m.face, m.path]), [["front", "render"], ["back", "missing-artwork"]]);
-  assert.match(out[1].warnings.join(" "), /B01 \(VAC-B01\)/);
+  // Names the code and the fix (a logo in the packet), not an Omni file name.
+  assert.match(out[1].warnings.join(" "), /No artwork for B01; .*Upload the department's logo in the packet/);
+  assert.equal(/VAC-B01/.test(out[1].warnings.join(" ")), false);
   assert.deepEqual(await dims(out[1].buffer), { width: SIZE, height: SIZE, format: "png" });
 });
 
@@ -576,7 +578,9 @@ test("a face names its own reason, not whichever warning landed first", async ()
 
   const front = out.find((m) => m.face === "front");
   assert.equal(front.path, "missing-artwork");
-  assert.match(front.reason, /No artwork for E01 \(ZOT-E01\)/, `reason was: ${front.reason}`);
+  assert.match(front.reason, /No artwork for E01; .*Upload the department's logo in the packet/, `reason was: ${front.reason}`);
+  // The fix is a logo in the packet, never an Omni print file.
+  assert.equal(/ZOT-E01/.test(front.reason), false, front.reason);
   // Both facts are still recorded; the reason is just no longer whichever was first.
   assert.ok(front.warnings.some((w) => /AI-generated/.test(w)), "the generated blank is still reported");
   assert.notEqual(front.warnings[0], front.reason, "warnings[0] is NOT the path reason here — that is the bug");

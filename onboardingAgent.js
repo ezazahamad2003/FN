@@ -13,8 +13,8 @@
  *   1. ADDITIVE. The build never deletes. A re-run skips products that already
  *      exist (products[].shopify.productId + productExists), keeps the Drive
  *      files it already uploaded, and reuses the collection it already made.
- *      The Omni Printer folder is only ever READ — print files are downloaded
- *      as copies and never written back (§3, §5).
+ *      The department's Omni Printer folder is created and never read: print
+ *      files are production's, and the mockups come from the packet logos.
  *   2. APPROVAL-GATED. A proposed department code, a new colour code and every
  *      shared setting (Mega Menu, Flow, Helium) wait for Dan and land in
  *      approvals[] with who and when (§2.4, §8, §10).
@@ -165,19 +165,6 @@ function storefrontDomain() {
 function storefrontCollectionUrl(handle) {
   const h = clean(handle).replace(/^\/+|\/+$/g, "");
   return h ? `https://${storefrontDomain()}/collections/${h}` : "";
-}
-
-/* The record only ever stores names for production files; the id is needed to
-   download a copy, so both live in drive.productionFiles. */
-function productionFileNames(record) {
-  return (record?.drive?.productionFiles || []).map((f) => f.name).filter(Boolean);
-}
-
-function productionFilesForValidation(record) {
-  // Only match decoration codes against the folder once it has actually been
-  // read — an unread folder is "unknown", not "empty", and must not produce
-  // "no print-ready file" errors on every row.
-  return record?.drive?.productionFilesReadAt ? productionFileNames(record) : null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -331,7 +318,6 @@ async function createOnboarding({ payload = {}, files = [], by = "" } = {}) {
  * Add files to an existing record. `kind` decides where they land:
  *   blank → products[].blankPhotos[color][face]
  *   proof → products[].proofs[decorationCode]
- *   print → a packet file of kind "print" (a print file Dan uploaded by hand)
  *   anything else → packet.files
  */
 async function addFiles(id, { files = [], kind = "other", productId = "", color = "", face = "front", decorationCode = "", role = "", by = "" } = {}) {
@@ -805,7 +791,6 @@ async function approveCode(id, { code, name: rename = "", by = "" } = {}) {
 async function continueSetup(id, { by = "" } = {}) {
   await ensureDriveFolders(id, { by });
   await uploadPacketToDrive(id, { by });
-  await refreshProductionFiles(id, { by, quiet: true });
   await reviewPolicy(id, { by });
   return store().updateOnboarding(id, (r) => {
     r.status = r.status === "packet" || r.status === "setup" ? "inputs" : r.status;
@@ -909,29 +894,6 @@ async function uploadPacketToDrive(id, { by = "" } = {}) {
     }
     if (uploaded.length) note(r, { type: "drive", message: `${uploaded.length} packet file(s) in the department folder.`, by });
     for (const w of warnings) note(r, { type: "warning", message: w, by });
-    return r;
-  });
-}
-
-/** Re-read the department's Omni Printer folder (§10: SKUs must match these names). */
-async function refreshProductionFiles(id, { by = "", quiet = false } = {}) {
-  const record = await store().getOnboarding(id);
-  const folderId = record.drive.productionFolderId;
-  if (!folderId) {
-    if (quiet) return record;
-    throw badRequest("The production folder does not exist yet — run setup first.");
-  }
-  let files;
-  try {
-    files = await drive().listFilesInFolder(folderId);
-  } catch (error) {
-    if (quiet) return store().updateOnboarding(id, (r) => note(r, { type: "warning", message: `The production folder could not be listed (${errorText(error)}).`, by }));
-    throw error;
-  }
-  return store().updateOnboarding(id, (r) => {
-    r.drive.productionFiles = files.map((f) => ({ id: f.id, name: f.name, modifiedTime: f.modifiedTime || "" }));
-    r.drive.productionFilesReadAt = nowIso();
-    note(r, { type: "drive", message: `${files.length} print-ready file(s) in the production folder.`, by });
     return r;
   });
 }
@@ -1042,7 +1004,6 @@ async function saveProducts(id, products, { by = "" } = {}) {
   const code = departmentCode(record);
   if (!code) throw badRequest("Approve the department code before saving product rows.");
   const colorTable = await tables().colorTable();
-  const productionFiles = productionFilesForValidation(record);
 
   const rows = [];
   const proposals = [];
@@ -1193,7 +1154,7 @@ async function saveProducts(id, products, { by = "" } = {}) {
       if (!clean(merged.sourceProduct.id) && blank.masterProductId) merged.sourceProduct = { ...merged.sourceProduct, id: blank.masterProductId, kind: "master" };
     }
 
-    const expanded = rules.expandProduct(merged, { departmentCode: code, colorTable, productionFiles });
+    const expanded = rules.expandProduct(merged, { departmentCode: code, colorTable });
     merged.validation = {
       ok: expanded.ok,
       errors: expanded.errors,
@@ -1736,40 +1697,21 @@ async function runBuild(id, build, { by = "" } = {}) {
   return { state: build.state, created, failures };
 }
 
-/* §5 mockups for one product. Print artwork is a COPY downloaded from the
-   Omni Printer folder — the source file is never touched. */
+/* §5 mockups for one product, made from the department's own logos. Omni's
+   print-ready files are never fetched: the agent builds the store, and the
+   pick on the row (or the packet artwork by role) is the logo to show. */
 async function buildMockups(id, record, product, log) {
   const code = departmentCode(record);
   const colorTable = await tables().colorTable();
-  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable, productionFiles: productionFilesForValidation(record) });
+  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable });
   const warnings = [];
   const codes = [...new Set(expanded.product.styles.flatMap((s) => s.decorationCodes))];
   const artwork = {};
 
   /* Split on the decoration METHOD, not the letter. P## (a sewn patch) is
-     applied decoration like embroidery — treating it as print made the agent
-     look for a print file named CODE-P01 that does not exist and never load
-     the proof that does. */
+     applied decoration like embroidery, so an uploaded proof applies to it. */
   const parsedCodes = codes.map((c) => ({ code: c, parsed: rules.parseDecorationCode(c) }));
-  const printCodes = parsedCodes.filter((p) => p.parsed.method === rules.DECORATION_PRINT).map((p) => p.code);
   const appliedCodes = parsedCodes.filter((p) => p.parsed.method === rules.DECORATION_EMBROIDERY).map((p) => p.code);
-  if (printCodes.length) {
-    const { matched, missing } = rules.matchDecorationFiles(code, printCodes, productionFileNames(record));
-    for (const [decoration, fileName] of Object.entries(matched)) {
-      const file = (record.drive.productionFiles || []).find((f) => f.name === fileName);
-      if (!file?.id) continue;
-      try {
-        const copy = await drive().downloadFileBuffer(file.id);
-        artwork[decoration] = { buffer: copy.buffer, mimetype: copy.mimeType, name: copy.name };
-        log(`Downloaded a copy of ${copy.name} for ${decoration}.`);
-      } catch (error) {
-        warnings.push(`The print file for ${rules.decorationFileStem(code, decoration)} could not be downloaded (${errorText(error)}).`);
-      }
-    }
-    for (const decoration of missing) {
-      warnings.push(`No print-ready file named ${rules.decorationFileStem(code, decoration)} in the Omni Printer folder yet — Omni needs it before orders are printed.`);
-    }
-  }
 
   for (const decoration of appliedCodes) {
     const assetId = product.proofs?.[decoration];
@@ -1781,8 +1723,8 @@ async function buildMockups(id, record, product, log) {
   /* Any code still without artwork takes the department's own logo from the
      packet: the back logo for B, the chest logo (or the department's pick,
      or the scramble) for everything else. The product images are the point
-     of the agent; waiting for Omni's print-ready file or an embroidery proof
-     shipped Pine Hollow's tee and hat as blanks with no logo at all. */
+     of the agent; waiting for a print file or an embroidery proof shipped
+     Pine Hollow's tee and hat as blanks with no logo at all. */
   const packetArt = (Array.isArray(record.packet?.files) ? record.packet.files : []).filter((f) => f?.kind === "artwork" && f.assetId && !/proof/i.test(f.name || ""));
   const byRole = (roles) => {
     for (const role of roles) {
@@ -2006,7 +1948,7 @@ async function buildProduct(id, record, product, log, { onCreated } = {}) {
   const warnings = [];
   const code = departmentCode(record);
   const colorTable = await tables().colorTable();
-  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable, productionFiles: productionFilesForValidation(record) });
+  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable });
   if (!expanded.ok) throw badRequest(expanded.errors.join("; "));
 
   const source = clean(product.sourceProduct?.id)
@@ -2553,11 +2495,10 @@ async function checkProduct(record, product, colorTable) {
     issues.push(`${label} is not in "${record.collection.title}".`);
   }
 
-  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable, productionFiles: productionFilesForValidation(record) });
+  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable });
   /* §12 re-checks the rules against what is actually there NOW, so a row that
-     stopped validating since it was built — a print file renamed in the Omni
-     Printer folder, a colour code withdrawn — has to reopen the report rather
-     than pass because it validated once. */
+     stopped validating since it was built — a colour code withdrawn, say —
+     has to reopen the report rather than pass because it validated once. */
   for (const error of expanded.errors) issues.push(`${label}: ${error}`);
   for (const tag of expanded.product.tags) {
     if (!snapshot.tags.some((t) => clean(t) === tag)) issues.push(`${label} is missing the tag "${tag}".`);
@@ -3225,7 +3166,6 @@ module.exports = {
   runSetup,
   approveCode,
   ensureDriveFolders,
-  refreshProductionFiles,
   reviewPolicy,
   saveProducts,
   proposeColor,

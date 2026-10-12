@@ -367,13 +367,6 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
     }
   });
 
-  router.post("/onboardings/:id/production-files", gate, async (req, res) => {
-    try {
-      res.json({ onboarding: await agent.refreshProductionFiles(req.params.id, { by: byOf(req) }) });
-    } catch (error) {
-      fail(res, error);
-    }
-  });
 
   /* ---- build inputs ----------------------------------------------------- */
 

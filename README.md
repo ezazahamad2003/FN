@@ -188,8 +188,8 @@ platform. `#/onboarding/reference` can re-import it at any time.
 3. **Build inputs** — Dan fills in the product list (brand, style number,
    colours, sizes, decoration method and codes, Styles, fulfilment, Class B),
    plus blank garment photos per colour and embroidery proofs. Every row is
-   validated live: SKUs previewed, decoration codes matched against the file
-   names in the Omni Printer folder, unknown colours turned into proposals.
+   validated live: SKUs previewed, each decoration code matched to one of the
+   department's logos, unknown colours turned into proposals.
 4. **Build** — mockups (2000×2000, front and back, every colour and Style),
    the collection (title `1. <Department>`, 3584×2048 banner, the Non-Stock
    Item Notice as its description), the Locksmith lock, then every product as
@@ -314,10 +314,10 @@ GDRIVE_PARENT_FOLDER_ID=1NotimWFnxitY67QLt20is3IwifNXfgnp
 GDRIVE_OMNI_PRINTER_FOLDER_ID=1ALf84uwPJ2wjfWsKyq_9Pfce8ibO8NbW
 ```
 
-`GDRIVE_OMNI_PRINTER_FOLDER_ID` is `FN Simple Uniforms > Omni Printer`, where
-Dan places print-ready files as `(CODE) Department Name > CODE-F01.png`. The
-onboarding agent reads that folder to check every decoration code has its file
-and downloads **copies** to build mockups; it never writes there.
+`GDRIVE_OMNI_PRINTER_FOLDER_ID` is `FN Simple Uniforms > Omni Printer`. The
+onboarding agent creates each department's `(CODE) Department Name` folder there
+for production and never reads it: print-ready files are not the agent's
+business, and the mockups are made from the department's logos in the packet.
 
 > When changing this, remember to update it in **both** the local `.env` and the
 > Container App's environment variables in Azure.

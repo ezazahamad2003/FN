@@ -47,8 +47,8 @@ only for reading messy policies, drafting the rep email, and rendering mockups.
 - Drive: `Departments` folder = `GDRIVE_PARENT_FOLDER_ID`
   (`1NotimWFnxitY67QLt20is3IwifNXfgnp`), `Omni Printer` folder =
   `GDRIVE_OMNI_PRINTER_FOLDER_ID` (`1ALf84uwPJ2wjfWsKyq_9Pfce8ibO8NbW`).
-  Department folders are `Name (CODE)`, production folders `(CODE) Name`,
-  print files `CODE-F01.png`.
+  Department folders are `Name (CODE)`, production folders `(CODE) Name`.
+  The agent creates the production folder and never reads it.
 - `Department-ID-Agency-List` Google Doc id `1XVhmHvuhI-MdimOO4uSn2W303GMBW5p3CyDixhP3reo`
   (California MACS ids; exported as text/plain it is one table cell per line).
 - OpenAI images: `gpt-image-2.5-sunburst` (default; `-flare` is the faster, less faithful sibling);
@@ -214,7 +214,6 @@ Container `department-onboardings`, blob `<id>` where
 | POST | `/api/onboardings/:id/code` | `{ code, by }` approve/set → `{ onboarding }` (continues setup) |
 | POST | `/api/onboardings/:id/review` | re-run policy review → `{ onboarding }` |
 | PUT | `/api/onboardings/:id/products` | `{ products: [row] }` → validates, `{ onboarding }` |
-| POST | `/api/onboardings/:id/production-files` | refresh Omni Printer listing → `{ onboarding }` |
 | POST | `/api/onboardings/:id/colors/propose` | `{ color, code }` → reference proposal |
 | POST | `/api/onboardings/:id/build` | `{ force? }` → `202 { started, build }` |
 | POST | `/api/onboardings/:id/shared-settings/propose` | → `{ onboarding }` |
@@ -249,7 +248,7 @@ ONBOARDING_MOCKUP_VERIFY=on
 - Everything Dan approves is recorded in `approvals[]` with who/when.
 - Products are created `DRAFT`; price cleared (`0.00`); cost never set.
 - The build never deletes; re-runs skip products already created (by `products[].shopify.productId` + `productExists`).
-- The agent never edits files in the Omni Printer folder — it only downloads copies.
+- The agent never reads, downloads or asks for Omni print-ready files; mockups come from the department's logos in the packet.
 - Shared settings are never written without an approval record; if the API cannot write (scope missing), the item becomes a checklist and Dan confirms.
 - The report is `complete` only when: code approved, both folders exist, collection ok, lock verified or confirmed, menu/flow/helium confirmed, every product created with unique SKUs and images, and no missing information.
 - The final check reads the Mega Menu back and believes the live menu over the record: a stored `applied` passes only when the menu itself cannot be read.

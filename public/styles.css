@@ -2478,6 +2478,7 @@ input[aria-invalid="true"],
 .build-steps li span { color: var(--text-muted); overflow-wrap: anywhere; }
 .build-steps li[data-state="running"] { border-left-color: var(--info); background: var(--info-soft); }
 .build-steps li[data-state="complete"] { border-left-color: var(--success); }
+.build-steps li[data-state="skipped"] { border-left-color: var(--success-border); }
 .build-steps li[data-state="failed"] { border-left-color: var(--danger); background: var(--danger-soft); }
 
 .build-products {
