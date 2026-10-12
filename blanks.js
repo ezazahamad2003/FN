@@ -992,7 +992,14 @@ Only report what the search results show. If you cannot identify one exact style
     name: text(parsed.name, 120),
     type,
     // The store writes talls as LT, XLT, 2XLT ("Tall L" on Carhartt's site).
-    sizes: listOf(parsed.sizes, 20).map((size) => size.replace(/^tall\s+(\S+)$/i, (_, base) => `${base.toUpperCase()}T`)),
+    // One-size hats are OSFA in the store, whatever the maker calls it (OSFM, One Size).
+    sizes: [
+      ...new Set(
+        listOf(parsed.sizes, 20).map((size) =>
+          /^(osfm|osfa|os|one size( fits (all|most))?)$/i.test(size) ? "OSFA" : size.replace(/^tall\s+(\S+)$/i, (_, base) => `${base.toUpperCase()}T`)
+        )
+      )
+    ],
     colors: listOf(parsed.colors, 40),
     productPage: /^https?:\/\//i.test(text(parsed.productPage, 500)) ? text(parsed.productPage, 500) : "",
     note: text(parsed.note, 300)
