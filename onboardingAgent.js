@@ -1082,6 +1082,25 @@ async function saveProducts(id, products, { by = "" } = {}) {
       warnedStyleChanges.push(`${merged.styleNumber || "a row"} replaced ${existing.styleNumber} — its mockups and Shopify product were not carried over.`);
     }
 
+    /* Start the row from how the store already sells this blank: the style as
+       the store writes it ("Richardson 112" → R112), the house product name
+       with this department's code ("Standard Short Sleeve PIN"), and the
+       Vendor every other department uses for it. Only empty fields are filled
+       — what Dan typed always wins — and a Shopify hiccup never blocks a save. */
+    try {
+      if (clean(merged.styleNumber)) merged.styleNumber = await shop().resolveStyleNumber(merged.brand, merged.styleNumber);
+      const profile = clean(merged.styleNumber) ? await shop().storeProfile(merged.styleNumber) : null;
+      merged.storeProfile = profile
+        ? { name: profile.name, vendor: profile.vendor, colorCodes: profile.colorCodes.slice(0, 6), sampleSize: profile.sampleSize }
+        : null;
+      if (profile) {
+        if (!clean(merged.title) && profile.name) merged.title = `${profile.name} ${code}`;
+        if (!clean(merged.fulfillment) && rules.VENDORS.includes(profile.vendor)) merged.fulfillment = profile.vendor;
+      }
+    } catch {
+      // The suggestions are a convenience; validation below is what matters.
+    }
+
     const blank = await tables().blankByStyleNumber(merged.styleNumber).catch(() => null);
     if (blank) {
       if (!clean(merged.brand) && blank.brand) merged.brand = blank.brand;

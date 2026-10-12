@@ -190,6 +190,90 @@ async function findSourceProduct(styleNumber) {
 }
 
 /* ---------------------------------------------------------------------------
+   How the store already sells a blank. Every department product built on
+   NL3600 is called "Standard Short Sleeve <CODE>", sells as "One Week Item"
+   and comes in Midnight Navy (MN) — that is the house standard, and a new
+   department's row should start from it rather than from "Next Level
+   T-shirt". Read from the department products themselves (SKU
+   STYLE-SIZE-COLOR-CODE-…), never from FN's own merch.
+   ------------------------------------------------------------------------- */
+const STORE_PROFILE_QUERY = `
+query storeProfile($query: String!) {
+  products(first: 60, query: $query) {
+    nodes { title vendor tags variants(first: 1) { nodes { sku } } }
+  }
+}`;
+
+const FN_OWN_VENDOR = /fn simple/i;
+
+function mostCommon(values) {
+  const counts = new Map();
+  for (const v of values) if (v) counts.set(v, (counts.get(v) || 0) + 1);
+  let best = "";
+  let n = 0;
+  for (const [v, c] of counts) if (c > n) [best, n] = [v, c];
+  return { value: best, count: n };
+}
+
+async function storeProfile(styleNumber) {
+  const sn = rules.normalizeStyleNumber(styleNumber);
+  if (sn.error) return null;
+  const style = sn.styleNumber;
+  const data = await gql(STORE_PROFILE_QUERY, { query: `sku:${style}-*` });
+  const names = [];
+  const vendors = [];
+  const colorCodes = [];
+  for (const p of data?.products?.nodes || []) {
+    const sku = String(p?.variants?.nodes?.[0]?.sku || "").trim().toUpperCase();
+    const parts = sku.split("-");
+    if (parts[0] !== style || p.tags?.includes(MASTER_REFERENCE_TAG) || FN_OWN_VENDOR.test(p.vendor || "")) continue;
+    // The department's code is one of the SKU segments; the house name is the
+    // title with that code taken out ("Snap Back Hat  BNC" → "Snap Back Hat").
+    const segments = new Set(parts.slice(1));
+    const name = String(p.title || "")
+      .split(/\s+/)
+      .filter((word) => word && !(segments.has(word.toUpperCase()) && /^[A-Z]{2,4}$/.test(word)))
+      .join(" ")
+      .trim();
+    names.push(name);
+    vendors.push(String(p.vendor || "").trim());
+    // STYLE-SIZE-COLOR-CODE-…: tailored items (STYLE-SIZE-CODE) have no colour.
+    if (parts.length >= 4) colorCodes.push(parts[2]);
+  }
+  if (!names.length) return null;
+  const counts = new Map();
+  for (const c of colorCodes) counts.set(c, (counts.get(c) || 0) + 1);
+  return {
+    styleNumber: style,
+    name: mostCommon(names).value,
+    vendor: mostCommon(vendors).value,
+    colorCodes: [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([code]) => code),
+    sampleSize: names.length
+  };
+}
+
+/*
+ * The style number as the store writes it. Policies say "Richardson 112";
+ * the store's blank is R112, and its master is titled "Richardson 112
+ * Snapback (R112)". Unchanged when the style is already found as typed.
+ */
+async function resolveStyleNumber(brand, styleNumber) {
+  const sn = rules.normalizeStyleNumber(styleNumber);
+  if (sn.error) return styleNumber;
+  if (await findSourceProduct(sn.styleNumber).catch(() => null)) return sn.styleNumber;
+  const b = String(brand || "").trim();
+  if (!b) return sn.styleNumber;
+  const data = await gql(SOURCE_PRODUCTS_QUERY, { query: `tag:'${MASTER_REFERENCE_TAG}' AND title:*${sn.styleNumber}*` });
+  const want = new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b[^()]*\\b${sn.styleNumber}\\b`, "i");
+  for (const p of data?.products?.nodes || []) {
+    const title = String(p?.title || "");
+    const m = title.match(/\(([A-Z0-9][A-Z0-9.\-]*)\)\s*$/i);
+    if (m && want.test(title)) return m[1].toUpperCase();
+  }
+  return sn.styleNumber;
+}
+
+/* ---------------------------------------------------------------------------
    Read the product being duplicated: description parts, option names, and
    the per-variant defaults (tax, shipping, tracking, weight) the copy keeps.
    ------------------------------------------------------------------------- */
@@ -1296,6 +1380,8 @@ module.exports = {
   setTransports,
   // products
   findSourceProduct,
+  storeProfile,
+  resolveStyleNumber,
   readProductForDuplication,
   duplicateProduct,
   buildProductSetInput,

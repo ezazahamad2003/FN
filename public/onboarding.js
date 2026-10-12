@@ -1654,26 +1654,27 @@
           <label><span>Brand</span><input type="text" data-ob-field="brand" value="${esc(product?.brand || "")}" placeholder="Next Level"></label>
           <label><span>Style number</span><input type="text" data-ob-field="styleNumber" class="code-input" value="${esc(product?.styleNumber || "")}" placeholder="NL3600"></label>
           <label><span>Product type</span><input type="text" data-ob-field="type" value="${esc(product?.type || "")}" placeholder="T-shirt, hat, Class B, pants"></label>
-          <label><span>Product title <small class="muted-inline">(optional)</small></span><input type="text" data-ob-field="title" value="${esc(product?.title || "")}" placeholder="Leave blank to use the blank's title"></label>
+          <label><span>Product title <small class="muted-inline">(optional)</small></span><input type="text" data-ob-field="title" value="${esc(product?.title || "")}" placeholder="Filled on save from the store's name for this blank"></label>
           <label class="span-2"><span>Colours</span><input type="text" data-ob-field="colors" value="${esc(csv(product?.colors))}" placeholder="Navy, Midnight Navy"></label>
           <label class="span-2"><span>Sizes</span><input type="text" data-ob-field="sizes" value="${esc(csv(product?.sizes))}" placeholder="S, M, L, XL, 2XL, 3XL"></label>
           <label><span>Decoration method</span><select data-ob-field="decorationMethod">${optionsHtml(DECORATION_METHODS, product?.decorationMethod)}</select></label>
-          <label><span>Decoration codes</span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="F01/B01"></label>
+          <label><span>Decoration codes</span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="e.g. F01/B01"></label>
           <label><span>Fulfillment (Vendor field)</span><select data-ob-field="fulfillment">${optionsHtml([{ key: "", label: "—" }, ...FULFILLMENTS.map((v) => ({ key: v, label: v }))], product?.fulfillment)}</select></label>
           <label class="toggle-field"><input type="checkbox" data-ob-field="classB" ${product?.classB ? "checked" : ""}> <span>Class B uniform item</span></label>
           <label class="span-2"><span>Notes</span><input type="text" data-ob-field="notes" value="${esc(product?.notes || "")}"></label>
         </div>
+        ${storeProfileHtml(record, product)}
         <p class="hint">${esc(SIZE_HINT)}</p>
         <p class="hint">${esc(DECORATION_HINT)}</p>
+        ${logosHtml(record, product, saved)}
         <div class="ob-styles">
-          <p class="field-label">Styles <small>only when the same blank carries more than one logo setup</small></p>
+          <p class="field-label">Styles <small>rare — only when this same blank is sold with a second logo setup, as a "Style" option</small></p>
           <div class="ob-style-list" data-ob-style-list>
             ${styles.map((style, styleIndex) => styleRowHtml(style, styleIndex)).join("")}
           </div>
-          <button class="btn btn-ghost btn-sm" type="button" data-ob="add-style">+ Add style</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-ob="add-style">+ Add a second logo setup</button>
         </div>
         ${blankPhotoHtml(record, product, saved)}
-        ${proofHtml(record, product, saved)}
         ${validationHtml(validation)}
       </fieldset>`;
   }
@@ -1682,19 +1683,77 @@
     return `
       <div class="ob-style" data-ob-style>
         <span class="ob-style-name">Style ${index + 1}</span>
-        <input type="text" class="code-input" data-ob-field="styleCodes" value="${esc(style?.decorationCodes || "")}" placeholder="F02/B01" aria-label="Decoration codes for Style ${index + 1}">
+        <input type="text" class="code-input" data-ob-field="styleCodes" value="${esc(style?.decorationCodes || "")}" placeholder="e.g. F02/B01" aria-label="Decoration codes for Style ${index + 1}">
         <button class="variant-remove" type="button" data-ob="remove-style" aria-label="Remove Style ${index + 1}">&times;</button>
+      </div>`;
+  }
+
+  /* What the store already does with this blank, read on save: the house
+     name, the Vendor, and the colours other departments sell it in. */
+  function storeProfileHtml(record, product) {
+    const profile = product?.storeProfile;
+    if (!profile?.name) return "";
+    const code = record.department?.code?.value || "CODE";
+    return `<p class="hint ob-store-hint">In the store, ${esc(String(profile.sampleSize || "other"))} department products use this blank as
+      “${esc(profile.name)} ${esc(code)}”${profile.vendor ? `, ${esc(profile.vendor)}` : ""}${list(profile.colorCodes).length ? `, mostly in ${esc(list(profile.colorCodes).join(", "))}` : ""}.</p>`;
+  }
+
+  /* Where each logo on this garment comes from. Logos are not uploaded per
+     product: a print code (F01, B01, RS01…) is the print-ready file
+     CODE-F01 in the Omni Printer folder, and an embroidery code (E01) is the
+     proof uploaded here. Without this the row had no "logo" anywhere, and an
+     operator reasonably reached for "+ Add style" looking for one. */
+  const DECORATION_FACES = { F: "front", B: "back", RS: "right sleeve", LS: "left sleeve", E: "embroidered", P: "patch" };
+
+  function logosHtml(record, product, saved) {
+    const deptCode = record.department?.code?.value || "";
+    const codes = [
+      ...new Set(
+        [String(product?.decorationCodes || ""), ...list(product?.styles).map((style) => String(style?.decorationCodes || ""))]
+          .flatMap((group) => group.split("/"))
+          .map((part) => part.trim().toUpperCase())
+          .filter(Boolean)
+      )
+    ];
+    if (!codes.length) {
+      return `
+        <div class="ob-slots ob-logos">
+          <p class="field-label">Logos</p>
+          <p class="hint">Type the decoration codes above, then save: <b>F01</b> = front logo, <b>B01</b> = back logo, <b>RS01</b>/<b>LS01</b> = sleeves, <b>E01</b> = an embroidered logo. Each code is matched to its logo here.</p>
+        </div>`;
+    }
+    const stems = new Set(list(record.drive?.productionFiles).map((file) => String(file?.name || "").replace(/\.[^.]+$/, "").toUpperCase()));
+    const folder = record.drive?.productionFolderUrl || "";
+    const printRows = codes
+      .filter((c) => /^(F|B|RS|LS)\d{2}$/.test(c))
+      .map((c) => {
+        const stem = deptCode ? `${deptCode}-${c}` : `CODE-${c}`;
+        const found = stems.has(stem.toUpperCase());
+        const face = DECORATION_FACES[c.replace(/\d+$/, "")] || "";
+        return `<li data-tone="${found ? "ok" : "warn"}">
+          <b class="code-input">${esc(c)}</b> <span>${esc(face)} — print file <b>${esc(stem)}</b> in the Omni Printer folder:</span>
+          ${found ? `<span class="ob-logo-state">found</span>` : `<span class="ob-logo-state">missing</span>${folder ? ` <a href="${esc(folder)}" target="_blank" rel="noreferrer">Open the folder</a>` : ""}`}
+        </li>`;
+      })
+      .join("");
+    const missingPrint = codes.some((c) => /^(F|B|RS|LS)\d{2}$/.test(c) && !stems.has(`${deptCode}-${c}`.toUpperCase()));
+    return `
+      <div class="ob-slots ob-logos">
+        <p class="field-label">Logos <small>one per decoration code</small></p>
+        ${printRows ? `<ul class="ob-logo-list">${printRows}</ul>` : ""}
+        ${missingPrint ? `<p class="hint">Put the file in the Omni Printer folder under exactly that name, then press <b>Refresh listing</b> below.</p>` : ""}
+        ${proofHtml(record, product, saved)}
       </div>`;
   }
 
   function blankPhotoHtml(record, product, saved) {
     const colors = list(product?.colors);
     if (!colors.length) {
-      return `<div class="ob-slots"><p class="field-label">Blank garment photos</p><p class="hint">Add colours and save the row — a front and back photo per colour is what the mockups are built from.</p></div>`;
+      return `<div class="ob-slots"><p class="field-label">Blank garment photos <small>optional</small></p><p class="hint">Add colours and save the row to get a front and back slot per colour. Without photos the mockups use the supplier's picture of the blank.</p></div>`;
     }
     return `
       <div class="ob-slots">
-        <p class="field-label">Blank garment photos <small>front and back, per colour</small></p>
+        <p class="field-label">Blank garment photos <small>optional · front and back, per colour · without them the supplier's picture is used</small></p>
         <div class="ob-slot-grid">
           ${colors
             .map((color) =>
@@ -2506,10 +2565,14 @@
   function useSuggestions(button) {
     const suggestions = list(state.record?.policyReview?.suggestedProducts);
     if (!suggestions.length) return;
-    // Local only: the rows land in the editor for Dan to check against what the
-    // rep confirmed, and reach the server on the next "Save products".
     state.record.products = suggestions.map((row, index) => ({ ...row, id: row?.id || `p${index + 1}` }));
     renderDetail();
+    /* Saved straight away: the save is what fills each row from the store
+       (house name, the style as the store writes it, the Vendor) and what
+       makes the photo and proof slots appear. Unsaved, the rows looked
+       finished and had nowhere to put a logo. */
+    const save = page()?.querySelector("[data-ob='save-products']");
+    if (save) saveProducts(save);
     page()?.querySelector("[data-ob-panel='inputs']")?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
     if (button) button.disabled = false;
   }

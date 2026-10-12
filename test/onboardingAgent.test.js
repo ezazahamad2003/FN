@@ -669,6 +669,32 @@ async function readyForProducts() {
   return { deps, id: created.id };
 }
 
+test("saveProducts starts an empty row from how the store sells the blank (Pine Hollow run)", async () => {
+  const { deps, id } = await readyForProducts();
+  // The policy says "Richardson 112"; the store's blank is R112, sold as
+  // "Snap Back Hat <CODE>", One Week Item.
+  deps.shopify.resolveStyleNumber = async (brand, style) => (brand === "Richardson" && style === "112" ? "R112" : style);
+  deps.shopify.storeProfile = async (style) =>
+    style === "R112" ? { styleNumber: "R112", name: "Snap Back Hat", vendor: "One Week Item", colorCodes: ["NVY", "BLK"], sampleSize: 51 } : null;
+
+  const record = await agent.saveProducts(
+    id,
+    [
+      { id: "p1", brand: "Richardson", styleNumber: "112", type: "Hat", colors: ["Navy"], sizes: ["One size fits all"], decorationMethod: "embroidery", decorationCodes: "E01" },
+      // What Dan typed always wins over the store's defaults.
+      { id: "p2", brand: "Richardson", styleNumber: "112", type: "Hat", title: "Duty Cap", fulfillment: "Non Stock Item", colors: ["Navy"], sizes: ["OSFA"], decorationMethod: "embroidery", decorationCodes: "E02" }
+    ],
+    { by: "dan" }
+  );
+  const [hat, typed] = record.products;
+  assert.equal(hat.styleNumber, "R112");
+  assert.equal(hat.title, "Snap Back Hat VAC");
+  assert.equal(hat.fulfillment, "One Week Item");
+  assert.deepEqual(hat.storeProfile.colorCodes, ["NVY", "BLK"]);
+  assert.equal(typed.title, "Duty Cap");
+  assert.equal(typed.fulfillment, "Non Stock Item");
+});
+
 test("saveProducts validates every row, previews the SKUs and proposes an unknown colour", async () => {
   const { id } = await readyForProducts();
 

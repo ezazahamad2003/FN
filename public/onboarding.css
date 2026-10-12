@@ -1341,3 +1341,37 @@
   align-items: center;
   flex-wrap: wrap;
 }
+
+/* =============================================================================
+   Product row — where each logo comes from, and the store's own naming
+   ========================================================================== */
+.ob-logo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ob-logo-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ob-logo-list li[data-tone="ok"] { border-left-color: var(--success); }
+.ob-logo-list li[data-tone="warn"] { border-left-color: var(--warn-border); }
+.ob-logo-list li[data-tone="ok"] .ob-logo-state { color: var(--success); font-weight: 700; }
+.ob-logo-list li[data-tone="warn"] .ob-logo-state { color: var(--warn); font-weight: 700; }
+
+.ob-store-hint {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--info-soft, var(--surface-2));
+}
