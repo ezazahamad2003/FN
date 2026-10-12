@@ -74,13 +74,13 @@
       key: "review",
       label: "Policy review",
       title: "Check the policy review and the rep email",
-      what: "What the policy confirmed, what is missing, and a draft email asking the rep for the rest. The agent never sends it. Before the build, put the print-ready files in the Omni Printer folder named CODE-F01, CODE-B01 and so on."
+      what: "What the policy confirmed, what is missing, and a draft email asking the rep for the rest. The agent never sends it."
     },
     {
       key: "products",
       label: "Products",
       title: "List the products",
-      what: "One row per garment. Save once to get the blank-photo and proof slots for each colour, add the photos, then save again. Every row has to validate before the build can run."
+      what: "One row per garment, filled from the policy and from how the store already sells each blank. The logos come from what you uploaded in step 1; blank photos and embroidery proofs are optional. Every row has to validate before the build can run."
     },
     {
       key: "build",
@@ -1729,24 +1729,41 @@
     }
     const stems = new Set(list(record.drive?.productionFiles).map((file) => String(file?.name || "").replace(/\.[^.]+$/, "").toUpperCase()));
     const folder = record.drive?.productionFolderUrl || "";
-    const printRows = codes
-      .filter((c) => /^(F|B|RS|LS)\d{2}$/.test(c))
+    /* Which logo the mockups use for each code — the same choice the build
+       makes: Omni's print file if it is there, the embroidery proof if one was
+       uploaded, otherwise the department's own logo from the packet (the back
+       logo for B, the chest logo, pick or scramble for everything else). */
+    const art = list(record.packet?.files).filter((f) => f?.kind === "artwork" && !/proof/i.test(f?.name || ""));
+    const byRole = (roles) => roles.map((role) => art.find((f) => (f?.role || "") === role)).find(Boolean) || null;
+    const logoFor = (c) =>
+      /^B\d{2}$/.test(c) ? byRole(["back", "scramble"]) : byRole(["chest", "pick", "scramble", ""]) || art.find((f) => (f?.role || "") !== "back") || null;
+    const rows = codes
       .map((c) => {
+        const print = /^(F|B|RS|LS)\d{2}$/.test(c);
         const stem = deptCode ? `${deptCode}-${c}` : `CODE-${c}`;
-        const found = stems.has(stem.toUpperCase());
+        const printed = print && stems.has(stem.toUpperCase());
+        const proofed = !print && product?.proofs?.[c];
+        const logo = logoFor(c);
         const face = DECORATION_FACES[c.replace(/\d+$/, "")] || "";
-        return `<li data-tone="${found ? "ok" : "warn"}">
-          <b class="code-input">${esc(c)}</b> <span>${esc(face)} — print file <b>${esc(stem)}</b> in the Omni Printer folder:</span>
-          ${found ? `<span class="ob-logo-state">found</span>` : `<span class="ob-logo-state">missing</span>${folder ? ` <a href="${esc(folder)}" target="_blank" rel="noreferrer">Open the folder</a>` : ""}`}
+        const source = printed
+          ? `Omni's print file <b>${esc(stem)}</b>`
+          : proofed
+            ? "the embroidery proof below"
+            : logo
+              ? `your uploaded logo <b>${esc(logo.name || "")}</b>`
+              : "";
+        return `<li data-tone="${source ? "ok" : "warn"}">
+          <b class="code-input">${esc(c)}</b> <span>${esc(face)} — ${source ? `mockups use ${source}` : "no logo yet: upload the department's logo in step 1 (Packet)"}</span>
+          ${print && !printed
+            ? `<small class="ob-logo-later">Omni's print-ready file ${esc(stem)} goes in the ${folder ? `<a href="${esc(folder)}" target="_blank" rel="noreferrer">Omni Printer folder</a>` : "Omni Printer folder"} before orders are printed — it does not hold up the build.</small>`
+            : ""}
         </li>`;
       })
       .join("");
-    const missingPrint = codes.some((c) => /^(F|B|RS|LS)\d{2}$/.test(c) && !stems.has(`${deptCode}-${c}`.toUpperCase()));
     return `
       <div class="ob-slots ob-logos">
         <p class="field-label">Logos <small>one per decoration code</small></p>
-        ${printRows ? `<ul class="ob-logo-list">${printRows}</ul>` : ""}
-        ${missingPrint ? `<p class="hint">Put the file in the Omni Printer folder under exactly that name, then press <b>Refresh listing</b> below.</p>` : ""}
+        ${rows ? `<ul class="ob-logo-list">${rows}</ul>` : ""}
         ${proofHtml(record, product, saved)}
       </div>`;
   }
@@ -1797,7 +1814,7 @@
     if (!all.length) return "";
     return `
       <div class="ob-slots">
-        <p class="field-label">Embroidery proofs <small>the Printed Image art proof per E code</small></p>
+        <p class="field-label">Embroidery proofs <small>optional · the Printed Image art proof per E code · without one the uploaded logo is used</small></p>
         <div class="ob-slot-grid">
           ${all
             .map((code) =>
@@ -1891,7 +1908,7 @@
     return `
       <div class="ob-prodfiles" data-tone="${missing ? "warn" : rows.length ? "ok" : "muted"}">
         <div class="ob-prodfiles-head">
-          <p class="field-label">Production files <small>${files.length} in the Omni Printer folder${record.drive?.productionFilesReadAt ? ` · read ${esc(when(record.drive.productionFilesReadAt))}` : ""}</small></p>
+          <p class="field-label">Omni's print-ready files <small>for printing orders · not needed for the build · ${files.length} in the Omni Printer folder${record.drive?.productionFilesReadAt ? ` · read ${esc(when(record.drive.productionFilesReadAt))}` : ""}</small></p>
           <button class="btn btn-ghost btn-sm" type="button" data-ob="refresh-production">Refresh listing</button>
         </div>
         ${rows.length
@@ -1899,7 +1916,7 @@
               ${rows
                 .map(
                   (row) =>
-                    `<span class="m-chip" data-known="${row.matched ? "true" : "false"}"><b>${esc(row.part)}</b> ${esc(row.stem || "code not approved yet")}${row.matched || !row.stem ? "" : " missing"}</span>`
+                    `<span class="m-chip" data-known="${row.matched ? "true" : "false"}"><b>${esc(row.part)}</b> ${esc(row.stem || "code not approved yet")}${row.matched || !row.stem ? "" : " — not there yet"}</span>`
                 )
                 .join("")}
             </div>`
@@ -1911,7 +1928,7 @@
                 (file) => `<li><a href="https://drive.google.com/file/d/${encodeURIComponent(file?.id || "")}/view" target="_blank" rel="noreferrer">${ICON_FILE}<span>${esc(file?.name || "")}</span><small>${esc(day(file?.modifiedTime))}</small></a></li>`
               )
               .join("")}</ul>`
-          : `<p class="hint">Nothing listed yet. Dan places the print-ready files in the department's Omni Printer folder — the agent only ever reads copies.</p>`}
+          : `<p class="hint">Nothing here yet. Dan puts the print-ready files in the department's Omni Printer folder before orders are printed; until then the mockups use the uploaded logos. The agent only ever reads copies.</p>`}
       </div>`;
   }
 

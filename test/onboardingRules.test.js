@@ -201,7 +201,11 @@ test("expandProduct: errors for mixed methods, missing print files, unknown colo
     { brand: "X", styleNumber: "X1", colors: ["Navy"], sizes: ["S"], decorationCodes: "F01/B01", fulfillment: "One Week Item" },
     { departmentCode: "VAC", productionFiles: ["VAC-F01.png"] }
   );
-  assert.ok(missingFile.errors.some((e) => /VAC-B01/.test(e)));
+  // A missing print-ready file is a note for Omni, not a blocker: the
+  // mockups are made from the department's uploaded logo.
+  assert.equal(missingFile.ok, true);
+  assert.ok(!missingFile.errors.some((e) => /VAC-B01/.test(e)));
+  assert.ok(missingFile.warnings.some((w) => /Omni needs the print-ready file VAC-B01/.test(w)));
 
   const unknownColor = rules.expandProduct(
     { brand: "X", styleNumber: "X1", colors: ["University Red"], sizes: ["S"], decorationCodes: "F01", fulfillment: "One Week Item" },

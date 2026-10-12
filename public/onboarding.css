@@ -1375,3 +1375,5 @@
   border-radius: var(--radius-sm);
   background: var(--info-soft, var(--surface-2));
 }
+
+.ob-logo-list .ob-logo-later { flex-basis: 100%; color: var(--text-subtle); }

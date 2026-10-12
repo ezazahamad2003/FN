@@ -1574,3 +1574,22 @@ test("deleteStore finishes a delete whose collection is already gone", async () 
   assert.deepEqual(calls.trashed, ["dept-folder", "print-folder"], "the folders still go");
   await assert.rejects(() => store.getOnboarding(id), "the record goes once everything else did");
 });
+
+test("with no print-ready files the mockups use the department's own logos, and the build completes", async () => {
+  const seen = [];
+  const base = fakeMockups();
+  const mockups = {
+    ...base,
+    async renderProductMockups(args) {
+      seen.push(Object.fromEntries(Object.entries(args.artwork || {}).map(([code, art]) => [code, art.name])));
+      return base.renderProductMockups(args);
+    }
+  };
+  const { record } = await builtOnboarding({ productionFiles: [], mockups });
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  // TEE_ROW is F01/B01 and F02/B01; the only packet artwork is the scramble logo.
+  assert.deepEqual(seen[0], { F01: "VFD-scramble.png", F02: "VFD-scramble.png", B01: "VFD-scramble.png" });
+  const tee = record.products[0];
+  assert.equal(tee.validation.ok, true);
+  assert.match(tee.validation.warnings.join(" "), /Omni needs the print-ready files VAC-F01, VAC-F02, VAC-B01|Omni needs the print-ready files/);
+});

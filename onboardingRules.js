@@ -709,7 +709,16 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED,
   }
   if (productionFiles && hasDecoration && method === DECORATION_PRINT) {
     const { missing } = matchDecorationFiles(code, [...allCodes], productionFiles);
-    if (missing.length) errors.push(`No print-ready file in the Omni Printer folder for: ${missing.map((c) => decorationFileStem(code, c)).join(", ")}.`);
+    /* A note for production, not a blocker. The mockups and the Shopify
+       product are made from the department's own logos (the packet artwork);
+       the print-ready file is what Omni prints from, and Dan places it when
+       he has it. Blocking the build on it stopped Pine Hollow at "List the
+       products" with an error nobody could explain. */
+    if (missing.length) {
+      warnings.push(
+        `Omni needs the print-ready file${missing.length === 1 ? "" : "s"} ${missing.map((c) => decorationFileStem(code, c)).join(", ")} in the Omni Printer folder before orders are printed. The mockups use the department's uploaded logo until then.`
+      );
+    }
   }
 
   const options = [

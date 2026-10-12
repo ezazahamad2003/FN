@@ -1561,18 +1561,45 @@ async function buildMockups(id, record, product, log) {
       }
     }
     for (const decoration of missing) {
-      warnings.push(`No print-ready file named ${rules.decorationFileStem(code, decoration)} in the Omni Printer folder.`);
+      warnings.push(`No print-ready file named ${rules.decorationFileStem(code, decoration)} in the Omni Printer folder yet — Omni needs it before orders are printed.`);
     }
   }
 
   for (const decoration of appliedCodes) {
     const assetId = product.proofs?.[decoration];
-    if (!assetId) {
-      warnings.push(`No ${decoration.startsWith("P") ? "patch artwork" : "embroidery proof"} uploaded for ${decoration}.`);
-      continue;
-    }
+    if (!assetId) continue;
     const asset = await store().getAsset(id, assetId);
     if (asset) artwork[decoration] = { buffer: asset.buffer, mimetype: asset.contentType, name: asset.name };
+  }
+
+  /* Any code still without artwork takes the department's own logo from the
+     packet: the back logo for B, the chest logo (or the department's pick,
+     or the scramble) for everything else. The product images are the point
+     of the agent; waiting for Omni's print-ready file or an embroidery proof
+     shipped Pine Hollow's tee and hat as blanks with no logo at all. */
+  const packetArt = (Array.isArray(record.packet?.files) ? record.packet.files : []).filter((f) => f?.kind === "artwork" && f.assetId && !/proof/i.test(f.name || ""));
+  const byRole = (roles) => {
+    for (const role of roles) {
+      const hit = packetArt.find((f) => (f.role || "") === role);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  for (const decoration of codes) {
+    if (artwork[decoration]) continue;
+    const prefix = rules.parseDecorationCode(decoration).prefix;
+    const file =
+      prefix === "B"
+        ? byRole(["back", "scramble"])
+        : byRole(["chest", "pick", "scramble", ""]) || packetArt.find((f) => (f.role || "") !== "back") || null;
+    if (!file) {
+      warnings.push(`No logo for ${decoration}: upload the department's ${prefix === "B" ? "back" : "chest"} logo in the packet${prefix === "E" ? " or the embroidery proof on the row" : ""}.`);
+      continue;
+    }
+    const asset = await store().getAsset(id, file.assetId);
+    if (!asset) continue;
+    artwork[decoration] = { buffer: asset.buffer, mimetype: asset.contentType, name: asset.name || file.name };
+    log(`${decoration}: using the department's ${file.role || "uploaded"} logo (${file.name}) from the packet.`);
   }
 
   const blankPhotos = {};
