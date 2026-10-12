@@ -313,6 +313,38 @@ async function masterGarments({ maxAgeMs = 10 * 60 * 1000 } = {}) {
 }
 
 /*
+ * A master draft for a garment the store has never sold. Every department
+ * product is duplicated from a master (§9.1), so a new style used to fail at
+ * the build ("No product to duplicate for style …") until someone made one
+ * by hand. This makes the same kind of master the store already has: Draft,
+ * tagged Master Reference + Needs Review, titled "<Brand> <Name> (<STYLE>)"
+ * so the build finds it, one variant per size, price left at 0 for Dan.
+ */
+async function createMasterDraft({ brand = "", styleNumber = "", name = "", type = "", sizes = [] } = {}, { onLog } = {}) {
+  const log = logger(onLog);
+  const sn = rules.normalizeStyleNumber(styleNumber);
+  if (sn.error) throw new Error(sn.error);
+  const existing = await findSourceProduct(sn.styleNumber);
+  if (existing) return { created: false, id: existing.id, title: existing.title, url: existing.url || "" };
+  const cleanName = String(name || type || "Garment").trim();
+  const cleanBrand = String(brand || "").trim();
+  const title = `${cleanBrand && !cleanName.toLowerCase().startsWith(cleanBrand.toLowerCase()) ? `${cleanBrand} ` : ""}${cleanName} (${sn.styleNumber})`;
+  const result = await shopify.createProductWithVariants({
+    title,
+    bodyHtml: `<p>${cleanBrand} ${cleanName} (${sn.styleNumber}). Master draft created by the Onboarding Agent — review the description, cost and images.</p>`,
+    price: "0.00",
+    productType: String(type || "").trim(),
+    vendor: cleanBrand,
+    tags: [MASTER_REFERENCE_TAG, "Needs Review", "Agent Created"],
+    sizes: (Array.isArray(sizes) ? sizes : []).map((s) => String(s).trim()).filter(Boolean),
+    status: "DRAFT"
+  });
+  garmentCache = { at: 0, list: null };
+  log(`Created the master draft "${title}".`);
+  return { created: true, id: result.productGid, title, url: shopify.adminProductUrl ? shopify.adminProductUrl(result.productId) : "" };
+}
+
+/*
  * The style number as the store writes it. Policies say "Richardson 112";
  * the store's blank is R112, and its master is titled "Richardson 112
  * Snapback (R112)". Unchanged when the style is already found as typed.
@@ -1501,6 +1533,7 @@ module.exports = {
   setTransports,
   // products
   findSourceProduct,
+  createMasterDraft,
   masterGarments,
   stagedFileUrl,
   storeProfile,

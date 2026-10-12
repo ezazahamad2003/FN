@@ -1144,6 +1144,24 @@ async function saveProducts(id, products, { by = "" } = {}) {
       skuPreview: expanded.variants.map((v) => v.sku).filter(Boolean)
     };
     if (specWarning) merged.validation.warnings = [...merged.validation.warnings, specWarning];
+    /* The build duplicates the style's master. A style the store has never
+       sold has none, and the build failed on it ("No product to duplicate").
+       Say so on the row, where "Create the master" fixes it in one click. A
+       Shopify error here is not a verdict, so only a clean "not found" counts. */
+    merged.masterMissing = false;
+    if (clean(merged.styleNumber) && !clean(merged.sourceProduct?.id)) {
+      const source = await shop()
+        .findSourceProduct(merged.styleNumber)
+        .catch(() => undefined);
+      if (source === null) {
+        merged.masterMissing = true;
+        merged.validation.ok = false;
+        merged.validation.errors = [
+          ...merged.validation.errors,
+          `The store has no master product for ${merged.styleNumber} yet, so it cannot be built. Press "Create the master" on this row.`
+        ];
+      }
+    }
     if (!clean(merged.title)) merged.title = expanded.product.title;
     if (!clean(merged.decorationMethod) && expanded.product.decorationMethod) merged.decorationMethod = expanded.product.decorationMethod;
 

@@ -135,6 +135,43 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
   });
 
   // Before "/onboardings/:id" — otherwise "capabilities" reads as a record id.
+  /* "Look up any garment": what the operator typed → brand, style, type,
+     sizes and colours from the web, plus whether the store already has a
+     master for it (the build duplicates the master). */
+  router.post("/onboardings/garments/lookup", gate, async (req, res) => {
+    try {
+      const shop = require("./shopifyOnboarding");
+      const garment = await require("./blanks").lookupGarment(req.body?.query);
+      let master = null;
+      if (garment.styleNumber) {
+        const style = await shop.resolveStyleNumber(garment.brand, garment.styleNumber).catch(() => garment.styleNumber);
+        garment.styleNumber = style;
+        const found = await shop.findSourceProduct(style).catch(() => null);
+        master = found ? { exists: true, title: found.title || "", url: found.url || "" } : { exists: false };
+      }
+      res.json({ garment, master });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  // A Draft master for a garment the store has never sold, so the build can duplicate it.
+  router.post("/onboardings/garments/master", gate, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const master = await require("./shopifyOnboarding").createMasterDraft({
+        brand: clean(body.brand),
+        styleNumber: clean(body.styleNumber),
+        name: clean(body.name),
+        type: clean(body.type),
+        sizes: Array.isArray(body.sizes) ? body.sizes.map(clean).filter(Boolean).slice(0, 30) : []
+      });
+      res.json({ master });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   // The garments FN sells (its Master Reference products), for "pick a garment".
   router.get("/onboardings/garments", gate, async (req, res) => {
     try {

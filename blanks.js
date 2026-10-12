@@ -929,6 +929,77 @@ async function findSupplierBlank(product, { onLog } = {}) {
 }
 
 /*
+ * "Look up any garment": whatever the operator types — "Independent SS4500",
+ * "carhartt k87 pocket tee", "5.11 72318" — becomes the facts a product row
+ * needs (brand, the manufacturer's style code, a plain type, sizes, colours)
+ * from a web search of the manufacturer or a wholesale distributor. Facts
+ * only, never a guess presented as found: an unconfirmed answer says so.
+ */
+const GARMENT_TYPES = [
+  "T-shirt",
+  "Long Sleeve Shirt",
+  "Tank Top",
+  "Hoodie",
+  "Sweatshirt",
+  "Quarter Zip",
+  "Polo",
+  "Job Shirt",
+  "Class B Shirt",
+  "Jacket",
+  "Vest",
+  "Pants",
+  "Shorts",
+  "Hat",
+  "Beanie",
+  "Bag",
+  "Other"
+];
+
+async function lookupGarment(query) {
+  const q = String(query || "").trim().slice(0, 200);
+  if (!q) throw new Error("Type a brand and style, for example Independent SS4500.");
+  const openai = client();
+  const response = await openai.responses.create({
+    model: SEARCH_MODEL,
+    tools: [{ type: "web_search" }],
+    input: `A fire-department uniform store needs to add this blank garment: "${q}".
+
+Search the web for it on the manufacturer's own site or a wholesale distributor (SanMar, S&S Activewear, alphabroder, the brand's site) and identify the exact style.
+
+Return ONLY a JSON object, no other text:
+{
+  "found": true|false,
+  "brand": "the manufacturer, e.g. Independent Trading Co.",
+  "styleNumber": "the manufacturer's style code exactly as they write it, e.g. SS4500",
+  "name": "the short product name without the brand, e.g. Midweight Hooded Sweatshirt",
+  "type": one of ${JSON.stringify(GARMENT_TYPES)},
+  "sizes": ["every size it is sold in, smallest first, e.g. XS, S, M, L, XL, 2XL, 3XL; hats: OSFA or S/M, L/XL"],
+  "colors": ["the colour names the manufacturer sells it in, up to 40"],
+  "productPage": "the URL you read this from",
+  "note": "one short sentence if anything is uncertain"
+}
+
+Only report what the search results show. If you cannot identify one exact style, set "found": false and fill in what you can.`
+  });
+  const parsed = parseJsonLoose(response.output_text) || {};
+  const text = (v, n = 120) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().slice(0, n);
+  const listOf = (v, n) => (Array.isArray(v) ? v : []).map((x) => text(x, 40)).filter(Boolean).slice(0, n);
+  const type = GARMENT_TYPES.find((t) => t.toLowerCase() === text(parsed.type).toLowerCase()) || "Other";
+  return {
+    found: parsed.found === true && Boolean(text(parsed.styleNumber)),
+    brand: text(parsed.brand, 80),
+    styleNumber: text(parsed.styleNumber, 40).toUpperCase().replace(/\s+/g, ""),
+    name: text(parsed.name, 120),
+    type,
+    // The store writes talls as LT, XLT, 2XLT ("Tall L" on Carhartt's site).
+    sizes: listOf(parsed.sizes, 20).map((size) => size.replace(/^tall\s+(\S+)$/i, (_, base) => `${base.toUpperCase()}T`)),
+    colors: listOf(parsed.colors, 40),
+    productPage: /^https?:\/\//i.test(text(parsed.productPage, 500)) ? text(parsed.productPage, 500) : "",
+    note: text(parsed.note, 300)
+  };
+}
+
+/*
  * A real back photo for a garment whose front came from a supplier. The back
  * used to be the image model turning the front photo around, always — a
  * plausible garment, never a photograph. Order:
@@ -1011,6 +1082,8 @@ async function findSupplierBack(product, { frontUrl = "", onLog } = {}) {
 module.exports = {
   blankCacheKey,
   findSupplierBack,
+  lookupGarment,
+  GARMENT_TYPES,
   backUrlCandidates,
   familyKeys,
   typeFamily,

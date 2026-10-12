@@ -1639,3 +1639,17 @@ test("a logo picked for a placement is the one the mockups use", async () => {
   assert.equal(last.B01, "station-back.png", JSON.stringify(last));
   assert.equal(last.F01, "VFD-scramble.png", "an unpicked placement keeps the default logo");
 });
+
+test("a style the store has never sold is flagged on the row with Create the master", async () => {
+  const { deps, id } = await readyForProducts();
+  deps.shopify.findSourceProduct = async (style) => (style === "SS4500" ? null : { id: "gid://shopify/Product/1", title: "x", kind: "master" });
+  const record = await agent.saveProducts(
+    id,
+    [{ id: "p1", brand: "Independent", styleNumber: "SS4500", type: "Hoodie", colors: ["Navy"], sizes: ["S", "M"], decorationMethod: "print", decorationCodes: "F01", fulfillment: "One Week Item" }],
+    { by: "dan" }
+  );
+  const row = record.products[0];
+  assert.equal(row.masterMissing, true);
+  assert.equal(row.validation.ok, false);
+  assert.match(row.validation.errors.join(" "), /no master product for SS4500.*Create the master/);
+});

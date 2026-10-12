@@ -1684,12 +1684,12 @@
         </div>
         <div class="category-edit-grid">
           ${garmentPickerHtml(product)}
-          <label><span>Brand</span><input type="text" data-ob-field="brand" value="${esc(product?.brand || "")}" placeholder="Next Level"></label>
-          <label><span>Style number</span><input type="text" data-ob-field="styleNumber" class="code-input" value="${esc(product?.styleNumber || "")}" placeholder="NL3600"></label>
-          <label><span>Product type</span><input type="text" data-ob-field="type" value="${esc(product?.type || "")}" placeholder="T-shirt, hat, Class B, pants"></label>
+          <label><span>Brand</span><input type="text" data-ob-field="brand" value="${esc(product?.brand || "")}" placeholder="e.g. Next Level"></label>
+          <label><span>Style number</span><input type="text" data-ob-field="styleNumber" class="code-input" value="${esc(product?.styleNumber || "")}" placeholder="e.g. NL3600"></label>
+          <label><span>Product type</span><input type="text" data-ob-field="type" value="${esc(product?.type || "")}" placeholder="e.g. T-shirt, Hat, Hoodie"></label>
           <label><span>Product title <small class="muted-inline">(optional)</small></span><input type="text" data-ob-field="title" value="${esc(product?.title || "")}" placeholder="Filled on save from the store's name for this blank"></label>
-          <label class="span-2"><span>Colours</span><input type="text" data-ob-field="colors" value="${esc(csv(product?.colors))}" placeholder="Navy, Midnight Navy"></label>
-          <label class="span-2"><span>Sizes</span><input type="text" data-ob-field="sizes" value="${esc(csv(product?.sizes))}" placeholder="S, M, L, XL, 2XL, 3XL"></label>
+          <label class="span-2"><span>Colours</span><input type="text" data-ob-field="colors" value="${esc(csv(product?.colors))}" placeholder="e.g. Navy"></label>
+          <label class="span-2"><span>Sizes</span><input type="text" data-ob-field="sizes" value="${esc(csv(product?.sizes))}" placeholder="e.g. S, M, L, XL, 2XL"></label>
           <label><span>Decoration method</span><select data-ob-field="decorationMethod">${optionsHtml(DECORATION_METHODS, product?.decorationMethod)}</select></label>
           <label><span>Decoration codes <small class="muted-inline">(filled from the placements below)</small></span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="e.g. F01/B01"></label>
           <label><span>Fulfillment (Vendor field)</span><select data-ob-field="fulfillment">${optionsHtml([{ key: "", label: "—" }, ...FULFILLMENTS.map((v) => ({ key: v, label: v }))], product?.fulfillment)}</select></label>
@@ -1744,6 +1744,7 @@
       <label class="span-2 ob-garment-pick"><span>Garment <small class="muted-inline">the store's own blanks — fills brand, style, type and sizes</small></span>
         <select data-ob-garment>
           <option value="">${current && !known ? `${esc(current)} — not one of the store's masters` : "Pick a garment the store sells…"}</option>
+          <option value="__lookup">+ Look up another garment (any brand or style)…</option>
           ${groups
             .map(
               (group) => `<optgroup label="${esc(group)}">${garments
@@ -1753,7 +1754,32 @@
             )
             .join("")}
         </select>
-      </label>`;
+      </label>
+      ${lookupHtml(product)}`;
+  }
+
+  /* Any garment, not only the store's masters: type what the department
+     asked for, the agent looks it up on the manufacturer's or a
+     distributor's site and fills the row. Colours come back as chips to
+     click. A style the store has never sold gets "Create the master". */
+  function lookupHtml(product) {
+    const style = String(product?.styleNumber || "").toUpperCase();
+    const open = Boolean(style) && !list(state.garments).some((g) => g.styleNumber === style);
+    return `
+      <div class="ob-lookup" data-ob-lookup ${open || product?.masterMissing ? "" : "hidden"}>
+        <div class="ob-lookup-bar">
+          <input type="text" data-ob-lookup-query placeholder="Type any brand and style — e.g. Independent SS4500, Carhartt K87 pocket tee" aria-label="Look up a garment">
+          <button class="btn btn-secondary btn-sm" type="button" data-ob="lookup-garment">Look up</button>
+        </div>
+        <div data-ob-lookup-result>${product?.masterMissing ? masterMissingHtml(product.styleNumber) : ""}</div>
+      </div>`;
+  }
+
+  function masterMissingHtml(styleNumber) {
+    return `<div class="ob-master-missing">
+        <span>The store has no master product for <b>${esc(styleNumber || "this style")}</b> yet — the build copies every product from one.</span>
+        <button class="btn btn-secondary btn-sm" type="button" data-ob="create-master">Create the master</button>
+      </div>`;
   }
 
   function packetLogos(record) {
@@ -1854,6 +1880,14 @@
 
   // Picking a garment fills the row from the store's own master.
   function applyGarment(row, styleNumber) {
+    if (styleNumber === "__lookup") {
+      const box = row.querySelector("[data-ob-lookup]");
+      if (box) {
+        box.hidden = false;
+        box.querySelector("[data-ob-lookup-query]")?.focus();
+      }
+      return;
+    }
     const garment = list(state.garments).find((g) => g.styleNumber === styleNumber);
     if (!garment) return;
     const set = (field, value, onlyIfEmpty = false) => {
@@ -2585,6 +2619,20 @@
     if (action === "save-products") return saveProducts(trigger);
     if (action === "build") return startBuild(trigger);
     if (action === "redo-images") return redoImages(trigger);
+    if (action === "lookup-garment") return lookupGarment(trigger);
+    if (action === "create-master") return createMaster(trigger);
+    if (action === "add-color") {
+      const row = trigger.closest("[data-ob-product]");
+      const input = row?.querySelector("[data-ob-field='colors']");
+      if (!input) return;
+      const color = trigger.dataset.obColor;
+      const have = parseList(input.value);
+      const already = have.some((c) => c.toLowerCase() === color.toLowerCase());
+      const next = already ? have.filter((c) => c.toLowerCase() !== color.toLowerCase()) : [...have, color];
+      input.value = next.join(", ");
+      trigger.dataset.picked = already ? "false" : "true";
+      return;
+    }
     if (action === "delete") return deleteRecord(trigger);
     if (action === "remove-file") return removeFile(trigger);
     if (action === "use-suggestions") return useSuggestions(trigger);
@@ -2966,6 +3014,92 @@ They are rebuilt from the current logos and blank photos. The product's title, S
         state.record = fresh.onboarding || state.record;
         if (started?.build) state.record.build = { ...(state.record.build || {}), ...started.build, state: started.build.state || "running" };
         goToStep("build");
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  async function lookupGarment(button) {
+    const row = button.closest("[data-ob-product]");
+    const box = row?.querySelector("[data-ob-lookup]");
+    const query = box?.querySelector("[data-ob-lookup-query]")?.value.trim() || "";
+    const out = box?.querySelector("[data-ob-lookup-result]");
+    if (!row || !out) return;
+    if (!query) {
+      out.innerHTML = `<p class="hint" data-tone="warn">Type a brand and style first, e.g. Independent SS4500.</p>`;
+      return;
+    }
+    button.disabled = true;
+    const label = button.textContent;
+    button.textContent = "Looking up…";
+    out.innerHTML = `<p class="hint"><span class="spinner" aria-hidden="true"></span> Searching the manufacturer and distributors for “${esc(query)}” — about 5 seconds.</p>`;
+    try {
+      const { garment, master } = await api(`${API}/garments/lookup`, { method: "POST", body: JSON.stringify({ query }) });
+      const set = (field, value) => {
+        const input = row.querySelector(`[data-ob-field='${field}']`);
+        if (input && value) input.value = value;
+      };
+      set("brand", garment.brand);
+      set("styleNumber", garment.styleNumber);
+      set("type", garment.type !== "Other" ? garment.type : "");
+      if (list(garment.sizes).length) set("sizes", list(garment.sizes).join(", "));
+      const method = row.querySelector("[data-ob-field='decorationMethod']");
+      if (method && !method.value) method.value = /hat|beanie/i.test(garment.type) ? "embroidery" : "print";
+      if (![...row.querySelectorAll("[data-ob-place-on]")].some((b) => b.checked)) {
+        const front = row.querySelector("[data-ob-place='F'] [data-ob-place-on]");
+        if (front) front.checked = true;
+      }
+      syncPlacements(row);
+      row.dataset.obLookupName = garment.name || "";
+      const have = parseList(row.querySelector("[data-ob-field='colors']")?.value || "").map((c) => c.toLowerCase());
+      const chips = list(garment.colors)
+        .map((c) => `<button type="button" class="ob-color-chip" data-ob="add-color" data-ob-color="${esc(c)}" data-picked="${have.includes(c.toLowerCase()) ? "true" : "false"}">${esc(c)}</button>`)
+        .join("");
+      out.innerHTML = `
+        <div class="ob-lookup-found" data-tone="${garment.found ? "ok" : "warn"}">
+          <p><b>${esc([garment.brand, garment.name].filter(Boolean).join(" ") || query)}</b>${garment.styleNumber ? ` · <span class="code-input">${esc(garment.styleNumber)}</span>` : ""}${garment.type ? ` · ${esc(garment.type)}` : ""}${garment.productPage ? ` · <a href="${esc(garment.productPage)}" target="_blank" rel="noreferrer">product page</a>` : ""}</p>
+          ${garment.found ? "" : `<p class="hint" data-tone="warn">Not sure this is the exact style — check the brand and style number above.</p>`}
+          ${garment.note ? `<p class="hint">${esc(garment.note)}</p>` : ""}
+          ${chips ? `<p class="field-label">Colours it comes in <small>click to add to the row</small></p><div class="ob-color-chips">${chips}</div>` : ""}
+          ${master && !master.exists ? masterMissingHtml(garment.styleNumber) : master?.exists ? `<p class="hint">The store already has “${esc(master.title)}” to copy from.</p>` : ""}
+        </div>`;
+    } catch (error) {
+      out.innerHTML = `<p class="hint" data-tone="danger">Could not look that up: ${esc(error.message)}</p>`;
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
+  // One click: a Draft master in Shopify from what the row says, then re-save
+  // so the row validates against it.
+  function createMaster(button) {
+    const row = button.closest("[data-ob-product]");
+    if (!row) return;
+    const read = (field) => row.querySelector(`[data-ob-field='${field}']`)?.value.trim() || "";
+    const styleNumber = read("styleNumber");
+    if (!styleNumber) {
+      fail("Fill in the style number first.");
+      return;
+    }
+    const name = row.dataset.obLookupName || read("type") || "Garment";
+    if (!window.confirm(`Create a Draft master product "${read("brand")} ${name} (${styleNumber})" in Shopify?\n\nIt is tagged Master Reference and Needs Review, has one variant per size and a price of 0 for you to set. Department products are copied from it.`)) return;
+    return runAction(
+      button,
+      "Creating…",
+      async () => {
+        await api(`${API}/garments/master`, {
+          method: "POST",
+          body: JSON.stringify({ brand: read("brand"), styleNumber, name, type: read("type"), sizes: parseList(read("sizes")) })
+        });
+        api(`${API}/garments`)
+          .then((payload) => {
+            state.garments = list(payload?.garments);
+          })
+          .catch(() => {});
+        const save = page()?.querySelector("[data-ob='save-products']");
+        if (save) await saveProducts(save);
       },
       page(),
       "obDetailError"
