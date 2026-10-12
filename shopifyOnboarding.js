@@ -260,17 +260,29 @@ async function storeProfile(styleNumber) {
 async function resolveStyleNumber(brand, styleNumber) {
   const sn = rules.normalizeStyleNumber(styleNumber);
   if (sn.error) return styleNumber;
-  if (await findSourceProduct(sn.styleNumber).catch(() => null)) return sn.styleNumber;
-  const b = String(brand || "").trim();
-  if (!b) return sn.styleNumber;
-  const data = await gql(SOURCE_PRODUCTS_QUERY, { query: `tag:'${MASTER_REFERENCE_TAG}' AND title:*${sn.styleNumber}*` });
-  const want = new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b[^()]*\\b${sn.styleNumber}\\b`, "i");
-  for (const p of data?.products?.nodes || []) {
-    const title = String(p?.title || "");
-    const m = title.match(/\(([A-Z0-9][A-Z0-9.\-]*)\)\s*$/i);
-    if (m && want.test(title)) return m[1].toUpperCase();
+  /* The policy review can hand back words with the number ("112 snapback"),
+     which squashes to 112SNAPBACK and matches nothing. Try the whole thing,
+     then each word that carries a digit. */
+  const candidates = [sn.styleNumber];
+  for (const word of String(styleNumber || "").split(/\s+/)) {
+    const w = rules.normalizeStyleNumber(word);
+    if (!w.error && /\d/.test(w.styleNumber) && !candidates.includes(w.styleNumber)) candidates.push(w.styleNumber);
   }
-  return sn.styleNumber;
+  for (const style of candidates) {
+    if (await findSourceProduct(style).catch(() => null)) return style;
+  }
+  const b = String(brand || "").trim();
+  if (!b) return candidates[candidates.length - 1];
+  for (const style of candidates) {
+    const data = await gql(SOURCE_PRODUCTS_QUERY, { query: `tag:'${MASTER_REFERENCE_TAG}' AND title:*${style}*` });
+    const want = new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b[^()]*\\b${style}\\b`, "i");
+    for (const p of data?.products?.nodes || []) {
+      const title = String(p?.title || "");
+      const m = title.match(/\(([A-Z0-9][A-Z0-9.\-]*)\)\s*$/i);
+      if (m && want.test(title)) return m[1].toUpperCase();
+    }
+  }
+  return candidates[candidates.length - 1];
 }
 
 /* ---------------------------------------------------------------------------
