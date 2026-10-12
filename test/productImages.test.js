@@ -36,8 +36,8 @@ test("each placement asks for the size the store signed off on", async () => {
   assert.match(shorts, /pocket-sized crest about 2 inches wide/);
   assert.doesNotMatch(shorts, /coin/);
   assert.match(await promptFor("Left thigh", "Small", "Sweatpants"), /pocket-sized crest about 2 inches wide/);
-  // Back graphic: a little under a third of the torso (~24% under "half").
-  assert.match(await promptFor("Center back", "Large / Full Back"), /a little under a third as wide as the torso/);
+  // Back graphic: a third of the torso (~20% under "half").
+  assert.match(await promptFor("Center back", "Large / Full Back"), /about a third as wide as the torso/);
   // A custom size is the customer's own number, whatever the placement.
   assert.match(await promptFor("Front left chest", "Custom: 4.5"), /about 4\.5 inches wide/);
 });

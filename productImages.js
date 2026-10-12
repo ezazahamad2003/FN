@@ -36,11 +36,14 @@ const { editImage } = require("./azureOpenai");
 // store wants ("1.25 inches" overshot to ~28%).
 // Large: a fraction of the torso is what the model follows; an inch figure
 // ("8 inches") did not move it. Against "half" (back text ~72% of the torso),
-// "a third" came out ~22% smaller and "a quarter" ~28%; the store wants ~24%.
+// "a third" came out ~21% smaller (five renders), "a little under a third"
+// ~22% and "a quarter" ~28%. The store signed off on ~20% from the live
+// Ripon backs.
+// Expect ±5% render to render; one image is not a measurement.
 const TIER_PHRASE = {
   small: "very small — a little crest about 1.5 inches wide, no bigger than a coin",
   standard: "a medium size",
-  large: "a little under a third as wide as the torso, with wide plain fabric showing all around it"
+  large: "about a third as wide as the torso, with wide plain fabric showing all around it"
 };
 
 // Shorts keep the larger leg mark: the store judged the leg mark right at
