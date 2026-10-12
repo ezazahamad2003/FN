@@ -1521,15 +1521,26 @@
           <div class="status-line"><span>Production folder (Omni Printer)</span><b>${drive.productionFolderUrl ? `<a href="${esc(drive.productionFolderUrl)}" target="_blank" rel="noreferrer">Open</a>` : drive.productionFolderId ? "Created" : "Not created yet"}</b></div>
           <div class="status-line"><span>Product Images subfolder</span><b>${drive.productImagesFolderId ? "Created" : "Not created yet"}</b></div>
         </div>
-        ${reviewed ? policyReviewHtml(review) : stateBlock({ title: "The policy has not been reviewed yet", sub: "Run setup once the code is approved: the agent reads the policy, lists what is confirmed and what is missing, and drafts the rep email." })}
+        ${reviewed ? policyReviewHtml(review, record) : stateBlock({ title: "The policy has not been reviewed yet", sub: "Run setup once the code is approved: the agent reads the policy, lists what is confirmed and what is missing, and drafts the rep email." })}
       </section>`;
   }
 
-  function policyReviewHtml(review) {
+  function policyReviewHtml(review, record) {
     const confirmed = list(review.confirmed);
     const missing = list(review.missing);
     const questions = list(review.questions);
     const draft = review.emailDraft || {};
+    /* Who the email goes to. The draft greets the first contact, so that is
+       the recipient; when the first contact has no address, the first one
+       that does. Without this Dan had to go find the address before he could
+       send the draft. */
+    const contacts = list(record?.department?.contacts);
+    const to = contacts[0]?.email ? contacts[0] : contacts.find((c) => c?.email) || null;
+    /* Gmail's compose window, filled in. Dan still reads it and presses Send
+       himself — the agent never sends anything. */
+    const gmailUrl = to?.email
+      ? `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to.email)}&su=${encodeURIComponent(draft.subject || "")}&body=${encodeURIComponent(draft.body || "")}`
+      : "";
     return `
       <div class="ob-review">
         <div class="gap-report" data-tone="ok">
@@ -1557,15 +1568,20 @@
               <div class="email-head">
                 <div>
                   <p class="eyebrow">Draft email to the department rep</p>
+                  <p class="email-subject"><b>To:</b> ${to?.email
+                    ? `${to.name ? `${esc(to.name)} ` : ""}&lt;<a href="mailto:${esc(to.email)}">${esc(to.email)}</a>&gt;`
+                    : `<span data-tone="warn">no email on file for the department contact</span>`}</p>
                   <p class="email-subject"><b>Subject:</b> ${esc(draft.subject || "")}</p>
                 </div>
                 <div class="email-actions">
-                  <button class="btn btn-secondary btn-sm" type="button" data-ob="copy" data-ob-copy-target="obEmailBody">Copy</button>
+                  ${gmailUrl ? `<a class="btn btn-secondary btn-sm" href="${esc(gmailUrl)}" target="_blank" rel="noreferrer">Open in Gmail</a>` : ""}
+                  ${to?.email ? `<button class="btn btn-secondary btn-sm" type="button" data-ob="copy" data-ob-copy-text="${esc(to.email)}">Copy address</button>` : ""}
+                  <button class="btn btn-secondary btn-sm" type="button" data-ob="copy" data-ob-copy-target="obEmailBody">Copy text</button>
                   ${review.driveDocUrl ? `<a class="btn btn-secondary btn-sm" href="${esc(review.driveDocUrl)}" target="_blank" rel="noreferrer">Open in Drive</a>` : ""}
                 </div>
               </div>
               <textarea class="email-body" id="obEmailBody" rows="10" readonly aria-label="Draft email body">${esc(draft.body || "")}</textarea>
-              <p class="hint">Dan sends it. The agent never emails the department.</p>
+              <p class="hint">${gmailUrl ? "“Open in Gmail” fills in the address, subject and text — read it and press Send yourself. " : ""}The agent never emails the department.</p>
             </div>`
           : ""}
       </div>`;

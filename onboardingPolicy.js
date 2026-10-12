@@ -492,10 +492,17 @@ function gridGarments(knownProducts, suggestedProducts) {
  * per-garment question is followed by a fill-in list the rep can answer
  * inline.
  */
-function buildEmailDraft({ departmentName, repName, questions, intro, confirmed, grid }) {
+function buildEmailDraft({ departmentName, repName, repEmail = "", questions, intro, confirmed, grid }) {
   const department = cleanText(departmentName, 200) || "your department";
   const rep = cleanText(repName, 120);
-  const subject = `Uniform store details we still need — ${department}`;
+  // With nothing to ask the email is a confirmation; a subject saying
+  // "details we still need" would send the rep looking for questions.
+  const subject = questions.length
+    ? `Uniform store details we still need — ${department}`
+    : `Your uniform store: please confirm the details — ${department}`;
+  // The address rides on the draft so it can be sent without looking it up.
+  const email = cleanText(repEmail, 200);
+  const to = /^[^\s@]+@[^\s@]+$/.test(email) ? email : "";
   const lines = [rep ? `Hi ${rep},` : "Hello,", ""];
   if (questions.length) {
     lines.push(
@@ -535,7 +542,7 @@ function buildEmailDraft({ departmentName, repName, questions, intro, confirmed,
     lines.push("We will send you a link to review the store as soon as it is ready.");
   }
   lines.push("", "Thanks,", "Dan", "FN Simple Uniforms");
-  return { subject, body: lines.join("\n") };
+  return { subject, to, body: lines.join("\n") };
 }
 
 /*
@@ -633,6 +640,7 @@ function finalizeReview(raw, ctx) {
   const emailDraft = buildEmailDraft({
     departmentName: ctx.departmentName,
     repName: ctx.repName,
+    repEmail: ctx.repEmail,
     questions,
     intro: cleanIntro(parsed.emailIntro),
     confirmed,
@@ -662,6 +670,7 @@ async function reviewPolicy(input = {}, { onLog } = {}) {
   const ctx = {
     departmentName: input.departmentName || "",
     repName: input.repName || "",
+    repEmail: input.repEmail || "",
     policyText: String(input.policyText || ""),
     artwork: asArray(input.artwork),
     knownProducts: asArray(input.knownProducts),
@@ -720,7 +729,8 @@ function htmlDocument(title, bodyHtml) {
 
 function emailDraftBodyHtml(draft) {
   const subject = cleanText(draft?.subject, 300);
-  return [`<h1>${esc(subject)}</h1>`, paragraphsHtml(draft?.body)].filter(Boolean).join("\n");
+  const to = cleanText(draft?.to, 200);
+  return [`<h1>${esc(subject)}</h1>`, to ? `<p><strong>To:</strong> ${esc(to)}</p>` : "", paragraphsHtml(draft?.body)].filter(Boolean).join("\n");
 }
 
 // The rep email as a document Dan can copy from.

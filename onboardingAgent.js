@@ -953,6 +953,7 @@ async function reviewPolicy(id, { by = "" } = {}) {
   const review = await policy().reviewPolicy({
     departmentName: record.department.name,
     repName: record.department.contacts[0]?.name || "",
+    repEmail: record.department.contacts[0]?.email || "",
     policyText,
     artwork,
     knownProducts: record.products.length ? record.products : record.policyReview.suggestedProducts,

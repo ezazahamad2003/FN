@@ -205,12 +205,31 @@ test("reviewPolicy: a confirmed topic the model also lists as missing is not ask
   const review = await policy.reviewPolicy({
     departmentName: "Pine Hollow Fire Department",
     repName: "Rachel Okafor",
+    repEmail: "uniforms@pinehollowfire.test",
     policyText: "Station T-shirt: Next Level NL3600, Navy. Duty cap: Richardson 112, Navy.",
     knownProducts: []
   });
   assert.deepEqual(review.missing.map((m) => m.topic), ["Class B shirts: button and patch rules"]);
   assert.equal(review.questions.length, 1, "only the Class B question is left");
   assert.doesNotMatch(review.emailDraft.body, /fill in the list|Logo \(file name\)/);
+  // The recipient rides on the draft and on the Drive doc, so it can be sent as is.
+  assert.equal(review.emailDraft.to, "uniforms@pinehollowfire.test");
+  assert.match(policy.emailDraftHtml(review.emailDraft), /<p><strong>To:<\/strong> uniforms@pinehollowfire\.test<\/p>/);
+});
+
+test("buildEmailDraft: nothing to ask → a confirmation subject; a bad address is dropped", async () => {
+  policy.setModel({
+    reason: fakeReason(
+      JSON.stringify({
+        confirmed: policy.REVIEW_TOPICS.map((topic) => ({ topic, detail: "Stated.", source: "policy" })),
+        missing: []
+      })
+    )
+  });
+  const review = await policy.reviewPolicy({ departmentName: "Pine Hollow Fire Department", repEmail: "not an address", policyText: "Everything." });
+  assert.equal(review.questions.length, 0);
+  assert.equal(review.emailDraft.subject, "Your uniform store: please confirm the details — Pine Hollow Fire Department");
+  assert.equal(review.emailDraft.to, "");
 });
 
 test("reviewPolicy: a garment named without a style keeps the garments question open", async () => {
