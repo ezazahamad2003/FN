@@ -698,7 +698,28 @@ async function stageCollectionImage(filename, buffer) {
   const target = data?.stagedUploadsCreate?.stagedTargets?.[0];
   if (!target) throw new Error("Shopify did not return a staged upload target for the collection banner.");
   await transports.uploadToTarget(target, { filename, buffer, mimeType: "image/png" });
-  return target.resourceUrl;
+  return stagedFileUrl(target);
+}
+
+/*
+ * Where the uploaded file actually is. For COLLECTION_IMAGE Shopify returns a
+ * resourceUrl that is only the bucket ("https://shopify-staged-uploads…com/")
+ * with no file path, and collectionUpdate rejects it with "Error updating
+ * collection with this image" — no onboarding ever got its banner. The file
+ * lives at the bucket URL plus the `key` form parameter.
+ */
+function stagedFileUrl(target) {
+  const resource = String(target?.resourceUrl || "");
+  let hasPath = false;
+  try {
+    hasPath = new URL(resource).pathname.replace(/\/+$/, "") !== "";
+  } catch {
+    hasPath = false;
+  }
+  if (hasPath) return resource;
+  const key = (target?.parameters || []).find((p) => p?.name === "key")?.value;
+  if (!key) return resource;
+  return `${String(target.url || resource).replace(/\/+$/, "")}/${String(key).replace(/^\/+/, "")}`;
 }
 
 async function publishToOnlineStore(gid) {
@@ -1380,6 +1401,7 @@ module.exports = {
   setTransports,
   // products
   findSourceProduct,
+  stagedFileUrl,
   storeProfile,
   resolveStyleNumber,
   readProductForDuplication,

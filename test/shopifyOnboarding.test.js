@@ -1604,3 +1604,16 @@ test("removeMegaMenuItemsFor drops only the item linked to that collection, keep
   const none = await shopifyOnboarding.removeMegaMenuItemsFor("gid://shopify/Collection/999");
   assert.deepEqual(none, { removed: 0, available: true }, "nothing linked → no menuUpdate at all");
 });
+
+test("stagedFileUrl: a bucket-only resourceUrl is completed with the upload key", () => {
+  const s = require("../shopifyOnboarding");
+  const bucketOnly = {
+    url: "https://shopify-staged-uploads.storage.googleapis.com/",
+    resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/",
+    parameters: [{ name: "key", value: "tmp/561/collections/abc/pine-banner.png" }, { name: "acl", value: "private" }]
+  };
+  assert.equal(s.stagedFileUrl(bucketOnly), "https://shopify-staged-uploads.storage.googleapis.com/tmp/561/collections/abc/pine-banner.png");
+  // A resourceUrl that already names the file is used as-is (products, files).
+  const full = { url: "https://x/", resourceUrl: "https://x/tmp/file.png", parameters: [{ name: "key", value: "other" }] };
+  assert.equal(s.stagedFileUrl(full), "https://x/tmp/file.png");
+});

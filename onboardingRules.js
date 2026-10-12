@@ -694,7 +694,14 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED,
   }
   const method = derivedMethod || (declared === DECORATION_EMBROIDERY || declared === DECORATION_PRINT ? declared : null);
   const hasDecoration = allCodes.size > 0;
-  if (!hasDecoration) {
+  /* A method with no codes is a decorated garment whose codes were never
+     typed, not a plain stock item. Passing it built Pine Hollow's tee as a
+     blank navy shirt with no logo and no decoration segment in its SKU. */
+  if (!hasDecoration && (declared === DECORATION_PRINT || declared === DECORATION_EMBROIDERY)) {
+    errors.push(
+      `Decoration method is ${declared} but there are no decoration codes — type them (e.g. ${declared === DECORATION_PRINT ? "F01/B01" : "E01"}), or set the method to "—" for an undecorated item.`
+    );
+  } else if (!hasDecoration) {
     assumptions.push("No decoration codes: treated as a plain stock item (e.g. pants) — stock image, no mockup, no decoration segment in the SKU.");
   }
   if ([...allCodes].some((c) => /^(RS|LS)/.test(c)) && [...allCodes].some((c) => c.startsWith("RS")) && [...allCodes].some((c) => c.startsWith("LS"))) {

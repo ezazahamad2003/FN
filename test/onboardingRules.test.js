@@ -292,3 +292,14 @@ test("alphabetical insertion for Helium department lists", () => {
   assert.equal(rules.alphabeticalInsertIndex(list, "Aardvark FD"), 0);
   assert.equal(rules.alphabeticalInsertIndex(list, "Zzz"), 4);
 });
+
+test("expandProduct: a decoration method with no codes is an error, not a plain stock item", () => {
+  const r = require("../onboardingRules");
+  const base = { brand: "Next Level", styleNumber: "NL3600", colors: ["Navy"], sizes: ["S"], fulfillment: "One Week Item" };
+  const printed = r.expandProduct({ ...base, decorationMethod: "print", decorationCodes: "" }, { departmentCode: "PIN" });
+  assert.equal(printed.ok, false);
+  assert.match(printed.errors.join(" "), /no decoration codes/);
+  // No method and no codes is still the undecorated stock item it always was.
+  const plain = r.expandProduct({ ...base, decorationMethod: "", decorationCodes: "" }, { departmentCode: "PIN" });
+  assert.equal(plain.ok, true);
+});
