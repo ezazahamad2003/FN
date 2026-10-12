@@ -1174,6 +1174,14 @@ async function saveProducts(id, products, { by = "" } = {}) {
       if (color.code || !color.proposal) continue;
       proposals.push({ color: color.name, code: color.proposal });
     }
+    /* A colour the list does not have, and the two ways out, on the row
+       itself: add it under the proposed code, or use the closest colour the
+       list already has ("Deep Navy" → Navy, NVY). Before this the row said
+       "propose a code and get Dan's approval" — to Dan, with the proposal
+       already made and the approval only reachable on another page. */
+    merged.colorIssues = expanded.product.colors
+      .filter((c) => c.missing)
+      .map((c) => ({ color: c.name, code: c.proposal || "", nearest: nearestListColor(c.name, colorTable) }));
 
     if (merged.styleNumber) {
       await tables()
@@ -1218,6 +1226,22 @@ async function saveProducts(id, products, { by = "" } = {}) {
   });
 }
 
+/* The colour already on the list that a manufacturer's name is a shade of:
+   the longest list colour contained in it as whole words ("True Navy" →
+   Navy; "Heather Charcoal" → Charcoal). Null when nothing fits. */
+function nearestListColor(name, colorTable) {
+  const wanted = ` ${rules.normalizeColorName(name)} `;
+  let best = null;
+  for (const row of colorTable || []) {
+    // A flagged duplicate (BLA for BLK) is skipped; the preferred one of the pair is fine.
+    if (!row?.code || row.status === "retired" || (row.status === "flagged" && !row.preferred)) continue;
+    const color = rules.normalizeColorName(row.color);
+    if (!color || color === wanted.trim()) continue;
+    if (wanted.includes(` ${color} `) && (!best || color.length > rules.normalizeColorName(best.color).length)) best = { code: row.code, color: row.color };
+  }
+  return best;
+}
+
 /** §10 COLOR: approve a new colour code, add it to the list, re-validate. */
 async function proposeColor(id, { color, code, by = "" } = {}) {
   const name = clean(color);
@@ -1237,6 +1261,12 @@ async function proposeColor(id, { color, code, by = "" } = {}) {
       throw badRequest(errorText(error));
     }
     await tables().decideProposal("color-codes", proposal.id, { approve: true, by });
+  }
+  // Any other code still proposed for this same colour is now moot.
+  for (const other of await tables().pendingProposals("color-codes").catch(() => [])) {
+    if (rules.normalizeColorName(other.row?.color) === rules.normalizeColorName(name)) {
+      await tables().decideProposal("color-codes", other.id, { approve: false, by }).catch(() => {});
+    }
   }
   await store().updateOnboarding(id, (r) => {
     recordApproval(r, { kind: "color", subject: `${name} → ${value}`, by });

@@ -1653,3 +1653,20 @@ test("a style the store has never sold is flagged on the row with Create the mas
   assert.equal(row.validation.ok, false);
   assert.match(row.validation.errors.join(" "), /no master product for SS4500.*Create the master/);
 });
+
+test("an unknown colour offers its proposed code and the nearest list colour, and one click fixes the row", async () => {
+  const { id } = await readyForProducts();
+  const row = { ...TEE_ROW, styles: [], decorationCodes: "F01/B01", colors: ["Deep Navy"] };
+  const saved = await agent.saveProducts(id, [row], { by: "dan" });
+  const issue = saved.products[0].colorIssues[0];
+  assert.equal(issue.color, "Deep Navy");
+  assert.ok(issue.code, "a code is proposed");
+  assert.deepEqual(issue.nearest, { code: "NVY", color: "Navy" });
+  assert.equal(saved.products[0].validation.ok, false);
+
+  const fixed = await agent.proposeColor(id, { color: "Deep Navy", code: issue.code, by: "dan" });
+  assert.equal(fixed.products[0].validation.ok, true, fixed.products[0].validation.errors.join("; "));
+  assert.deepEqual(fixed.products[0].colorIssues, []);
+  const pending = await referenceTables.pendingProposals("color-codes");
+  assert.ok(!pending.some((p) => p.row.color === "Deep Navy"), "no stale proposal left for the colour");
+});

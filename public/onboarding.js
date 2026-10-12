@@ -1722,6 +1722,7 @@
           <button class="btn btn-ghost btn-sm" type="button" data-ob="add-style">+ Add a second logo setup</button>
         </div>
         ${blankPhotoHtml(record, product, saved)}
+        ${colorIssuesHtml(product)}
         ${validationHtml(validation)}
       </fieldset>`;
   }
@@ -1996,6 +1997,30 @@
         <p class="field-label">Logos <small>one per decoration code</small></p>
         ${rows ? `<ul class="ob-logo-list">${rows}</ul>` : ""}
         ${proofHtml(record, product, saved)}
+      </div>`;
+  }
+
+  /* A colour FN's list does not have yet, with both ways out right here:
+     add it under the proposed code (Dan's approval, one click), or switch
+     the row to the closest colour already on the list. */
+  function colorIssuesHtml(product) {
+    const issues = list(product?.colorIssues);
+    if (!issues.length) return "";
+    return `
+      <div class="ob-color-issues">
+        ${issues
+          .map(
+            (issue) => `
+          <div class="ob-color-issue">
+            <span><b>${esc(issue.color)}</b> is not on FN's colour list yet.</span>
+            <span class="ob-color-issue-actions">
+              ${issue.code ? `<button class="btn btn-secondary btn-sm" type="button" data-ob="approve-color" data-ob-color="${esc(issue.color)}" data-ob-code="${esc(issue.code)}">Add as ${esc(issue.code)}</button>` : ""}
+              <button class="btn btn-ghost btn-sm" type="button" data-ob="approve-color" data-ob-color="${esc(issue.color)}" data-ob-code="" >${issue.code ? "Different code…" : "Add with a code…"}</button>
+              ${issue.nearest ? `<button class="btn btn-ghost btn-sm" type="button" data-ob="use-nearest" data-ob-color="${esc(issue.color)}" data-ob-nearest="${esc(issue.nearest.color)}">Use ${esc(issue.nearest.color)} (${esc(issue.nearest.code)}) instead</button>` : ""}
+            </span>
+          </div>`
+          )
+          .join("")}
       </div>`;
   }
 
@@ -2641,6 +2666,19 @@
       input.value = next.join(", ");
       return;
     }
+    if (action === "approve-color") return approveColor(trigger);
+    if (action === "use-nearest") {
+      const row = trigger.closest("[data-ob-product]");
+      const input = row?.querySelector("[data-ob-field='colors']");
+      if (!input) return;
+      const from = trigger.dataset.obColor.toLowerCase();
+      const to = trigger.dataset.obNearest;
+      const next = [...new Set(parseList(input.value).map((c) => (c.toLowerCase() === from ? to : c)))];
+      input.value = next.join(", ");
+      const save = page()?.querySelector("[data-ob='save-products']");
+      if (save) saveProducts(save);
+      return;
+    }
     if (action === "lookup-garment") return lookupGarment(trigger);
     if (action === "create-master") return createMaster(trigger);
     if (action === "add-color") {
@@ -3126,6 +3164,27 @@ They are rebuilt from the current logos and blank photos. The product's title, S
       page(),
       "obDetailError"
     );
+  }
+
+  // Add a colour to FN's list under a code (the proposed one, or one Dan
+  // types), then every row is checked again.
+  function approveColor(button) {
+    const id = state.record?.id;
+    const color = button.dataset.obColor;
+    let code = button.dataset.obCode;
+    if (!id || !color) return;
+    if (!code) {
+      const typed = window.prompt(`Colour code for "${color}" — 2 to 4 letters, like NVY for Navy or DKN for Dark Navy:`, "");
+      if (typed === null) return;
+      code = typed.trim().toUpperCase();
+      if (!/^[A-Z0-9_]{2,4}$/.test(code)) {
+        fail(`"${typed}" is not a colour code — use 2 to 4 letters or digits.`);
+        return;
+      }
+    } else if (!window.confirm(`Add "${color}" to FN's Color Code List as ${code}?\n\nIt goes into every SKU for this colour, in every store.`)) {
+      return;
+    }
+    return runSimple(button, "Adding…", "/colors/propose", { color, code, by: currentOperator() });
   }
 
   function removeFile(button) {

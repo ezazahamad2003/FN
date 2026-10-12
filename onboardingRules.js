@@ -394,7 +394,7 @@ function resolveColorCode(colorName, table = COLOR_CODES_SEED) {
     missing: true,
     proposal: alternatives[0] || null,
     alternatives,
-    error: `Color "${colorName}" is not on the Color Code List. Propose a code and get Dan's approval before using it.`
+    error: `Colour "${colorName}" is not on the Color Code List yet — add it with a code, or use a colour that is already on the list.`
   };
 }
 

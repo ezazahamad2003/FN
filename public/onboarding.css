@@ -1505,3 +1505,7 @@
 
 .ob-size-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
 .ob-size-presets .hint { margin: 0; }
+
+.ob-color-issues { display: grid; gap: var(--space-2); }
+.ob-color-issue { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--warn-border); border-radius: var(--radius-sm); background: var(--warn-soft); }
+.ob-color-issue-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
