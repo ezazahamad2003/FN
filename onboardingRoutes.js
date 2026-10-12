@@ -135,6 +135,15 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
   });
 
   // Before "/onboardings/:id" — otherwise "capabilities" reads as a record id.
+  // The garments FN sells (its Master Reference products), for "pick a garment".
+  router.get("/onboardings/garments", gate, async (req, res) => {
+    try {
+      res.json({ garments: await require("./shopifyOnboarding").masterGarments() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.get("/onboardings/capabilities", gate, async (req, res) => {
     try {
       res.json(await agent.capabilities());

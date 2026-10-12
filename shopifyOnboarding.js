@@ -253,6 +253,66 @@ async function storeProfile(styleNumber) {
 }
 
 /*
+ * The garments FN sells, for the console's "pick a garment" list: every
+ * Master Reference product (the masters each department product is
+ * duplicated from) with its brand, style, a plain garment type and sizes.
+ * Masters whose title names no style ("Black Hawk Snapback Hat") are left
+ * out — a row needs a style to find its master.
+ */
+const MASTER_GARMENTS_QUERY = `
+query masterGarments($query: String!) {
+  products(first: 100, query: $query, sortKey: TITLE) {
+    nodes { title vendor productType options { name optionValues { name } } }
+  }
+}`;
+
+function decodeEntities(s) {
+  return String(s || "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+// The title decides; the product type is only a fallback ("Tees & Tanks"
+// names both, so reading it first made every tee a tank top).
+function garmentType(title, productType) {
+  const read = (t) => {
+    if (/beanie|watch cap|knit/.test(t)) return "Beanie";
+    if (/hat|cap|snapback|trucker|flex fit|headwear/.test(t)) return "Hat";
+    if (/tank/.test(t)) return "Tank Top";
+    if (/long sleeve/.test(t)) return "Long Sleeve Shirt";
+    if (/hood/.test(t)) return "Hoodie";
+    if (/polo/.test(t)) return "Polo";
+    if (/tee|t-shirt|shirt/.test(t)) return "T-shirt";
+    return "";
+  };
+  return read(String(title).toLowerCase()) || read(decodeEntities(productType).toLowerCase()) || decodeEntities(productType) || "Garment";
+}
+
+let garmentCache = { at: 0, list: null };
+
+async function masterGarments({ maxAgeMs = 10 * 60 * 1000 } = {}) {
+  if (garmentCache.list && Date.now() - garmentCache.at < maxAgeMs) return garmentCache.list;
+  const data = await gql(MASTER_GARMENTS_QUERY, { query: `tag:'${MASTER_REFERENCE_TAG}'` });
+  const out = [];
+  for (const p of data?.products?.nodes || []) {
+    const title = decodeEntities(p.title).trim();
+    const paren = title.match(/\(([A-Z0-9][A-Z0-9.\-]*)\)\s*$/i);
+    const token = title.split(/\s+/).find((w) => /^[A-Z]*\d+[A-Z0-9]*$/.test(w) && /[A-Z]/.test(w));
+    const styleNumber = (paren?.[1] || token || "").toUpperCase();
+    if (!styleNumber) continue;
+    const sizes = ((p.options || []).find((o) => /size/i.test(o.name))?.optionValues || []).map((v) => v.name);
+    out.push({
+      label: title.replace(/\s*\([^)]*\)\s*$/, ""),
+      brand: decodeEntities(p.vendor).trim(),
+      styleNumber,
+      type: garmentType(title, p.productType),
+      group: /headwear/i.test(p.productType) ? "Headwear" : decodeEntities(p.productType) || "Other",
+      sizes
+    });
+  }
+  garmentCache = { at: Date.now(), list: out };
+  return out;
+}
+
+/*
  * The style number as the store writes it. Policies say "Richardson 112";
  * the store's blank is R112, and its master is titled "Richardson 112
  * Snapback (R112)". Unchanged when the style is already found as typed.
@@ -1441,6 +1501,7 @@ module.exports = {
   setTransports,
   // products
   findSourceProduct,
+  masterGarments,
   stagedFileUrl,
   storeProfile,
   resolveStyleNumber,

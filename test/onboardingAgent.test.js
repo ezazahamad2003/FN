@@ -1616,3 +1616,26 @@ test("Redo images re-renders one product and swaps the images on its existing dr
   assert.ok(replaced[0].count > 0);
   assert.equal(after.products[0].replaceImages, undefined, "the flag is cleared once done");
 });
+
+test("a logo picked for a placement is the one the mockups use", async () => {
+  const seen = [];
+  const base = fakeMockups();
+  const mockups = {
+    ...base,
+    async renderProductMockups(args) {
+      seen.push(Object.fromEntries(Object.entries(args.artwork || {}).map(([code, art]) => [code, art.name])));
+      return base.renderProductMockups(args);
+    }
+  };
+  const { id } = await builtOnboarding({ productionFiles: [], mockups });
+  const withArt = await agent.addFiles(id, { files: [packetFile("files", "station-back.png", "image/png")], kind: "artwork", by: "dan" });
+  const back = withArt.packet.files.find((f) => f.name === "station-back.png");
+  const row = { ...withArt.products[0], styles: [], decorationMethod: "print", decorationCodes: "F01/B01", logoMap: { B01: back.assetId } };
+  const saved = await agent.saveProducts(id, [row], { by: "dan" });
+  assert.deepEqual(saved.products[0].logoMap, { B01: back.assetId }, "the pick is kept on the row");
+  assert.deepEqual(saved.products[0].mockups, [], "a new pick clears the old images");
+  await agent.redoProductImages(id, saved.products[0].id, { by: "dan", wait: true });
+  const last = seen[seen.length - 1];
+  assert.equal(last.B01, "station-back.png", JSON.stringify(last));
+  assert.equal(last.F01, "VFD-scramble.png", "an unpicked placement keeps the default logo");
+});

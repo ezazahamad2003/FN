@@ -1094,7 +1094,11 @@ async function saveProducts(id, products, { by = "" } = {}) {
         clean(p?.decorationCodes).toUpperCase(),
         (Array.isArray(p?.styles) ? p.styles : []).map((s) => clean(s?.decorationCodes).toUpperCase()),
         (Array.isArray(p?.colors) ? p.colors : []).map((c) => clean(c).toLowerCase()),
-        (Array.isArray(p?.sizes) ? p.sizes : []).map((s) => clean(s).toUpperCase())
+        (Array.isArray(p?.sizes) ? p.sizes : []).map((s) => clean(s).toUpperCase()),
+        // Which uploaded logo each placement uses changes the picture too.
+        Object.entries(p?.logoMap && typeof p.logoMap === "object" ? p.logoMap : {})
+          .filter(([, v]) => v)
+          .sort(([a], [b]) => a.localeCompare(b))
       ]);
     let specWarning = "";
     if (existing && !styleChanged && specKey(existing) !== specKey(merged)) {
@@ -1631,10 +1635,15 @@ async function buildMockups(id, record, product, log) {
   for (const decoration of codes) {
     if (artwork[decoration]) continue;
     const prefix = rules.parseDecorationCode(decoration).prefix;
+    // The logo the operator picked for this placement on the row wins; the
+    // artwork roles are only the default when nothing was picked.
+    const chosenId = product.logoMap && typeof product.logoMap === "object" ? product.logoMap[decoration] : "";
+    const chosen = chosenId ? packetArt.find((f) => f.assetId === chosenId) : null;
     const file =
-      prefix === "B"
+      chosen ||
+      (prefix === "B"
         ? byRole(["back", "scramble"])
-        : byRole(["chest", "pick", "scramble", ""]) || packetArt.find((f) => (f.role || "") !== "back") || null;
+        : byRole(["chest", "pick", "scramble", ""]) || packetArt.find((f) => (f.role || "") !== "back") || null);
     if (!file) {
       warnings.push(`No logo for ${decoration}: upload the department's ${prefix === "B" ? "back" : "chest"} logo in the packet${prefix === "E" ? " or the embroidery proof on the row" : ""}.`);
       continue;

@@ -217,7 +217,9 @@
     caps: null,
     pollTimer: null,
     // The wizard step on screen; null means "wherever the work is".
-    step: null
+    step: null,
+    // Master Reference garments ({label, brand, styleNumber, type, group, sizes}).
+    garments: null
   };
   const objectUrls = new Set();
   // asset URL -> object URL, so a repaint reuses what was already fetched.
@@ -1593,32 +1595,56 @@
   }
 
   /* ---- Build inputs -------------------------------------------------------- */
+  // A suggestion is "already in the list" when a row has the same style
+  // (the review may say "112 snapback" for the store's R112).
+  function styleKey(value) {
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  }
+  function suggestionInList(products, suggestion) {
+    const want = styleKey(suggestion?.styleNumber);
+    const digits = String(suggestion?.styleNumber || "").match(/[0-9]+/)?.[0] || "";
+    return list(products).some((p) => {
+      const have = styleKey(p?.styleNumber);
+      if (!have) return false;
+      return (want && have === want) || (digits && have.replace(/^[A-Z]+/, "") === digits);
+    });
+  }
+
   function inputsPanel(record) {
     const products = list(record.products);
     const suggested = list(record.policyReview?.suggestedProducts);
+    const missing = suggested.map((s, index) => ({ s, index })).filter(({ s }) => !suggestionInList(products, s));
     return `
       <section class="card card-pad ob-panel" id="obPanel-inputs" data-ob-panel="inputs">
         <div class="card-head">
           <div>
             <p class="eyebrow">Product list</p>
             <h3>The product list</h3>
-            <p class="muted">One row per product. Every size × colour × style gets its own SKU, and the decoration codes must match the file names in the Omni Printer folder.</p>
+            <p class="muted">One row per product. Pick the garment, tick where the logos go and which logo, then save. Remove a row with ×.</p>
           </div>
           <div class="ob-head-actions">
             <button class="btn btn-ghost btn-sm" type="button" data-ob="add-product">+ Add product</button>
             <button class="btn btn-secondary btn-sm" type="button" data-ob="save-products">Save</button>
           </div>
         </div>
-        ${suggested.length && !products.length
-          ? `<div class="gap-report" data-tone="ok">
-              <p class="gap-title">${suggested.length} product${plural(suggested.length, "", "s")} suggested from the policy</p>
-              <p class="gap-note">Unconfirmed — load them as rows, then check every field against what the rep confirmed.</p>
-              <button class="btn btn-secondary btn-sm" type="button" data-ob="use-suggestions">Load suggestions</button>
+        ${missing.length
+          ? `<div class="gap-report ob-suggestions" data-tone="ok">
+              <p class="gap-title">${missing.length} product${plural(missing.length, "", "s")} suggested from the policy${products.length ? " and not in the list yet" : ""}</p>
+              <p class="gap-note">Add the ones the department wants; check each against what the rep confirmed.</p>
+              <ul class="ob-suggestion-list">
+                ${missing
+                  .map(
+                    ({ s, index }) => `<li><span><b>${esc([s.brand, s.styleNumber].filter(Boolean).join(" ") || s.type || "Product")}</b> ${esc(s.type || "")}${list(s.colors).length ? ` · ${esc(list(s.colors).join(", "))}` : ""}${s.decorationCodes ? ` · ${esc(s.decorationCodes)}` : ""}</span>
+                      <button class="btn btn-ghost btn-sm" type="button" data-ob="use-suggestions" data-ob-suggestion="${index}">Add</button></li>`
+                  )
+                  .join("")}
+              </ul>
+              ${missing.length > 1 ? `<button class="btn btn-secondary btn-sm" type="button" data-ob="use-suggestions">Add all ${missing.length}</button>` : ""}
             </div>`
           : ""}
         ${products.length
           ? `<div class="ob-products">${products.map((product, index) => productRowHtml(record, product, index)).join("")}</div>`
-          : stateBlock({ title: "No products yet", sub: "Add a row per garment the department confirmed: brand, style number, colours, sizes, decoration method, and the decoration codes." })}
+          : stateBlock({ title: "No products yet", sub: "Add the suggested products above, or press + Add product and pick a garment the store sells." })}
         ${productionFilesHtml(record)}
       </section>`;
   }
@@ -1657,6 +1683,7 @@
           <button class="variant-remove" type="button" data-ob="remove-product" aria-label="Remove product ${index + 1}">&times;</button>
         </div>
         <div class="category-edit-grid">
+          ${garmentPickerHtml(product)}
           <label><span>Brand</span><input type="text" data-ob-field="brand" value="${esc(product?.brand || "")}" placeholder="Next Level"></label>
           <label><span>Style number</span><input type="text" data-ob-field="styleNumber" class="code-input" value="${esc(product?.styleNumber || "")}" placeholder="NL3600"></label>
           <label><span>Product type</span><input type="text" data-ob-field="type" value="${esc(product?.type || "")}" placeholder="T-shirt, hat, Class B, pants"></label>
@@ -1664,14 +1691,14 @@
           <label class="span-2"><span>Colours</span><input type="text" data-ob-field="colors" value="${esc(csv(product?.colors))}" placeholder="Navy, Midnight Navy"></label>
           <label class="span-2"><span>Sizes</span><input type="text" data-ob-field="sizes" value="${esc(csv(product?.sizes))}" placeholder="S, M, L, XL, 2XL, 3XL"></label>
           <label><span>Decoration method</span><select data-ob-field="decorationMethod">${optionsHtml(DECORATION_METHODS, product?.decorationMethod)}</select></label>
-          <label><span>Decoration codes</span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="e.g. F01/B01"></label>
+          <label><span>Decoration codes <small class="muted-inline">(filled from the placements below)</small></span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="e.g. F01/B01"></label>
           <label><span>Fulfillment (Vendor field)</span><select data-ob-field="fulfillment">${optionsHtml([{ key: "", label: "—" }, ...FULFILLMENTS.map((v) => ({ key: v, label: v }))], product?.fulfillment)}</select></label>
           <label class="toggle-field"><input type="checkbox" data-ob-field="classB" ${product?.classB ? "checked" : ""}> <span>Class B uniform item</span></label>
           <label class="span-2"><span>Notes</span><input type="text" data-ob-field="notes" value="${esc(product?.notes || "")}"></label>
         </div>
         ${storeProfileHtml(record, product)}
+        ${placementsHtml(record, product)}
         <p class="hint">${esc(SIZE_HINT)}</p>
-        <p class="hint">${esc(DECORATION_HINT)}</p>
         ${logosHtml(record, product, saved)}
         <div class="ob-styles">
           <p class="field-label">Styles <small>rare — only when this same blank is sold with a second logo setup, as a "Style" option</small></p>
@@ -1692,6 +1719,160 @@
         <input type="text" class="code-input" data-ob-field="styleCodes" value="${esc(style?.decorationCodes || "")}" placeholder="e.g. F02/B01" aria-label="Decoration codes for Style ${index + 1}">
         <button class="variant-remove" type="button" data-ob="remove-style" aria-label="Remove Style ${index + 1}">&times;</button>
       </div>`;
+  }
+
+  /* ---- Making a product the easy way ----------------------------------------
+     Pick a garment the store already sells, tick where the logos go, and pick
+     which uploaded logo goes there. The decoration codes and the logo for each
+     code are worked out from that — nobody has to know that a full-back print
+     is "B01" or which file name it needs. The raw fields stay underneath for
+     the unusual cases. */
+  const PLACEMENTS = [
+    { key: "F", label: "Front", hint: "left chest or front panel" },
+    { key: "B", label: "Back", hint: "full back" },
+    { key: "RS", label: "Right sleeve", hint: "" },
+    { key: "LS", label: "Left sleeve", hint: "" }
+  ];
+
+  function garmentPickerHtml(product) {
+    const garments = list(state.garments);
+    if (!garments.length) return "";
+    const current = String(product?.styleNumber || "").toUpperCase();
+    const known = garments.some((g) => g.styleNumber === current);
+    const groups = [...new Set(garments.map((g) => g.group || "Other"))];
+    return `
+      <label class="span-2 ob-garment-pick"><span>Garment <small class="muted-inline">the store's own blanks — fills brand, style, type and sizes</small></span>
+        <select data-ob-garment>
+          <option value="">${current && !known ? `${esc(current)} — not one of the store's masters` : "Pick a garment the store sells…"}</option>
+          ${groups
+            .map(
+              (group) => `<optgroup label="${esc(group)}">${garments
+                .filter((g) => (g.group || "Other") === group)
+                .map((g) => `<option value="${esc(g.styleNumber)}" ${g.styleNumber === current ? "selected" : ""}>${esc(g.label)} · ${esc(g.styleNumber)}</option>`)
+                .join("")}</optgroup>`
+            )
+            .join("")}
+        </select>
+      </label>`;
+  }
+
+  function packetLogos(record) {
+    return list(record?.packet?.files).filter((f) => f?.kind === "artwork" && f.assetId && !/proof/i.test(f?.name || ""));
+  }
+
+  // Which placements a row's codes already describe, and the logo on each.
+  function placementState(product) {
+    const codes = String(product?.decorationCodes || "")
+      .split("/")
+      .map((c) => c.trim().toUpperCase())
+      .filter(Boolean);
+    const logoMap = product?.logoMap && typeof product.logoMap === "object" ? product.logoMap : {};
+    const placements = product?.placements && typeof product.placements === "object" ? product.placements : {};
+    const out = {};
+    let custom = false;
+    for (const code of codes) {
+      const m = code.match(/^(F|B|RS|LS|E|P)(\d{2})$/);
+      if (!m) continue;
+      if (m[1] === "E" || m[1] === "P") {
+        const key = placements[code] || (code === "E01" ? "F" : "");
+        if (key) out[key] = { code, logo: logoMap[code] || "" };
+        else custom = true;
+      } else if (m[2] === "01") {
+        out[m[1]] = { code, logo: logoMap[code] || "" };
+      } else {
+        custom = true;
+      }
+    }
+    return { on: out, custom };
+  }
+
+  function placementsHtml(record, product) {
+    const logos = packetLogos(record);
+    const { on, custom } = placementState(product);
+    const defaultFor = (key) => (key === "B" ? "back" : "chest");
+    return `
+      <div class="ob-placements" data-ob-placements>
+        <p class="field-label">Where the logos go <small>tick each placement and pick the logo for it</small></p>
+        ${custom ? `<p class="hint" data-tone="warn">This row uses custom codes (e.g. F02) — edit them in "Decoration codes" above.</p>` : ""}
+        <div class="ob-placement-grid">
+          ${PLACEMENTS.map((p) => {
+            const placed = on[p.key];
+            return `
+            <div class="ob-placement" data-ob-place="${esc(p.key)}" data-on="${placed ? "true" : "false"}">
+              <label class="ob-place-toggle"><input type="checkbox" data-ob-place-on ${placed ? "checked" : ""}> <b>${esc(p.label)}</b>${p.hint ? ` <small>${esc(p.hint)}</small>` : ""}</label>
+              <select data-ob-place-logo aria-label="Logo for the ${esc(p.label.toLowerCase())}">
+                <option value="">${logos.length ? `Default (the ${defaultFor(p.key)} logo)` : "Upload logos in step 1"}</option>
+                ${logos
+                  .map((f) => `<option value="${esc(f.assetId)}" ${placed?.logo === f.assetId ? "selected" : ""}>${esc(f.name || "logo")}${f.role ? ` (${esc(f.role)} logo)` : ""}</option>`)
+                  .join("")}
+              </select>
+            </div>`;
+          }).join("")}
+        </div>
+        <input type="hidden" data-ob-field="logoMap" value="${esc(JSON.stringify(product?.logoMap || {}))}">
+        <input type="hidden" data-ob-field="placements" value="${esc(JSON.stringify(product?.placements || {}))}">
+      </div>`;
+  }
+
+  /* Placements → decoration codes, the logo per code and, for embroidery,
+     where each E code sits. Print: F01 / B01 / RS01 / LS01 in that order.
+     Embroidery: E01, E02… in the same order, one per ticked placement. */
+  function syncPlacements(row, { fromPlacement = true } = {}) {
+    const method = row.querySelector("[data-ob-field='decorationMethod']")?.value || "";
+    const ticked = [...row.querySelectorAll("[data-ob-place]")].filter((node) => node.querySelector("[data-ob-place-on]")?.checked);
+    // Codes typed by hand (no placement ticked) are left alone when only the
+    // method changes.
+    if (!ticked.length && !fromPlacement) return;
+    row.querySelectorAll("[data-ob-place]").forEach((node) => {
+      node.dataset.on = node.querySelector("[data-ob-place-on]")?.checked ? "true" : "false";
+    });
+    if (ticked.length && !method) {
+      const select = row.querySelector("[data-ob-field='decorationMethod']");
+      // Headwear is embroidered as a rule; everything else is printed.
+      const type = `${row.querySelector("[data-ob-field='type']")?.value || ""}`.toLowerCase();
+      if (select) select.value = /hat|cap|beanie|snapback/.test(type) ? "embroidery" : "print";
+    }
+    const embroidered = (row.querySelector("[data-ob-field='decorationMethod']")?.value || "") === "embroidery";
+    const codes = [];
+    const logoMap = {};
+    const placements = {};
+    ticked.forEach((node, index) => {
+      const key = node.dataset.obPlace;
+      const code = embroidered ? `E${String(index + 1).padStart(2, "0")}` : `${key}01`;
+      codes.push(code);
+      const logo = node.querySelector("[data-ob-place-logo]")?.value || "";
+      if (logo) logoMap[code] = logo;
+      if (embroidered) placements[code] = key;
+    });
+    const codesInput = row.querySelector("[data-ob-field='decorationCodes']");
+    if (codesInput) codesInput.value = codes.join("/");
+    const mapInput = row.querySelector("[data-ob-field='logoMap']");
+    if (mapInput) mapInput.value = JSON.stringify(logoMap);
+    const placeInput = row.querySelector("[data-ob-field='placements']");
+    if (placeInput) placeInput.value = JSON.stringify(placements);
+  }
+
+  // Picking a garment fills the row from the store's own master.
+  function applyGarment(row, styleNumber) {
+    const garment = list(state.garments).find((g) => g.styleNumber === styleNumber);
+    if (!garment) return;
+    const set = (field, value, onlyIfEmpty = false) => {
+      const input = row.querySelector(`[data-ob-field='${field}']`);
+      if (!input || (onlyIfEmpty && input.value.trim())) return;
+      input.value = value;
+    };
+    set("brand", garment.brand);
+    set("styleNumber", garment.styleNumber);
+    set("type", garment.type);
+    set("sizes", list(garment.sizes).join(", "), true);
+    // A new row with no placements yet starts with the front logo.
+    if (![...row.querySelectorAll("[data-ob-place-on]")].some((box) => box.checked)) {
+      const front = row.querySelector("[data-ob-place='F'] [data-ob-place-on]");
+      if (front) front.checked = true;
+    }
+    const method = row.querySelector("[data-ob-field='decorationMethod']");
+    if (method && !method.value) method.value = /hat|beanie/i.test(garment.type) ? "embroidery" : "print";
+    syncPlacements(row);
   }
 
   /* What the store already does with this blank, read on save: the house
@@ -1744,7 +1925,8 @@
         const stem = deptCode ? `${deptCode}-${c}` : `CODE-${c}`;
         const printed = print && stems.has(stem.toUpperCase());
         const proofed = !print && product?.proofs?.[c];
-        const logo = logoFor(c);
+        const picked = product?.logoMap && product.logoMap[c] ? art.find((f) => f?.assetId === product.logoMap[c]) : null;
+        const logo = picked || logoFor(c);
         const face = DECORATION_FACES[c.replace(/\d+$/, "")] || "";
         const source = printed
           ? `Omni's print file <b>${esc(stem)}</b>`
@@ -2328,6 +2510,18 @@
       setArtworkRole(role.dataset.obRole, role.value);
       return;
     }
+    // Making a product: the garment picker, the placements, the method.
+    const row = event.target.closest("[data-ob-product]");
+    if (row) {
+      if (event.target.matches("[data-ob-garment]")) {
+        applyGarment(row, event.target.value);
+        return;
+      }
+      if (event.target.closest("[data-ob-place]") || event.target.matches("[data-ob-field='decorationMethod']")) {
+        syncPlacements(row, { fromPlacement: Boolean(event.target.closest("[data-ob-place]")) });
+        return;
+      }
+    }
     const operatorInput = event.target.closest("[data-ob-operator]");
     if (operatorInput) setOperator(operatorInput.value.trim());
   }
@@ -2415,8 +2609,20 @@
       return;
     }
     if (action === "remove-product") {
-      trigger.closest("[data-ob-product]")?.remove();
-      page()?.querySelector("[data-ob='save-products']")?.focus();
+      /* Removing a row is saved straight away. It used to vanish from the
+         screen and come back on the next refresh unless Save was pressed. */
+      const row = trigger.closest("[data-ob-product]");
+      if (!row) return;
+      const saved = list(record.products).find((p) => p?.id === row.dataset.obProduct);
+      const name = saved?.title || [saved?.brand, saved?.styleNumber].filter(Boolean).join(" ") || "this product";
+      if (saved) {
+        const built = Boolean(saved.shopify?.gid);
+        if (!window.confirm(`Remove "${name}" from this store's product list?${built ? "\n\nIt was already built: its Draft stays in Shopify until you delete it there." : ""}`)) return;
+      }
+      row.remove();
+      if (!saved) return;
+      const save = page()?.querySelector("[data-ob='save-products']");
+      if (save) saveProducts(save);
       return;
     }
     if (action === "add-style") {
@@ -2621,9 +2827,24 @@
   }
 
   function useSuggestions(button) {
-    const suggestions = list(state.record?.policyReview?.suggestedProducts);
+    const all = list(state.record?.policyReview?.suggestedProducts);
+    const pick = button?.dataset?.obSuggestion;
+    const suggestions = pick !== undefined && pick !== "" ? [all[Number(pick)]].filter(Boolean) : all;
     if (!suggestions.length) return;
-    state.record.products = suggestions.map((row, index) => ({ ...row, id: row?.id || `p${index + 1}` }));
+    // Keep what is already on screen (unsaved edits included) and add only
+    // the suggestions that are not in the list yet.
+    const current = page()?.querySelector(".ob-products") ? collectProducts() : list(state.record?.products);
+    const fresh = suggestions.filter((s) => !suggestionInList(current, s));
+    if (!fresh.length) return;
+    let n = current.length;
+    const used = new Set(current.map((p) => p?.id));
+    const nextId = () => {
+      n += 1;
+      while (used.has(`p${n}`)) n += 1;
+      used.add(`p${n}`);
+      return `p${n}`;
+    };
+    state.record.products = [...current, ...fresh.map((row) => ({ ...row, id: nextId() }))];
     renderDetail();
     /* Saved straight away: the save is what fills each row from the store
        (house name, the style as the store writes it, the Vendor) and what
@@ -2662,9 +2883,20 @@
         styles,
         fulfillment: read("fulfillment"),
         classB: node.querySelector("[data-ob-field='classB']")?.checked === true,
-        notes: read("notes")
+        notes: read("notes"),
+        logoMap: parseJsonField(node, "logoMap"),
+        placements: parseJsonField(node, "placements")
       };
     });
+  }
+
+  function parseJsonField(node, name) {
+    try {
+      const value = JSON.parse(node.querySelector(`[data-ob-field="${name}"]`)?.value || "{}");
+      return value && typeof value === "object" ? value : {};
+    } catch {
+      return {};
+    }
   }
 
   function saveProducts(button, advance = false) {
@@ -3217,6 +3449,17 @@ They are rebuilt from the current logos and blank photos. The product's title, S
       // the capabilities it reads (can Locksmith be called? is the menu
       // writable?) are fetched here too. Failure is not fatal: the card falls
       // back to the checklist wording.
+      // The store's garments for "pick a garment" on the product rows.
+      if (!state.garments) {
+        api(`${API}/garments`)
+          .then((payload) => {
+            state.garments = list(payload?.garments);
+            if (isCurrent("detail", id) && state.record && state.step === "products") renderDetail();
+          })
+          .catch(() => {
+            state.garments = [];
+          });
+      }
       if (!state.caps) {
         api(`${API}/capabilities`)
           .then((payload) => {
