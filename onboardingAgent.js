@@ -1717,6 +1717,26 @@ async function buildLock(record, log) {
       settings: { enabled: null, protectProducts: null, hideFromNavigation: null, hideFromLists: null }
     };
   }
+  /* A re-run must not lock the collection twice. Creating is not idempotent,
+     and this step used to create unconditionally — a resumed or re-run build
+     added a second lock to the same collection. The lock already on this
+     collection is the one, whoever made it. */
+  const existing = await locksmith()
+    .findLockForCollection(record.collection.id)
+    .catch(() => null);
+  if (existing) {
+    const existingId = existing.id != null ? existing.id : existing._id;
+    log(`Locksmith: the collection already has lock ${existingId}; keeping it.`);
+    return {
+      status: "created",
+      locksmithLockId: existingId == null ? "" : String(existingId),
+      secretCode: record.lock?.secretCode || "",
+      secretLink: record.lock?.secretLink || "",
+      tagKey: tag,
+      checklist: [],
+      error: ""
+    };
+  }
   const created = await locksmith().createCollectionLock(
     {
       collectionLegacyId: record.collection.id,

@@ -495,7 +495,9 @@ async function createCollectionLock(args, { dryRun = false, install = true, onLo
 
   log(`Locksmith: creating the lock for "${payload.name}".`);
   const created = unwrapLock(await request("POST", lockPath({ install, dryRun: false }), payload));
-  const id = created && created.id != null ? created.id : null;
+  // Locksmith answers with `_id`; reading only `id` left every agent-built
+  // lock without an id on the record.
+  const id = lockId(created);
   return { ok: true, dryRun: false, lock: created, id, secretCode, secretLink, guessed, body: payload, templateLockId: templates.fromLockId, templateError };
 }
 

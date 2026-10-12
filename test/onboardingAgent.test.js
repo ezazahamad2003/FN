@@ -1529,3 +1529,28 @@ test("a failed step keeps the record so nothing is orphaned, and a refused lock 
   assert.match(result.manual.join("\n"), /record was kept/);
   assert.ok(await store.getOnboarding(id), "the record survives a partial delete");
 });
+
+test("the lock step keeps the lock already on the collection instead of making a second one", async () => {
+  let creates = 0;
+  const locksmith = {
+    ...fakeLocksmith(),
+    configured: () => true,
+    findLockForCollection: async (collectionId) => (collectionId === "111" ? { _id: 852901 } : null),
+    createCollectionLock: async () => {
+      creates += 1;
+      return { id: 999, secretCode: "x", secretLink: "https://fnsimple.com/x" };
+    }
+  };
+  harness({ locksmith });
+  const created = await agent.createOnboarding({ payload: { departmentName: DEPARTMENT, state: "CA" } });
+  await store.updateOnboarding(created.id, (r) => {
+    r.department.code = { ...r.department.code, value: "VAC", approved: true };
+    r.collection = { ...r.collection, id: "111", gid: COLLECTION_GID, title: COLLECTION_TITLE };
+    r.lock = { ...r.lock, status: "created", locksmithLockId: "", secretLink: "https://fnsimple.com/first" };
+    return r;
+  });
+  const record = await agent.createLock(created.id, { by: "dan" });
+  assert.equal(creates, 0, "no second lock");
+  assert.equal(record.lock.locksmithLockId, "852901", "the existing lock's _id is recorded");
+  assert.equal(record.lock.secretLink, "https://fnsimple.com/first");
+});
