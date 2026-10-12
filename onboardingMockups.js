@@ -316,13 +316,33 @@ function artworkFor(artwork, code) {
   return null;
 }
 
-function defaultGenerateBlank(product) {
+/*
+ * What the blank is, for the model that has to draw it. The row's title names
+ * the garment better than its type — "Carhartt Rain Defender 1/4 Zip" is not
+ * just "a Hoodie" — and the supplier search returns the maker's description
+ * of the style even when every photo it found was refused. Ripon's CT100617
+ * came out as a plain pullover hoodie because neither reached the generator:
+ * it was told "a Hoodie", a style number the image model has never seen, and
+ * nothing else.
+ */
+function blankDescription(product) {
+  const type = String(product.type || "").trim();
+  const title = String(product.title || "").trim();
+  if (!title) return `a ${type || "garment"}`;
+  if (!type || title.toLowerCase().includes(type.toLowerCase())) return `a ${title}`;
+  return `a ${title} ${type.toLowerCase()}`;
+}
+
+/* `specs` holds the supplier search's description of the style per colour
+   (defaultSupplierLookup fills it); the fallback is only ever reached after
+   that search ran for the same colour. */
+function defaultGenerateBlank(product, specs = null) {
   return ({ face, color }) =>
     getRenderers().generateBlankGarment({
-      productPrompt: `a ${product.type || "garment"}`,
+      productPrompt: blankDescription(product),
       garmentColor: color,
       brandStyle: [product.brand, product.styleNumber].filter(Boolean).join(" "),
-      spec: "",
+      spec: (specs && specs.get(color)) || "",
       imageGuidance: "",
       face
     });
@@ -353,19 +373,13 @@ function defaultSupplierBackLookup(product, onLog, frontUrls) {
   };
 }
 
-function defaultSupplierLookup(product, onLog, frontUrls = null) {
+function defaultSupplierLookup(product, onLog, frontUrls = null, specs = null) {
   return async (color) => {
-    const found = await getRenderers().findSupplierBlank(
-      {
-        vendor: product.brand || "",
-        brandStyle: product.styleNumber || "",
-        garmentColor: color,
-        productType: product.type || "",
-        productLabel: product.title || ""
-      },
-      { onLog }
-    );
+    const found = await getRenderers().findSupplierBlank(supplierQuery(product, color), { onLog });
     if (frontUrls && found && found.imageUrl) frontUrls.set(color, found.imageUrl);
+    // A search that found no usable photo still describes the style; the
+    // drawn fallback for this colour is built from that description.
+    if (specs && found && found.spec) specs.set(color, String(found.spec));
     return (found && found.imageBuffer) || null;
   };
 }
@@ -489,11 +503,13 @@ async function renderProductMockups({
   const method = classBShirt || product.decorationMethod === rules.DECORATION_EMBROIDERY ? "embroidery" : "print";
   const productType = product.type || "garment";
   const styleNumber = product.styleNumber || "";
-  // Front photo URL per colour, so the back lookup can find the same garment's pair.
+  // Front photo URL per colour, so the back lookup can find the same garment's
+  // pair; the style description per colour, so a drawn blank is the right garment.
   const frontUrls = new Map();
-  const lookup = supplierLookup === undefined ? defaultSupplierLookup(product, log, frontUrls) : supplierLookup;
+  const specs = new Map();
+  const lookup = supplierLookup === undefined ? defaultSupplierLookup(product, log, frontUrls, specs) : supplierLookup;
   const backLookup = supplierBackLookup === undefined ? (supplierLookup === undefined ? defaultSupplierBackLookup(product, log, frontUrls) : null) : supplierBackLookup;
-  const generate = generateBlank === undefined ? defaultGenerateBlank(product) : generateBlank;
+  const generate = generateBlank === undefined ? defaultGenerateBlank(product, specs) : generateBlank;
   const derive = deriveBack === undefined ? defaultDeriveBack(product) : deriveBack;
 
   for (const color of colorEntries(product)) {

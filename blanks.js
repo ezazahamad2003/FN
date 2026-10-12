@@ -113,16 +113,24 @@ function scoreImageUrl(url) {
   const name = url.toLowerCase();
   if (/(swatch|sprite|icon|logo|placeholder|thumb|favicon|badge|size.?chart)/.test(name)) return -1;
   if (isNonPhotoImageUrl(url)) return -1;
-  // Back and side views cannot take a front-chest logo.
-  if (/(modelback|model_back|-back-|back\d|modelside|model_side|-side-|detail)/.test(name)) return -1;
+  /* Back and side views cannot take a front-chest logo. The face word sits
+     between separators ("_flat_back-550x550h", "-backFlat", "FlatBack8"),
+     never inside another word — "black" and "backpack" are not back views.
+     Ripon's CT100617 search spent four of its eight vision verdicts on
+     "_flat_back-" files this pattern let through. */
+  if (/(modelback|model_back|flat_?back|back_?flat|[_-]back(?=[_\-.\d]|$)|back\d|modelside|model_side|-side-|detail)/.test(name)) return -1;
+  // Payment and trust badges on distributor pages are never the garment.
+  if (/\/(visa|mastercard|amex|american_express|discover|paypal)[^/]*\.(png|jpe?g|webp|gif)/.test(name)) return -1;
 
   /* Dimensions declared in the URL, when they are clearly too small, are a
      DISQUALIFICATION rather than a low score. Colour-swatch thumbnails name
      the colourway (midnight-navy_40x40.jpg), so once colour drives the
      ranking they outrank the real photograph and spend the whole vision
-     budget on 40-pixel images. */
+     budget on 40-pixel images. OpenCart caches end the size with a letter
+     ("-80x80h"), and some CDNs fix only the width ("_273x0"). */
   const declaredSizes = [
-    ...[...name.matchAll(/[_\-\/](\d{2,4})x(\d{2,4})(?:[_\-.]|$)/g)].flatMap((m) => [+m[1], +m[2]]),
+    ...[...name.matchAll(/[_\-\/](\d{2,4})x(\d{2,4})[a-z]?(?:[_\-.]|$)/g)].flatMap((m) => [+m[1], +m[2]]),
+    ...[...name.matchAll(/[_\-](\d{2,4})x0(?:[_\-.]|$)/g)].map((m) => +m[1]),
     ...[...name.matchAll(/[?&]width=(\d{2,4})/g)].map((m) => +m[1]),
     ...[...name.matchAll(/[_\-](\d{3,4})x(?:[_\-.]|$)/g)].map((m) => +m[1])
   ];
@@ -445,7 +453,14 @@ function backUrlCandidates(frontUrl) {
   return out;
 }
 
-async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, productType, productLabel, face = "front" }) {
+/*
+ * `spec` is the maker's own description of the style, when the search found
+ * one. Without it the gate judged kind by the name alone and refused the real
+ * CT100617 photo as "wrong garment (saw hooded sweatshirt)" — the garment is
+ * a hooded zip mock sweatshirt; "Rain Defender 1/4 Zip" is just what the
+ * store calls it.
+ */
+async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, productType, productLabel, face = "front", spec = "" }) {
   const openai = client();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -458,19 +473,22 @@ async function verifyBlankPhoto(buffer, mimeType, { brandStyle, garmentColor, pr
             type: "text",
             text: `This image is a candidate product photo for a blank garment that a fire department will have its logo embroidered onto.
 
-Expected garment: ${productLabel || productType || "garment"}${brandStyle ? ` (style ${brandStyle})` : ""}
+Expected garment: ${productLabel || productType || "garment"}${brandStyle ? ` (style ${brandStyle})` : ""}${
+              spec ? `\nWhat that style looks like, from the maker's catalogue: ${spec}` : ""
+            }
 Expected colour: ${garmentColor || "not specified — accept any colour"}
 Expected view: the ${face} of the garment
 
 Return JSON only:
 {
-  "garmentMatches": true|false,   // is this the expected KIND of garment (t-shirt vs polo vs pants vs cap, correct sleeve length)?
+  "garmentMatches": true|false,   // is this the expected KIND of garment? Judge by category, hood and sleeve length (t-shirt vs polo vs hoodie vs pants vs cap), never by how the name is worded: a "1/4 Zip Hoodie", a "hooded zip mock sweatshirt" and a "hoodie" are the same kind. When the catalogue description above is given, the photo matches if it shows that garment.
   "garmentSeen": "what garment is actually shown",
   "colourMatches": true|false,    // true if the expected colour was not specified
   "twoTone": true|false,          // true if parts of the garment are a different colour (mesh back, brim, panels, sleeves, trim)
   "colourSeen": "the garment's actual colour",
-  "undecorated": true|false,      // false if ANY logo, text, emblem, patch or printed graphic appears on the garment
-  "decorationSeen": "what decoration is on it, if any",
+  "undecorated": true|false,      // false if the garment carries CUSTOMER decoration: an embroidered or printed crest, badge, lettering, name, number or graphic. The manufacturer's own sewn-on label, woven tab or small brand patch that every unit of the style ships with (Carhartt's pocket label, a Richardson side tab, a reflective brand mark on a cuff) is part of the blank garment and does NOT make it decorated.
+  "decorationSeen": "what customer decoration is on it, if any — not the maker's label",
+  "makerLabelSeen": "the manufacturer's own label or tab, if any",
   "photograph": true|false,       // false for a drawing, outline or technical flat, a spec sheet, a size or measurement chart, or any image with a table or paragraphs of text
   "shotType": "flat-front" | "flat-back" | "model" | "back" | "side" | "other",
   "backgroundClean": true|false,  // plain white or plain neutral studio background
@@ -479,7 +497,7 @@ Return JSON only:
 
 colourMatches is about the WHOLE garment. A garment whose parts are different colours (a navy front with caramel, khaki or white mesh, a contrasting brim, raglan sleeves in another colour) does NOT match a single expected colour such as "Navy". It matches only when the expected colour itself names those colours (for example "Navy/Caramel" or "Navy/White").
 
-"flat-front" means the garment alone, laid flat or on an invisible mannequin, photographed from the front; "flat-back" is the same, photographed from the back. A photo containing a human model is "model", never "flat-front". Ignore brand neck labels and sewn-in care tags — those are not decoration.`
+"flat-front" means the garment alone, laid flat or on an invisible mannequin, photographed from the front; "flat-back" is the same, photographed from the back. A photo containing a human model is "model", never "flat-front". Ignore the manufacturer's own neck labels, care tags, woven brand labels and brand tabs anywhere on the garment — every blank ships with those, and they are not decoration.`
           },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${buffer.toString("base64")}` } }
         ]
@@ -710,6 +728,9 @@ async function findSupplierBlank(product, { onLog } = {}) {
     );
     const rejected = [];
     const tokens = styleTokens(brandStyle);
+    // The gate compares each photo against the maker's description of the
+    // style, so the KIND check is about the garment and not its store name.
+    const gate = { ...expectations, spec: found.spec || "" };
 
     // Style identity normally has to come from the image FILENAME (vision
     // cannot tell NL3600 from NL3214). But when the department named the
@@ -839,6 +860,9 @@ async function findSupplierBlank(product, { onLog } = {}) {
     const shortlist = interleaved.slice(0, 24);
     for (const url of shortlist) {
       if (visionSpent >= 8) break;
+      // Whether a vision verdict was actually spent on this one: a dead
+      // download or a thumbnail says nothing about the garment.
+      let judged = false;
       try {
         const buffer = await fetchImage(url);
         const meta = await sharp(buffer).metadata();
@@ -846,14 +870,15 @@ async function findSupplierBlank(product, { onLog } = {}) {
           throw new Error(`too small (${meta.width || 0}x${meta.height || 0})`);
         }
         visionSpent++;
-        const verdict = await verifyBlankPhoto(buffer, `image/${meta.format === "jpg" ? "jpeg" : meta.format}`, expectations);
+        judged = true;
+        const verdict = await verifyBlankPhoto(buffer, `image/${meta.format === "jpg" ? "jpeg" : meta.format}`, gate);
         if (!verdict.usable) throw new Error(verdict.reasons.join("; "));
         log(`accepted supplier photo: ${url}`);
         imageBuffer = await normalizeBase(buffer);
         imageUrl = url;
         break;
       } catch (error) {
-        rejected.push(`${url.split("/").pop()} — ${error.message}`);
+        rejected.push({ text: `${url.split("/").pop()} — ${error.message}`, judged });
         log(`rejected ${url}: ${error.message}`);
       }
     }
@@ -870,7 +895,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
       }
       for (const url of [...recoloredFrom.keys()].slice(0, 5)) {
         try {
-          imageBuffer = await tryCandidate(url, expectations, log);
+          imageBuffer = await tryCandidate(url, gate, log);
           imageUrl = url;
           if (recoloredFrom.get(url) && !candidateSource.has(url)) candidateSource.set(url, recoloredFrom.get(url));
           log(`recovered the correct colourway by URL: ${url}`);
@@ -900,6 +925,10 @@ async function findSupplierBlank(product, { onLog } = {}) {
       }
     }
 
+    /* The reason Dan reads is the first verdict a photo actually got, not
+       the first thumbnail too small to judge: Ripon's CT100617 entry said
+       "273x273 too small" while the real rejection was the pocket label. */
+    const headline = rejected.find((r) => r.judged) || rejected[0];
     result = {
       imageBuffer,
       imageUrl,
@@ -911,7 +940,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
         : rejected.length
           ? `No usable supplier photo for ${brandStyle} (${rejected.length} candidate${
               rejected.length === 1 ? "" : "s"
-            } rejected: ${rejected[0]}). Generated from fetched specs instead.`
+            } rejected: ${headline.text}). Generated from fetched specs instead.`
           : `No supplier photo found online for ${brandStyle}. Generated from fetched specs instead.`
     };
 
@@ -938,6 +967,9 @@ async function findSupplierBlank(product, { onLog } = {}) {
             ...expectations,
             status: "failed",
             failReason: result.note,
+            // What the style looks like is still worth keeping: it is what
+            // the drawn fallback and the repair queue work from.
+            spec: result.spec || "",
             failedAt: new Date().toISOString(),
             source: "build"
           };
@@ -1102,7 +1134,8 @@ async function findSupplierBack(product, { frontUrl = "", onLog } = {}) {
     garmentColor: product.garmentColor || "",
     productType: product.productType || "",
     productLabel: product.productLabel || "",
-    face: "back"
+    face: "back",
+    spec: entry?.spec || ""
   };
   const rejected = [];
   for (const url of backUrlCandidates(frontUrl)) {
@@ -1137,6 +1170,7 @@ module.exports = {
   // exported for tests
   scoreImageUrl,
   isNonPhotoImageUrl,
+  verifyBlankPhoto,
   imageCandidatesFromPage,
   styleTokens,
   matchesStyle

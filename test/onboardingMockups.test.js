@@ -26,7 +26,9 @@ async function dims(buffer) {
   return { width: meta.width, height: meta.height, format: meta.format };
 }
 
-function fakeRenderers({ failFirstWithSize = false, failAlways = false, reasonAnswer = null, deriveOk = false } = {}) {
+// supplierResult replaces what the injected findSupplierBlank returns (a
+// search that found no photo, say); the default is a grey supplier photo.
+function fakeRenderers({ failFirstWithSize = false, failAlways = false, reasonAnswer = null, deriveOk = false, supplierResult = null } = {}) {
   const calls = { render: [], generate: [], supplier: [], reason: [], derive: [] };
   let failed = false;
   mockups.setRenderers({
@@ -53,6 +55,7 @@ function fakeRenderers({ failFirstWithSize = false, failAlways = false, reasonAn
     },
     findSupplierBlank: async (product) => {
       calls.supplier.push(product);
+      if (supplierResult) return supplierResult;
       return { imageBuffer: await solid(200, 200, "#808080") };
     },
     reason: async (options) => {
@@ -426,6 +429,60 @@ test("renderProductMockups: no base at all is a warning, never a throw", async (
   assert.ok(out[0].warnings.some((w) => /no image model/.test(w)));
   assert.ok(out[0].warnings.some((w) => /No front blank/.test(w)));
   assert.equal(calls.render.length, 0);
+});
+
+/* Ripon, 2026-10-12: every CT100617 photo was refused, and the fallback was
+   told "a Hoodie" and a style number the image model has never seen — so it
+   drew a plain pullover hoodie for a hooded zip mock sweatshirt. The search
+   had described the real garment; the row's title named it. Both reach the
+   generator now. */
+test("renderProductMockups: a drawn blank is described by the row's title and the supplier's spec, not just its type", async () => {
+  const spec = "a heavyweight hooded sweatshirt with a mock neck closed by a short brass zipper and one hand-warmer pocket";
+  const calls = fakeRenderers({ supplierResult: { imageBuffer: null, imageUrl: null, sourceUrl: null, spec, note: "no usable photo" } });
+  const product = tee({
+    brand: "Carhartt",
+    styleNumber: "CT100617",
+    type: "Hoodie",
+    title: "Carhartt Rain Defender 1/4 Zip",
+    colors: ["New Navy"],
+    decorationCodes: "E01",
+    decorationMethod: "embroidery",
+    placements: { E01: "F" }
+  });
+  const out = await mockups.renderProductMockups({
+    product,
+    departmentCode: "RIPO",
+    artwork: { E01: { buffer: await solid(20, 20, "#fff"), mimetype: "image/png", name: "RIPO-E01.png" } },
+    blankPhotos: {},
+    verify: false,
+    size: SIZE
+  });
+  assert.equal(calls.supplier.length, 1);
+  assert.equal(calls.supplier[0].productLabel, "Carhartt Rain Defender 1/4 Zip");
+  // No photo, no derivable front: both faces were drawn, and both from the
+  // same description of the real garment.
+  assert.deepEqual(out.map((m) => m.base), ["generated", "generated"]);
+  assert.deepEqual(calls.generate.map((g) => g.face), ["front", "back"]);
+  for (const call of calls.generate) {
+    assert.equal(call.productPrompt, "a Carhartt Rain Defender 1/4 Zip hoodie");
+    assert.equal(call.spec, spec);
+    assert.equal(call.brandStyle, "Carhartt CT100617");
+    assert.equal(call.garmentColor, "New Navy");
+  }
+});
+
+test("renderProductMockups: a row title that already names the type is not doubled", async () => {
+  const calls = fakeRenderers({ supplierResult: { imageBuffer: null, spec: "" } });
+  await mockups.renderProductMockups({
+    product: tee({ brand: "Richardson", styleNumber: "R112", type: "Hat", title: "Richardson 112 Snapback Hat", colors: ["Navy"], decorationCodes: "E01" }),
+    departmentCode: "RIPO",
+    artwork: {},
+    blankPhotos: {},
+    verify: false,
+    size: SIZE
+  });
+  assert.equal(calls.generate[0].productPrompt, "a Richardson 112 Snapback Hat");
+  assert.equal(calls.generate[0].spec, "");
 });
 
 test("renderProductMockups: the default supplier lookup goes through the injected findSupplierBlank", async () => {

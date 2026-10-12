@@ -30,6 +30,40 @@ test("a spec sheet, size chart or drawing is never a blank candidate", () => {
   }
 });
 
+/* Ripon, 2026-10-12: the CT100617 search found the real SanMar flat front
+   on a distributor page, then spent four of its eight vision verdicts on the
+   page's "_flat_back-" files and most of its downloads on 80-px and 273-px
+   thumbnails whose sizes the URL pattern did not read. */
+test("back views, size-capped thumbnails and payment badges are never blank candidates", () => {
+  for (const url of [
+    "https://www.rowapparel.com/image/cache/catalog/vendor/sanmar/ct100617/CT100617_newnavy_flat_back-1100x1100h.jpg",
+    "https://cdn.blankstyle.com/files/p_images/1830/richardson_4332-navy-backFlat.jpg",
+    "https://cdnp.sanmar.com/medias/1200W-46775-TrueNavy-5-ST349PTrueNavyFlatBack.jpg",
+    "https://www.rowapparel.com/image/cache/catalog/vendor/sanmar/ct100617/CT100617_newnavy_flat_front-80x80h.jpg",
+    "https://flare.fullsource.com/images/items/a/273/SM-CT100617-New-Navy-A1_273x0.jpg",
+    "https://www.levinsonsuniforms.com/images/card_acceptance/visa.png",
+    "https://www.levinsonsuniforms.com/images/card_acceptance/mastercard_transparent.png"
+  ]) {
+    assert.ok(blanks.scoreImageUrl(url) < 0, url);
+  }
+});
+
+test("the real flat front of the same style stays a candidate; 'black' and 'backpack' are not back views", () => {
+  for (const url of [
+    "https://www.rowapparel.com/image/cache/catalog/vendor/sanmar/ct100617/CT100617_newnavy_flat_front-1100x1100h.jpg",
+    "https://flare.fullsource.com/images/items/a/raw/SM-CT100617-New-Navy-A1.jpg",
+    "https://cdn.blankstyle.com/files/p_images/1830/next-level-apparel_3214-black-frontFlat.jpg",
+    "https://cdn.example.com/carhartt-backpack-navy-front.jpg"
+  ]) {
+    assert.ok(blanks.scoreImageUrl(url) >= 0, `${url} must stay a candidate`);
+  }
+  // The flat front outranks the model shot of the same colourway.
+  assert.ok(
+    blanks.scoreImageUrl("https://www.rowapparel.com/image/cache/catalog/vendor/sanmar/ct100617/CT100617_newnavy_flat_front-1100x1100h.jpg") >
+      blanks.scoreImageUrl("https://flare.fullsource.com/images/items/a/raw/SM-CT100617-New-Navy-A1.jpg")
+  );
+});
+
 test("real flat-front photos are not mistaken for spec sheets", () => {
   for (const url of [
     "https://sanmarsports.com/cdn/shop/files/NL3600_midnightnavy_flat_front.jpg?v=1750226539&width=1946",
