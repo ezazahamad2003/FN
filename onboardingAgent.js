@@ -1082,6 +1082,28 @@ async function saveProducts(id, products, { by = "" } = {}) {
       warnedStyleChanges.push(`${merged.styleNumber || "a row"} replaced ${existing.styleNumber} — its mockups and Shopify product were not carried over.`);
     }
 
+    /* Same blank, different spec. Mockups were only dropped when the style
+       number changed, so fixing a row's logos (Pine Hollow's tee went from no
+       codes to F01/B01) kept the logo-less mockups and the re-run reused them.
+       Anything that changes what the garment looks like or which SKUs it has
+       invalidates the mockups; a product already built from the old spec is
+       called out on the row, because a re-run skips a product that exists. */
+    const specKey = (p) =>
+      JSON.stringify([
+        clean(p?.decorationMethod).toLowerCase(),
+        clean(p?.decorationCodes).toUpperCase(),
+        (Array.isArray(p?.styles) ? p.styles : []).map((s) => clean(s?.decorationCodes).toUpperCase()),
+        (Array.isArray(p?.colors) ? p.colors : []).map((c) => clean(c).toLowerCase()),
+        (Array.isArray(p?.sizes) ? p.sizes : []).map((s) => clean(s).toUpperCase())
+      ]);
+    let specWarning = "";
+    if (existing && !styleChanged && specKey(existing) !== specKey(merged)) {
+      if (Array.isArray(merged.mockups) && merged.mockups.length) merged.mockups = [];
+      if (merged.shopify?.gid) {
+        specWarning = `Already built in Shopify from the previous details. Delete that draft${merged.shopify.url ? ` (${merged.shopify.url})` : ""} and re-run the build to recreate it with these SKUs and logos.`;
+      }
+    }
+
     /* Start the row from how the store already sells this blank: the style as
        the store writes it ("Richardson 112" → R112), the house product name
        with this department's code ("Standard Short Sleeve PIN"), and the
@@ -1117,6 +1139,7 @@ async function saveProducts(id, products, { by = "" } = {}) {
       assumptions: expanded.assumptions,
       skuPreview: expanded.variants.map((v) => v.sku).filter(Boolean)
     };
+    if (specWarning) merged.validation.warnings = [...merged.validation.warnings, specWarning];
     if (!clean(merged.title)) merged.title = expanded.product.title;
     if (!clean(merged.decorationMethod) && expanded.product.decorationMethod) merged.decorationMethod = expanded.product.decorationMethod;
 

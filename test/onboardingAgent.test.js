@@ -695,6 +695,24 @@ test("saveProducts starts an empty row from how the store sells the blank (Pine 
   assert.equal(typed.fulfillment, "Non Stock Item");
 });
 
+test("saveProducts: changing a built row's logos drops its old mockups and flags the stale product", async () => {
+  const { id } = await readyForProducts();
+  await agent.saveProducts(id, [{ ...TEE_ROW, styles: [] , decorationCodes: "", decorationMethod: "" }], { by: "dan" });
+  // Pretend a build made a logo-less tee from that row.
+  await store.updateOnboarding(id, (r) => {
+    r.products[0].mockups = [{ assetId: "a1", color: "Navy", face: "front", path: "stock" }];
+    r.products[0].shopify = { gid: "gid://shopify/Product/1", url: "https://admin/products/1" };
+    return r;
+  });
+  const record = await agent.saveProducts(id, [{ ...TEE_ROW, styles: [], decorationMethod: "print", decorationCodes: "F01/B01" }], { by: "dan" });
+  const tee = record.products[0];
+  assert.deepEqual(tee.mockups, [], "logo-less mockups are not reused");
+  assert.match(tee.validation.warnings.join(" "), /Already built in Shopify .*Delete that draft/);
+  // Re-saving the same spec changes nothing.
+  const again = await agent.saveProducts(id, record.products, { by: "dan" });
+  assert.doesNotMatch(again.products[0].validation.warnings.join(" "), /Already built/);
+});
+
 test("saveProducts validates every row, previews the SKUs and proposes an unknown colour", async () => {
   const { id } = await readyForProducts();
 
