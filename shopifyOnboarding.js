@@ -176,6 +176,11 @@ async function findSourceProduct(styleNumber) {
   if (sn.error) throw new Error(sn.error);
   const style = sn.styleNumber;
 
+  const masters = await gql(SOURCE_PRODUCTS_QUERY, { query: `tag:'${MASTER_REFERENCE_TAG}' AND ${style}` }).catch(() => null);
+  const masterHits = (masters?.products?.nodes || []).filter((p) => isMasterReference(p) && (titleMentionsStyle(p.title, style) || skuMatchesStyle(firstSku(p), style)));
+  const tagged = pickSourceProduct(masterHits);
+  if (tagged) return tagged;
+
   const bySku = await gql(SOURCE_PRODUCTS_QUERY, { query: `sku:${style}*` });
   const skuHits = (bySku?.products?.nodes || []).filter((p) => skuMatchesStyle(firstSku(p), style));
   const fromSku = pickSourceProduct(skuHits);
@@ -279,24 +284,33 @@ function decodeEntities(s) {
 // names both, so reading it first made every tee a tank top).
 function garmentType(title, productType) {
   const read = (t) => {
-    // Garment words that contain a headwear word come first: a "Knit Polo"
-    // is a polo, a "Cap Sleeve Tee" is a tee, a crewneck is a sweatshirt.
+    // Garment words that contain a headwear or "short" word come first: a
+    // "Knit Polo" is a polo, a "Cap Sleeve Tee" is a tee, a "Short Sleeve
+    // Tee" is a tee (not shorts), a "Crew Neck T-Shirt" is a tee.
     if (/polo/.test(t)) return "Polo";
     if (/hood/.test(t)) return "Hoodie";
     if (/quarter[\s-]*zip|1\/4[\s-]*zip/.test(t)) return "Quarter Zip";
-    if (/sweatshirt|crewneck|crew neck|fleece crew/.test(t)) return "Sweatshirt";
+    if (/job shirt/.test(t)) return "Job Shirt";
+    if (/class ?b|uniform shirt|work shirt|button[\s-]*(up|down)|station shirt/.test(t)) return "Class B Shirt";
+    if (/sweatshirt|fleece crew|(crew ?neck|crewneck)(?!.*\b(tee|t-shirt)\b)/.test(t) && !/\b(tee|t-shirt)\b/.test(t)) return "Sweatshirt";
     if (/jacket|soft ?shell|parka/.test(t)) return "Jacket";
     if (/\bvest\b/.test(t)) return "Vest";
     if (/beanie|watch cap|knit cap|knit hat|toque/.test(t)) return "Beanie";
     if (/\b(hat|snapback|trucker|flex ?fit|headwear|visor)\b/.test(t) || (/\bcaps?\b/.test(t) && !/cap sleeve/.test(t))) return "Hat";
     if (/tank/.test(t)) return "Tank Top";
     if (/long sleeve/.test(t)) return "Long Sleeve Shirt";
-    if (/\bshorts?\b/.test(t)) return "Shorts";
-    if (/pants?|trousers?/.test(t)) return "Pants";
-    if (/tee|t-shirt|shirt/.test(t)) return "T-shirt";
+    if (/\bshorts\b/.test(t)) return "Shorts";
+    if (/\bpants?\b|trousers?/.test(t)) return "Pants";
+    if (/\btee\b|t-shirt|shirt/.test(t)) return "T-shirt";
     return "";
   };
-  return read(String(title).toLowerCase()) || read(decodeEntities(productType).toLowerCase()) || decodeEntities(productType) || "Garment";
+  // A type the agent itself wrote on a master (Job Shirt, Class B Shirt…) is
+  // taken as written; otherwise the title decides and the type is a fallback.
+  const known = require("./blanks").GARMENT_TYPES || [];
+  const typed = decodeEntities(productType).trim();
+  const exact = known.find((k) => k.toLowerCase() === typed.toLowerCase() && k !== "Other");
+  if (exact) return exact;
+  return read(String(title).toLowerCase()) || read(typed.toLowerCase()) || typed || "Garment";
 }
 
 let garmentCache = { at: 0, list: null };
@@ -344,24 +358,21 @@ async function createMasterDraft({ brand = "", styleNumber = "", name = "", type
     const existing = await findSourceProduct(style);
     if (existing) return { created: false, id: existing.id, legacyId: existing.legacyId || "", title: existing.title, url: existing.url || "", styleNumber: style };
   }
-  const digits = sn.styleNumber.replace(/^[A-Z]+/, "");
-  const brandWord = String(brand || "").trim().split(/\s+/)[0].toLowerCase();
-  const twin = (await masterGarments().catch(() => [])).find(
-    (g) => g.styleNumber.replace(/^[A-Z]+/, "") === digits && /\d/.test(digits) && (!brandWord || g.brand.toLowerCase().startsWith(brandWord))
-  );
-  if (twin) {
-    const existing = await findSourceProduct(twin.styleNumber).catch(() => null);
-    if (existing) return { created: false, id: existing.id, legacyId: existing.legacyId || "", title: existing.title, url: existing.url || "", styleNumber: twin.styleNumber };
-  }
 
   /* Real sizes only: ranges expanded ("S-3XL"), each one a size the rules
      accept. An empty list used to become XS–3XL even on a hat. */
-  const hat = /\b(hats?|caps?|snapbacks?|beanies?|visors?|headwear|truckers?|flex\s*fit|flexfit|fitted)\b/i.test(`${type} ${name}`);
+  const hat = rules.isHeadwearText(`${type} ${name}`);
+  const apparel = !hat && rules.isApparelText(`${type} ${name}`);
   const variantsSizes = [];
-  for (const raw of rules.expandSizeList((Array.isArray(sizes) ? sizes : []).map((s) => String(s).trim()).filter(Boolean), { hat })) {
+  const unknown = [];
+  for (const raw of rules.expandSizeList((Array.isArray(sizes) ? sizes : []).map((s) => String(s).trim()).filter(Boolean), { hat, apparel })) {
     const n = rules.normalizeSize(raw);
-    if (!n.error && !variantsSizes.includes(n.size)) variantsSizes.push(n.size);
+    if (n.error) unknown.push(raw);
+    else if (!variantsSizes.includes(n.size)) variantsSizes.push(n.size);
   }
+  // A size the rules do not know would be left off the master without a
+  // word, and every later row picking this garment would inherit the gap.
+  if (unknown.length) throw new Error(`Fix these sizes on the row first — they are not sizes the store uses: ${unknown.join(", ")}.`);
   if (!variantsSizes.length) {
     if (hat) variantsSizes.push("OSFA");
     else throw new Error("Fill in the sizes on the row first (e.g. S-3XL) — the master gets one variant per size.");
@@ -414,7 +425,23 @@ async function resolveStyleNumber(brand, styleNumber) {
       if (m && want.test(title)) return m[1].toUpperCase();
     }
   }
+  /* A style written as bare digits ("3600") whose master carries the brand's
+     letter prefix ("NL3600"), same brand. Only for digit-led styles: a
+     lettered style is never re-lettered, so a ladies' LST350 never becomes
+     the men's ST350, nor L500 → K500. */
+  for (const style of candidates) {
+    if (!/^\d/.test(style)) continue;
+    const twin = (await masterGarments().catch(() => [])).find((g) => sameBrand(g.brand, b) && g.styleNumber.replace(/^[A-Z]+/, "") === style);
+    if (twin) return twin.styleNumber;
+  }
   return candidates[candidates.length - 1];
+}
+
+// "Next Level" / "Next Level Apparel", "Port & Company" / "Port and Co": the
+// first word decides.
+function sameBrand(a, b) {
+  const first = (s) => String(s || "").toLowerCase().replace(/&/g, "and").trim().split(/\s+/)[0] || "";
+  return Boolean(first(a)) && first(a) === first(b);
 }
 
 /* ---------------------------------------------------------------------------
@@ -770,6 +797,33 @@ mutation fileDelete($fileIds: [ID!]!) {
   }
 }`;
 
+/*
+ * Bind images that are ALREADY on the product to variants showing none.
+ * Nothing is uploaded or deleted. This is the repair for a build cut off
+ * between the upload and the bind: the pictures are in the gallery, the
+ * variants are bare, and §9.10 fails until each one is attached.
+ */
+const VARIANT_APPEND_MEDIA_MUTATION = `
+mutation productVariantAppendMedia($productId: ID!, $variantMedia: [ProductVariantAppendMediaInput!]!) {
+  productVariantAppendMedia(productId: $productId, variantMedia: $variantMedia) {
+    product { id }
+    userErrors { code field message }
+  }
+}`;
+
+async function linkVariantImages(id, links = [], { onLog } = {}) {
+  const log = logger(onLog);
+  const list = (links || []).filter((link) => link && link.variantId && link.mediaId);
+  if (!list.length) return 0;
+  const data = await gql(VARIANT_APPEND_MEDIA_MUTATION, {
+    productId: productGid(id),
+    variantMedia: list.map((link) => ({ variantId: link.variantId, mediaIds: [link.mediaId] }))
+  });
+  assertNoUserErrors("productVariantAppendMedia", data?.productVariantAppendMedia?.userErrors);
+  log(`Bound ${list.length} existing image(s) to variant(s) that showed none.`);
+  return list.length;
+}
+
 async function replaceProductImages(id, images = [], { onLog } = {}) {
   const log = logger(onLog);
   const snapshot = await productSnapshot(id);
@@ -1088,7 +1142,7 @@ query productSnapshot($id: ID!, $after: String) {
     tags
     productType
     options { name optionValues { name } }
-    media(first: ${PAGE_SIZE}) { nodes { ... on MediaImage { id image { url } } } }
+    media(first: ${PAGE_SIZE}) { nodes { ... on MediaImage { id alt image { url } } } }
     collections(first: 50) { nodes { id legacyResourceId title } }
     variants(first: ${PAGE_SIZE}, after: $after) {
       nodes { id sku price inventoryPolicy selectedOptions { name value } image { url } }
@@ -1126,7 +1180,8 @@ async function productSnapshot(idOrGid) {
       selectedOptions: v.selectedOptions || [],
       image: v.image?.url ? { url: v.image.url } : null
     })),
-    media: (product.media?.nodes || []).filter((m) => m && m.id).map((m) => ({ id: m.id, url: m.image?.url || null })),
+    // alt is how a re-run finds a mockup that uploaded but was never bound.
+    media: (product.media?.nodes || []).filter((m) => m && m.id).map((m) => ({ id: m.id, url: m.image?.url || null, alt: m.alt || "" })),
     collections: (product.collections?.nodes || []).map((c) => ({ id: String(c.legacyResourceId), gid: c.id, title: c.title }))
   };
 }
@@ -1583,6 +1638,7 @@ module.exports = {
   buildProductSetInput,
   setProduct,
   attachMockups,
+  linkVariantImages,
   replaceProductImages,
   // collection
   ensureDepartmentCollection,

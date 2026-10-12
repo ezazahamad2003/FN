@@ -140,7 +140,10 @@ const SIZE_ALIASES = {
   "S-M": "S/M",
   "L-XL": "L/XL",
   SM: "S/M",
-  LXL: "L/XL"
+  LXL: "L/XL",
+  XXLT: "2XLT",
+  XXXLT: "3XLT",
+  XXXXLT: "4XLT"
 };
 
 /*
@@ -185,9 +188,24 @@ function normalizeSize(input) {
  * and L/XL, not ranges. Waists step by 2 when both ends are even (28, 30,
  * 32…), by 1 otherwise.
  */
+/*
+ * Is this garment headwear / clearly apparel, from its type or title? One
+ * test everywhere (sizes, master drafts): "Cap Sleeve Tee" and "Fitted Tee"
+ * are not hats; "Hats", "Caps", "Flexfit", "Snapback" are.
+ */
+function isHeadwearText(text) {
+  const t = String(text || "").toLowerCase();
+  if (/cap sleeve/.test(t)) return false;
+  return /\b(hats?|caps?|snapbacks?|beanies?|visors?|headwear|truckers?|flex\s*fit|flexfit|toques?)\b/.test(t);
+}
+
+function isApparelText(text) {
+  return /\b(shirts?|t-shirts?|tees?|hoodies?|hooded|sweatshirts?|sweaters?|jackets?|polos?|pants|shorts|vests?|zip|tanks?|coats?|fleece|crew ?necks?|crewnecks?|parkas?)\b/i.test(String(text || ""));
+}
+
 const RANGE_SPLIT = /^(.+?)\s*(?:-|–|—|\bTO\b|\bTHRU\b|\bTHROUGH\b)\s*(.+)$/;
 
-function expandSizeRange(token, { hat = false } = {}) {
+function expandSizeRange(token, { hat = false, apparel = false } = {}) {
   const original = String(token == null ? "" : token).trim();
   const raw = original.toUpperCase().replace(/\s+/g, " ");
   if (!raw) return [];
@@ -201,8 +219,12 @@ function expandSizeRange(token, { hat = false } = {}) {
      written ("S-M", "S – M", "S to M") and whatever the row's type says.
      Expanding them made a "Hats" or "Caps" row (or one with no type) sell
      S, M, L, XL — four sizes a fitted cap does not come in. */
-  if (a === "S" && b === "M") return ["S/M"];
-  if (a === "L" && b === "XL") return ["L/XL"];
+  if (!apparel) {
+    if (a === "S" && b === "M") return ["S/M"];
+    if (a === "L" && b === "XL") return ["L/XL"];
+    // A hat sold S to XL comes in its two fits.
+    if (hat && a === "S" && b === "XL") return ["S/M", "L/XL"];
+  }
   for (const ladder of [ALPHA_SIZES, TALL_SIZES, YOUTH_SIZES]) {
     const i = ladder.indexOf(a);
     const j = ladder.indexOf(b);
@@ -221,8 +243,8 @@ function expandSizeRange(token, { hat = false } = {}) {
   return [original];
 }
 
-function expandSizeList(inputs, { hat = false } = {}) {
-  return (Array.isArray(inputs) ? inputs : [inputs]).flatMap((s) => expandSizeRange(s, { hat }));
+function expandSizeList(inputs, { hat = false, apparel = false } = {}) {
+  return (Array.isArray(inputs) ? inputs : [inputs]).flatMap((s) => expandSizeRange(s, { hat, apparel }));
 }
 
 /* ---------------------------------------------------------------------------
@@ -701,9 +723,11 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED,
   }
 
   // Sizes — always an option (§9.6).
-  const hat = /\b(hats?|caps?|snapbacks?|beanies?|visors?|headwear|truckers?|flex\s*fit|flexfit|fitted)\b/i.test(`${product.type || ""} ${product.title || ""}`);
+  const garmentText = `${product.type || ""} ${product.title || ""}`;
+  const hat = isHeadwearText(garmentText);
+  const apparel = !hat && isApparelText(garmentText);
   const rawSizes = Array.isArray(product.sizes) ? product.sizes : String(product.sizes || "").split(/\s*,\s*/);
-  const sizeInputs = expandSizeList(rawSizes, { hat });
+  const sizeInputs = expandSizeList(rawSizes, { hat, apparel });
   const sizes = [];
   for (const s of sizeInputs) {
     if (!String(s || "").trim()) continue;
@@ -1028,6 +1052,8 @@ module.exports = {
   // sizes / decorations / colours
   normalizeSize,
   expandSizeRange,
+  isHeadwearText,
+  isApparelText,
   expandSizeList,
   parseDecorationCode,
   normalizeDecorations,

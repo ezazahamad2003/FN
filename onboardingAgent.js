@@ -963,6 +963,9 @@ async function reviewPolicy(id, { by = "" } = {}) {
   const docs = await writeReviewDocs(record, review, by);
 
   return store().updateOnboarding(id, (r) => {
+    // Rows remember which suggestion they came from by its place in the list;
+    // a new review is a new list, so those places no longer mean anything.
+    for (const product of r.products || []) delete product.fromSuggestion;
     r.policyReview = {
       ...r.policyReview,
       reviewedAt: nowIso(),
@@ -1054,6 +1057,8 @@ async function saveProducts(id, products, { by = "" } = {}) {
   const usedIds = new Set();
   for (let i = 0; i < products.length; i++) {
     const incoming = { ...(products[i] || {}) };
+    // Owed images are the build's to track, never the console's to send.
+    delete incoming.replaceImages;
     /* A row with nothing in it (+ Add product, then Save) is not a product.
        Saving it showed four "is required" errors on an empty row and kept
        the store's product list "needing attention" for no reason. */
@@ -1093,7 +1098,10 @@ async function saveProducts(id, products, { by = "" } = {}) {
         delete carried[key];
       }
       const oldTitle = clean(existing.title);
-      if (oldTitle && clean(incoming.title) === oldTitle && existing.storeProfile?.name && oldTitle.startsWith(existing.storeProfile.name)) incoming.title = "";
+      const autoTitle =
+        (existing.storeProfile?.name && oldTitle.startsWith(existing.storeProfile.name)) ||
+        oldTitle === clean([existing.brand, existing.type].filter(Boolean).join(" "));
+      if (oldTitle && clean(incoming.title) === oldTitle && autoTitle) incoming.title = "";
       if (clean(incoming.fulfillment) && clean(incoming.fulfillment) === clean(existing.storeProfile?.vendor) && clean(incoming.fulfillment) === clean(existing.fulfillment)) incoming.fulfillment = "";
     }
 
@@ -1122,10 +1130,19 @@ async function saveProducts(id, products, { by = "" } = {}) {
         (Array.isArray(p?.colors) ? p.colors : []).map((c) => clean(c).toLowerCase()),
         // Compared as the sizes they mean: "S-3XL" and "S, M, L, XL, 2XL, 3XL"
         // are the same spec (saving writes the expanded form back).
-        rules.expandSizeList(Array.isArray(p?.sizes) ? p.sizes : []).map((s) => {
-          const n = rules.normalizeSize(s);
-          return n.error ? clean(s).toUpperCase() : n.size;
-        }),
+        [
+          ...new Set(
+            rules.expandSizeList(Array.isArray(p?.sizes) ? p.sizes : [], { hat: rules.isHeadwearText(`${p?.type || ""} ${p?.title || ""}`) }).map((s) => {
+              const n = rules.normalizeSize(s);
+              return n.error ? clean(s).toUpperCase() : n.size;
+            })
+          )
+        ].sort(),
+        // Moving an embroidered logo (Front → Back) changes the picture even
+        // when its code stays E01.
+        Object.entries(p?.placements && typeof p.placements === "object" ? p.placements : {})
+          .filter(([, v]) => v)
+          .sort(([a], [b]) => a.localeCompare(b)),
         // Which uploaded logo each placement uses changes the picture too.
         Object.entries(p?.logoMap && typeof p.logoMap === "object" ? p.logoMap : {})
           .filter(([, v]) => v)
@@ -1596,16 +1613,35 @@ async function runBuild(id, build, { by = "" } = {}) {
             delete target.replaceImages;
           }
           note(r, { type: "build", message: `${title}: images replaced (${replaced.removed} removed, ${replaced.added} added).`, by }, build);
+          for (const w of unboundFrontWarnings(images, title)) note(r, { type: "warning", message: w, by }, build);
         });
         stepDone(step, `images replaced (${replaced.added})`);
         continue;
       }
       if (product.shopify?.gid && (await catalog().productExists(product.shopify.gid))) {
-        stepSkip(step, "already created");
-        log(`${product.title || product.id} already exists in Shopify; skipped.`);
+        const label = product.title || product.id;
+        /* Not created again — but a variant showing no image gets its front
+           bound, so a re-run repairs what an interrupted one left behind.
+           A failed READ keeps the old skip (the final check still tests the
+           images); a failed bind fails the step, like any other write. */
+        let snapshot = null;
+        try {
+          snapshot = await shop().productSnapshot(product.shopify.gid);
+        } catch (error) {
+          log(`${label}: could not read it back to check its images (${errorText(error)}).`);
+        }
+        const bound = snapshot ? await bindMissingFrontImages(id, product, snapshot, log) : 0;
+        if (bound) {
+          stepDone(step, `already created; ${bound} variant image(s) re-attached`);
+          log(`${label} already exists in Shopify; re-attached ${bound} variant image(s) that were missing.`);
+        } else {
+          stepSkip(step, "already created");
+          log(`${label} already exists in Shopify; skipped.`);
+        }
         record = await saveBuild(id, build, (r) => {
           const target = productById(r, product.id);
           if (target) target.buildState = "created";
+          if (bound) note(r, { type: "build", message: `${label}: ${bound} variant(s) showed no image; their front image was attached.`, by }, build);
         });
         continue;
       }
@@ -1756,7 +1792,7 @@ async function buildMockups(id, record, product, log) {
         ? byRole(["back", "scramble"])
         : byRole(["chest", "pick", "scramble", ""]) || packetArt.find((f) => (f.role || "") !== "back") || null);
     if (!file) {
-      warnings.push(`No logo for ${decoration}: upload the department's ${prefix === "B" ? "back" : "chest"} logo in the packet${prefix === "E" ? " or the embroidery proof on the row" : ""}.`);
+      warnings.push(`No logo for ${decoration}: upload the department's ${onBack ? "back" : "chest"} logo in the packet${prefix === "E" ? " or the embroidery proof on the row" : ""}.`);
       continue;
     }
     const asset = await store().getAsset(id, file.assetId);
@@ -2022,6 +2058,7 @@ async function buildProduct(id, record, product, log, { onCreated } = {}) {
   const images = await mockupImages(id, product, result.variants, title);
   if (images.length) await shop().attachMockups(result.id, images, { onLog: log });
   else warnings.push(`${title}: no mockup images were attached.`);
+  warnings.push(...unboundFrontWarnings(images, title));
 
   return {
     warnings,
@@ -2046,6 +2083,12 @@ function variantIdsForMockup(variants, mockup) {
     .map((variant) => variant.id);
 }
 
+// The alt text doubles as the image's identity: a re-run finds a front that
+// uploaded but was never bound by it (bindMissingFrontImages).
+function mockupAlt(title, mockup) {
+  return `${title} — ${mockup.color}${mockup.style ? ` ${mockup.style}` : ""} ${mockup.face}`;
+}
+
 async function mockupImages(id, product, variants, title) {
   const usable = (product.mockups || []).filter((m) => m.assetId);
   const ordered = [...usable.filter((m) => m.face === "front"), ...usable.filter((m) => m.face !== "front")];
@@ -2056,11 +2099,53 @@ async function mockupImages(id, product, variants, title) {
     images.push({
       filename: mockup.fileName,
       buffer: asset.buffer,
-      alt: `${title} — ${mockup.color}${mockup.style ? ` ${mockup.style}` : ""} ${mockup.face}`,
+      alt: mockupAlt(title, mockup),
+      face: mockup.face,
       variantIds: mockup.face === "front" ? variantIdsForMockup(variants, mockup) : []
     });
   }
   return images;
+}
+
+/* A front that matches no variant uploads into the gallery and binds to
+   nothing — no error, a product step that says "complete", and a §9.10
+   failure only the final check would find. Say so at build time. */
+function unboundFrontWarnings(images, title) {
+  return (images || [])
+    .filter((image) => image.face === "front" && !(image.variantIds || []).length)
+    .map((image) => `${title}: the front image "${image.alt}" matched no variant's Color, so no variant shows it. Check the colour on the product row matches the variant's Color option.`);
+}
+
+/*
+ * An existing product whose variants show no image: the mockups uploaded but
+ * were never bound — a deploy between the two calls, or a record repaired by
+ * hand without marking the images owed (Ripon's hat). A re-run used to skip
+ * it as "already created", so only the final check noticed and nothing fixed
+ * it. Bind the front already in the gallery, found by its alt text; upload
+ * only a front that is not there at all. Nothing is deleted, so a photo Dan
+ * added by hand survives. Returns how many variants now show an image.
+ */
+async function bindMissingFrontImages(id, product, snapshot, log) {
+  const bare = (snapshot?.variants || []).filter((variant) => !variant.image?.url);
+  if (!bare.length) return 0;
+  const titles = [...new Set([clean(snapshot.title), clean(product.title)].filter(Boolean))];
+  const links = [];
+  const uploads = [];
+  for (const mockup of (product.mockups || []).filter((m) => m && m.face === "front" && m.assetId)) {
+    const variantIds = variantIdsForMockup(bare, mockup);
+    if (!variantIds.length) continue;
+    const alts = titles.map((title) => mockupAlt(title, mockup));
+    const media = (snapshot.media || []).find((m) => alts.includes(clean(m.alt)));
+    if (media) {
+      for (const variantId of variantIds) links.push({ variantId, mediaId: media.id });
+      continue;
+    }
+    const asset = await store().getAsset(id, mockup.assetId);
+    if (asset) uploads.push({ filename: mockup.fileName, buffer: asset.buffer, alt: alts[0], variantIds });
+  }
+  if (links.length) await shop().linkVariantImages(snapshot.gid, links, { onLog: log });
+  if (uploads.length) await shop().attachMockups(snapshot.gid, uploads, { onLog: log });
+  return links.length + uploads.reduce((count, upload) => count + upload.variantIds.length, 0);
 }
 
 /* ---------------------------------------------------------------------------

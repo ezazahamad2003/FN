@@ -99,10 +99,10 @@ test("findSourceProduct prefers the Master Reference product over a newer one", 
   assert.match(source.url, /\/admin\/products\/2001$/);
   assert.ok(source.tags.includes("Master Reference"));
 
-  // The style number is normalized before it reaches Shopify, and the SKU
-  // search runs first (one call — the title fallback is not needed).
+  // The style number is normalized before it reaches Shopify, and the tagged
+  // master search runs first (one call — nothing else is needed).
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].variables.query, "sku:NL3600*");
+  assert.equal(calls[0].variables.query, "tag:'Master Reference' AND NL3600");
 });
 
 test("findSourceProduct falls back to the newest product when none is a master", async (t) => {
@@ -142,8 +142,8 @@ test("findSourceProduct matches the style exactly: NL3600 is never NL36001 or NL
 
   const source = await shopifyOnboarding.findSourceProduct("NL3600");
   assert.equal(source.id, "gid://shopify/Product/2001");
-  // A SKU hit that is not the master still looks for a master by title.
-  assert.equal(calls.length, 2);
+  // Tagged master search, SKU search, then the title search for a master.
+  assert.equal(calls.length, 3);
 
   assert.equal(shopifyOnboarding.skuMatchesStyle("NL3600-S-NVY", "NL3600"), true);
   assert.equal(shopifyOnboarding.skuMatchesStyle("nl3600-s-nvy", "NL3600"), true);
@@ -171,10 +171,10 @@ test("findSourceProduct falls back to the title form \"(NL3600)\" when no SKU ma
   const source = await shopifyOnboarding.findSourceProduct("NL3600");
   assert.equal(source.id, "gid://shopify/Product/2002");
   assert.equal(source.kind, "latest");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   // Parentheses are grouping syntax in Shopify search, so the fallback query is
   // the bare style and "(NL3600)" is matched locally.
-  assert.equal(calls[1].variables.query, "NL3600");
+  assert.equal(calls[2].variables.query, "NL3600");
 });
 
 test("findSourceProduct returns null when nothing matches, and rejects a bad style", async (t) => {
@@ -1502,7 +1502,7 @@ test("productSnapshot pages variants and keeps the fields the final check tests"
     tags: ["VAC"],
     productType: "",
     options: [{ name: "Color", optionValues: [{ name: "Navy" }] }, { name: "Size", optionValues: [{ name: "S" }, { name: "M" }] }],
-    media: { nodes: [{ id: "gid://shopify/MediaImage/1", image: { url: "https://cdn/front.png" } }] },
+    media: { nodes: [{ id: "gid://shopify/MediaImage/1", alt: "Next Level T-Shirt — Navy front", image: { url: "https://cdn/front.png" } }] },
     collections: { nodes: [{ id: "gid://shopify/Collection/77", legacyResourceId: "77", title: "Vacaville Fire Department" }] }
   };
   const variant = (sku, size) => ({
@@ -1533,6 +1533,32 @@ test("productSnapshot pages variants and keeps the fields the final check tests"
   assert.ok(snap.variants.every((v) => v.inventoryPolicy === "CONTINUE"), "§9.8 continue selling");
   assert.ok(snap.variants.every((v) => v.image && v.image.url), "§9.10 each variant carries its image");
   assert.deepEqual(snap.collections.map((c) => c.title), ["Vacaville Fire Department"]);
+  // A re-run finds an uploaded-but-unbound front by its alt text.
+  assert.equal(snap.media[0].alt, "Next Level T-Shirt — Navy front");
+});
+
+test("linkVariantImages binds media already on the product and uploads or deletes nothing", async (t) => {
+  t.after(resetShopify);
+  const calls = stubGraphql({ productVariantAppendMedia: { productVariantAppendMedia: { product: { id: "gid://shopify/Product/500" }, userErrors: [] } } });
+
+  const count = await shopifyOnboarding.linkVariantImages(500, [
+    { variantId: "gid://shopify/ProductVariant/1", mediaId: "gid://shopify/MediaImage/9" },
+    { variantId: "", mediaId: "gid://shopify/MediaImage/9" }
+  ]);
+
+  assert.equal(count, 1, "a link with no variant is dropped");
+  assert.deepEqual(calls.map((c) => c.op), ["productVariantAppendMedia"]);
+  assert.equal(calls[0].variables.productId, "gid://shopify/Product/500");
+  assert.deepEqual(calls[0].variables.variantMedia, [{ variantId: "gid://shopify/ProductVariant/1", mediaIds: ["gid://shopify/MediaImage/9"] }]);
+});
+
+test("linkVariantImages surfaces a Shopify refusal instead of reporting success", async (t) => {
+  t.after(resetShopify);
+  stubGraphql({ productVariantAppendMedia: { productVariantAppendMedia: { product: null, userErrors: [{ code: "INVALID", field: ["variantMedia"], message: "The given variant already has attached media." }] } } });
+  await assert.rejects(
+    shopifyOnboarding.linkVariantImages(500, [{ variantId: "gid://shopify/ProductVariant/1", mediaId: "gid://shopify/MediaImage/9" }]),
+    /already has attached media/
+  );
 });
 
 /* A throttle error that happens to name the field is not a schema rejection —

@@ -1385,12 +1385,23 @@
       </section>`;
     }
 
-    const blockers = list(record.report?.missingInformation).filter((m) => !/Mega Menu|Shopify Flow|Helium/i.test(m));
+    /* report.unresolved is everything that kept the last final check from
+       passing; missingInformation is only the part of it the classifier
+       labelled "missing", so it is the fallback for reports written before
+       unresolved was recorded. Menu/Flow/Helium are left out because pressing
+       finish handles those itself. */
+    const reported = Array.isArray(record.report?.unresolved) ? record.report.unresolved : list(record.report?.missingInformation);
+    const blockers = reported.filter((m) => !/Mega Menu|Shopify Flow|Helium/i.test(m));
+    const heading = asks.length
+      ? "Two things only you can do"
+      : blockers.length
+        ? `${blockers.length === 1 ? "One thing is" : `${blockers.length} things are`} still open`
+        : "Nothing left for you outside the console";
 
     return `
       <section class="card card-pad ob-finish" data-tone="${asks.length || blockers.length ? "warn" : "ok"}">
         <p class="eyebrow">Ready to finish?</p>
-        <h3>${asks.length ? "Two things only you can do" : "Nothing left for you outside the console"}</h3>
+        <h3>${esc(heading)}</h3>
         ${asks.length
           ? `<ul class="ob-finish-asks">${asks
               .map(
@@ -1405,7 +1416,8 @@
              <p class="hint">The exact steps for each are in the Shopify Flow and Helium cards below. Neither app has an API to write, so the agent cannot do these for you.</p>`
           : `<p class="muted">Flow and Helium are already recorded.</p>`}
         ${blockers.length
-          ? `<div class="ob-finish-blockers"><p><b>Still unresolved:</b></p><ul>${blockers.slice(0, 4).map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`
+          ? `<div class="ob-finish-blockers"><p><b>The last final check found:</b></p><ul>${blockers.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>
+              <p class="hint">Fix ${blockers.length === 1 ? "it" : "these"} in Shopify or on the earlier steps, then press finish again — it re-checks everything.</p></div>`
           : ""}
         <p class="muted">Pressing yes will ${esc(willDo.join(", then "))}.</p>
         <div class="field ob-operator">
@@ -1864,7 +1876,7 @@
     }
     const defaultFor = (key) => (key === "B" ? "back" : "chest");
     return `
-      <div class="ob-placements" data-ob-placements>
+      <div class="ob-placements" data-ob-placements data-ob-proof-codes="${esc(Object.keys(product?.proofs || {}).filter((k) => product.proofs[k]).join(","))}">
         <p class="field-label">Where the logos go <small>tick each placement and pick the logo for it</small></p>
         ${custom ? `<p class="hint" data-tone="warn">This row also has codes the four placements do not cover (e.g. F02, P01). Ticking placements keeps them; change them in "Decoration codes" above.</p>` : ""}
         <div class="ob-placement-grid">
@@ -1894,6 +1906,8 @@
      by hand — is kept exactly as it is. An embroidery placement keeps its E
      number when others are unticked, so proofs (filed by code) stay put. */
   function syncPlacements(row, { fromPlacement = true } = {}) {
+    // A row sold in Styles shows no placements; its codes are left alone.
+    if (!row.querySelector("[data-ob-place]")) return;
     const method = row.querySelector("[data-ob-field='decorationMethod']")?.value || "";
     const ticked = PLACEMENTS.map((p) => row.querySelector(`[data-ob-place='${p.key}']`)).filter(
       (node) => node && node.querySelector("[data-ob-place-on]")?.checked
@@ -1933,12 +1947,15 @@
     const logoMap = {};
     const placements = {};
     const used = new Set(kept);
+    const proofCodes = String(row.querySelector("[data-ob-placements]")?.dataset.obProofCodes || "")
+      .split(",")
+      .filter(Boolean);
     const eFor = {};
     for (const [code, key] of Object.entries(eKeys)) eFor[key] = code;
     const nextE = () => {
       for (let n = 1; n < 100; n += 1) {
         const code = `E${String(n).padStart(2, "0")}`;
-        if (!used.has(code) && !Object.values(eFor).includes(code)) return code;
+        if (!used.has(code) && !Object.values(eFor).includes(code) && !proofCodes.includes(code)) return code;
       }
       return "E99";
     };
@@ -1967,6 +1984,56 @@
     if (placeInput) placeInput.value = JSON.stringify(placements);
   }
 
+  // "112" and "R112", "3600" and "NL3600" are one garment, not a switch.
+  function sameGarment(a, b) {
+    const x = String(a || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const y = String(b || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!x || !y) return false;
+    if (x === y) return true;
+    return (/^[0-9]/.test(x) && y.replace(/^[A-Z]+/, "") === x) || (/^[0-9]/.test(y) && x.replace(/^[A-Z]+/, "") === y);
+  }
+
+  /* On a garment switch only what the agent filled in goes: the title it
+     made from the store's name (or "<brand> <type>") and the Vendor it took
+     from the store. A title or Vendor typed by hand stays. */
+  function clearAutoFilled(row) {
+    const saved = list(state.record?.products).find((p) => p?.id === row.dataset.obProduct) || {};
+    const code = state.record?.department?.code?.value || "";
+    const title = row.querySelector("[data-ob-field='title']");
+    const value = (title?.value || "").trim();
+    const autoTitles = [
+      saved.storeProfile?.name ? `${saved.storeProfile.name} ${code}`.trim() : "",
+      [saved.brand, saved.type].filter(Boolean).join(" ")
+    ].filter(Boolean);
+    if (title && (!value || autoTitles.includes(value))) title.value = "";
+    const vendor = row.querySelector("[data-ob-field='fulfillment']");
+    if (vendor && vendor.value && saved.storeProfile?.vendor && vendor.value === saved.storeProfile.vendor) vendor.value = "";
+    row.querySelector(".ob-master-missing")?.remove();
+  }
+
+  // The ticks follow the codes field after a hand edit.
+  function retickPlacements(row) {
+    if (!row.querySelector("[data-ob-place]")) return;
+    const read = (name) => {
+      try {
+        const v = JSON.parse(row.querySelector(`[data-ob-field='${name}']`)?.value || "{}");
+        return v && typeof v === "object" ? v : {};
+      } catch {
+        return {};
+      }
+    };
+    const { on } = placementState({
+      decorationCodes: row.querySelector("[data-ob-field='decorationCodes']")?.value || "",
+      placements: read("placements"),
+      logoMap: read("logoMap")
+    });
+    row.querySelectorAll("[data-ob-place]").forEach((node) => {
+      const box = node.querySelector("[data-ob-place-on]");
+      if (box) box.checked = Boolean(on[node.dataset.obPlace]);
+      node.dataset.on = box?.checked ? "true" : "false";
+    });
+  }
+
   // Picking a garment fills the row from the store's own master.
   function applyGarment(row, styleNumber) {
     if (styleNumber === "__lookup") {
@@ -1988,18 +2055,14 @@
        title and Vendor the save filled from the old garment, belong to that
        garment — they are replaced, not kept (the save fills them again). */
     const previous = (row.querySelector("[data-ob-field='styleNumber']")?.value || "").trim().toUpperCase();
-    const switching = Boolean(previous) && previous !== garment.styleNumber;
-    if (switching) {
-      set("title", "");
-      set("fulfillment", "");
-      row.querySelector(".ob-master-missing")?.remove();
-    }
+    const switching = Boolean(previous) && !sameGarment(previous, garment.styleNumber);
+    if (switching) clearAutoFilled(row);
     set("brand", garment.brand);
     set("styleNumber", garment.styleNumber);
     set("type", garment.type);
     set("sizes", list(garment.sizes).join(", "), !switching);
-    // A new row with no placements yet starts with the front logo.
-    if (![...row.querySelectorAll("[data-ob-place-on]")].some((box) => box.checked)) {
+    // A new row with no codes yet starts with the front logo.
+    if (!(row.querySelector("[data-ob-field='decorationCodes']")?.value || "").trim() && ![...row.querySelectorAll("[data-ob-place-on]")].some((box) => box.checked)) {
       const front = row.querySelector("[data-ob-place='F'] [data-ob-place-on]");
       if (front) front.checked = true;
     }
@@ -2050,8 +2113,9 @@
        logo for B, the chest logo, pick or scramble for everything else). */
     const art = list(record.packet?.files).filter((f) => f?.kind === "artwork" && !/proof/i.test(f?.name || ""));
     const byRole = (roles) => roles.map((role) => art.find((f) => (f?.role || "") === role)).find(Boolean) || null;
+    const onBack = (c) => /^B\d{2}$/.test(c) || (product?.placements && product.placements[c] === "B");
     const logoFor = (c) =>
-      /^B\d{2}$/.test(c) ? byRole(["back", "scramble"]) : byRole(["chest", "pick", "scramble", ""]) || art.find((f) => (f?.role || "") !== "back") || null;
+      onBack(c) ? byRole(["back", "scramble"]) : byRole(["chest", "pick", "scramble", ""]) || art.find((f) => (f?.role || "") !== "back") || null;
     const rows = codes
       .map((c) => {
         const print = /^(F|B|RS|LS)\d{2}$/.test(c);
@@ -2292,7 +2356,11 @@
     const blockers = buildBlockers(record);
     const running = build.state === "running" || build.state === "starting";
     const steps = list(build.steps);
-    const done = steps.filter((step) => step?.state === "complete").length;
+    /* A re-run skips every product that already exists in Shopify. Those
+       steps are finished, not outstanding — counting only "complete" showed a
+       finished build stuck at 67%, which read as "it stopped". */
+    const skipped = steps.filter((step) => step?.state === "skipped").length;
+    const done = steps.filter((step) => step?.state === "complete").length + skipped;
     const pct = steps.length ? Math.round((done / steps.length) * 100) : build.state === "complete" ? 100 : 0;
     /* "interrupted" is what a deploy or a restart leaves behind. Treating it
        as "still running" disabled the button and polled forever, so the only
@@ -2336,7 +2404,7 @@
             <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Build progress">
               <div class="progress-fill" style="width:${pct}%"></div>
             </div>
-            <div class="progress-meta"><span>${esc(running ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : `${done} of ${steps.length} steps complete`)}</span><span>${pct}%</span></div>
+            <div class="progress-meta"><span>${esc(running ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : `${done} of ${steps.length} steps done${skipped ? ` (${skipped} skipped — already in Shopify)` : ""}`)}</span><span>${pct}%</span></div>
           </div>
           <ul class="build-steps">
             ${steps
@@ -2678,6 +2746,10 @@
         syncPlacements(row, { fromPlacement: Boolean(event.target.closest("[data-ob-place]")) });
         return;
       }
+      if (event.target.matches("[data-ob-field='decorationCodes']")) {
+        retickPlacements(row);
+        return;
+      }
     }
     const operatorInput = event.target.closest("[data-ob-operator]");
     if (operatorInput) setOperator(operatorInput.value.trim());
@@ -2811,12 +2883,25 @@
         const built = Boolean(saved.shopify?.gid);
         if (!window.confirm(`Remove "${name}" from this store's product list?${built ? "\n\nIt was already built: its Draft stays in Shopify until you delete it there." : ""}`)) return;
       }
+      if (!saved) {
+        row.remove();
+        return;
+      }
+      if (state.removing) return;
+      state.removing = true;
       row.remove();
-      if (!saved) return;
-      const save = page()?.querySelector("[data-ob='save-products']");
-      // Rows just added and still empty stay on screen but are not saved
-      // (and validated as broken) just because another row was removed.
-      if (save) saveProducts(save, false, { skipBlank: true });
+      const removedId = saved.id;
+      const products = list(record.products).filter((p) => p?.id !== removedId);
+      api(recordPath(record.id, "/products"), { method: "PUT", body: JSON.stringify({ products }) })
+        .then((payload) => {
+          // The record is updated without redrawing, so nothing typed in the
+          // other rows is lost.
+          if (payload?.onboarding && isCurrent("detail", record.id)) state.record = payload.onboarding;
+        })
+        .catch((error) => fail(`The row was removed on screen but not saved: ${error.message}. Press Save to try again.`))
+        .finally(() => {
+          state.removing = false;
+        });
       return;
     }
     if (action === "add-style") {
@@ -2845,7 +2930,10 @@
   }
 
   function nextProductId() {
-    const used = list(state.record?.products).map((product) => String(product?.id || ""));
+    const used = [
+      ...list(state.record?.products).map((product) => String(product?.id || "")),
+      ...[...(page()?.querySelectorAll("[data-ob-product]") || [])].map((node) => node.dataset.obProduct)
+    ];
     let n = used.length + 1;
     while (used.includes(`p${n}`)) n += 1;
     return `p${n}`;
@@ -2965,6 +3053,17 @@
           );
         } else if (record.status === "complete") {
           goToStep("done");
+        } else {
+          /* Re-rendering the same card used to be the only response, so a
+             final check that found something read as a dead button. */
+          const open = Array.isArray(record.report?.unresolved) ? record.report.unresolved : list(record.report?.missingInformation);
+          showBanner(
+            page(),
+            "obDetailError",
+            open.length
+              ? `Not finished — the final check found ${open.length === 1 ? "one thing" : `${open.length} things`} still open, listed in the card below. Fix ${open.length === 1 ? "it" : "them"}, then press finish again.`
+              : "Not finished — the final check did not pass. Press finish again to re-check."
+          );
         }
       },
       page(),
@@ -3078,8 +3177,8 @@
         fulfillment: read("fulfillment"),
         classB: node.querySelector("[data-ob-field='classB']")?.checked === true,
         notes: read("notes"),
-        logoMap: parseJsonField(node, "logoMap"),
-        placements: parseJsonField(node, "placements")
+        ...(node.querySelector('[data-ob-field="logoMap"]') ? { logoMap: parseJsonField(node, "logoMap") } : {}),
+        ...(node.querySelector('[data-ob-field="placements"]') ? { placements: parseJsonField(node, "placements") } : {})
       };
     });
   }
@@ -3157,8 +3256,9 @@ They are rebuilt from the current logos and blank photos. The product's title, S
       async () => {
         /* Edits on the Products step (a logo just picked for a placement) are
            saved first, so the new images are made from what is on screen. */
-        if (page()?.querySelector(".ob-products")) {
-          const products = collectProducts();
+        const onScreen = page()?.querySelector(".ob-products") ? collectProducts().find((p) => p.id === productId) : null;
+        if (onScreen) {
+          const products = list(state.record?.products).map((p) => (p?.id === productId ? onScreen : p));
           await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
           if (!isCurrent("detail", id)) return;
         }
@@ -3193,9 +3293,10 @@ They are rebuilt from the current logos and blank photos. The product's title, S
       const rowId = row.dataset.obProduct;
       const answer = await api(`${API}/garments/lookup`, { method: "POST", body: JSON.stringify({ query }) });
       // The page may have been re-rendered during the search; find the row again.
-      const live = page()?.querySelector(`[data-ob-product="${CSS.escape(rowId)}"]`);
-      if (live && live !== row) return lookupInto(live, answer, query);
-      return lookupInto(row, answer, query);
+      // Only when the row itself was replaced by a re-render is it looked up again.
+      const target = row.isConnected ? row : page()?.querySelector(`[data-ob-product="${CSS.escape(rowId)}"]`);
+      if (!target) return;
+      return lookupInto(target, answer, query);
     } catch (error) {
       out.innerHTML = `<p class="hint" data-tone="danger">Could not look that up: ${esc(error.message)}</p>`;
     } finally {
@@ -3217,19 +3318,19 @@ They are rebuilt from the current logos and blank photos. The product's title, S
       // A different garment: the old one's title and Vendor go (the save
       // fills them again for the new one).
       const previous = (row.querySelector("[data-ob-field='styleNumber']")?.value || "").trim().toUpperCase();
-      if (previous && garment.styleNumber && previous !== garment.styleNumber.toUpperCase()) {
-        for (const field of ["title", "fulfillment"]) {
-          const input = row.querySelector(`[data-ob-field='${field}']`);
-          if (input) input.value = "";
-        }
-      }
+      const switching = Boolean(previous && garment.styleNumber) && !sameGarment(previous, garment.styleNumber);
+      if (switching) clearAutoFilled(row);
       set("brand", garment.brand);
       set("styleNumber", garment.styleNumber);
       set("type", garment.type !== "Other" ? garment.type : "");
       if (list(garment.sizes).length) set("sizes", list(garment.sizes).join(", "));
+      else if (switching) {
+        const sizes = row.querySelector("[data-ob-field='sizes']");
+        if (sizes) sizes.value = "";
+      }
       const method = row.querySelector("[data-ob-field='decorationMethod']");
       if (method && !method.value) method.value = /hat|beanie/i.test(garment.type) ? "embroidery" : "print";
-      if (![...row.querySelectorAll("[data-ob-place-on]")].some((b) => b.checked)) {
+      if (!(row.querySelector("[data-ob-field='decorationCodes']")?.value || "").trim() && ![...row.querySelectorAll("[data-ob-place-on]")].some((b) => b.checked)) {
         const front = row.querySelector("[data-ob-place='F'] [data-ob-place-on]");
         if (front) front.checked = true;
       }
@@ -3806,7 +3907,8 @@ They are rebuilt from the current logos and blank photos. The product's title, S
             if (isCurrent("detail", id) && state.record && state.step === "products") renderDetail();
           })
           .catch(() => {
-            state.garments = [];
+            // Left unset so the next visit tries again; the lookup still works.
+            state.garments = null;
           });
       }
       if (!state.caps) {
