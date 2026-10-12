@@ -62,7 +62,7 @@
       key: "packet",
       label: "Packet",
       title: "Upload what the department sent",
-      what: "Add the uniform policy and the artwork. The agent reads the policy for garments, colours and placement, and the artwork becomes the mockups and the collection banner. Continuing looks the department up on the Department Code List."
+      what: "Add the artwork, and the uniform policy if the department sent one. The agent reads the policy for garments, colours and placement, and the artwork becomes the mockups and the collection banner. Continuing looks the department up on the Department Code List."
     },
     {
       key: "code",
@@ -871,7 +871,7 @@
             <label for="obNewNotes">Notes</label>
             <textarea id="obNewNotes" rows="3" placeholder="Anything Dan already knows: preferred garments, deadlines, who to ask."></textarea>
           </div>
-          <p class="hint">The files come next: the first step after this asks for the uniform policy and the artwork.</p>
+          <p class="hint">The files come next: the first step after this asks for the artwork, and the uniform policy if there is one.</p>
           ${banner("obNewError")}
           <div class="modal-actions">
             <button class="btn btn-ghost" type="button" data-ob="cancel-new">Cancel</button>
@@ -1076,7 +1076,8 @@
     const buildState = record?.build?.state;
     switch (key) {
       case "packet":
-        return hasFileKind(record, "policy") && hasFileKind(record, "artwork") && codeLookedUp(record);
+        // The policy is optional: a department may send only its logos.
+        return hasFileKind(record, "artwork") && codeLookedUp(record);
       case "code":
         return Boolean(record?.department?.code?.approved && record?.drive?.departmentFolderId);
       case "review":
@@ -1193,11 +1194,12 @@
     let forward = "";
     let hint = "";
     if (key === "packet") {
-      const ready = hasFileKind(record, "policy") && hasFileKind(record, "artwork");
+      const ready = hasFileKind(record, "artwork");
       forward = codeLookedUp(record)
         ? `<button class="btn btn-primary" type="button" data-ob="step" data-ob-step="code">Next: the department code</button>`
         : `<button class="btn btn-primary" type="button" data-ob="wizard-lookup" ${ready ? "" : "disabled"}>Continue — look up the code</button>`;
-      if (!ready) hint = `Still needed: ${[!hasFileKind(record, "policy") && "the uniform policy", !hasFileKind(record, "artwork") && "at least one artwork file"].filter(Boolean).join(" and ")}.`;
+      if (!ready) hint = "Still needed: at least one artwork file.";
+      else if (!hasFileKind(record, "policy")) hint = "No uniform policy — fine. The review then works from your notes and the artwork, and the rep email asks for the rest.";
     } else if (key === "products") {
       forward = `<button class="btn btn-primary" type="button" data-ob="wizard-save-products">Save and continue</button>`;
       hint = "Saving validates every row. You move on once they all pass.";
@@ -1444,7 +1446,7 @@
      missed and never land under the wrong kind. Each upload is sent the
      moment it is picked or dropped. */
   const PACKET_SLOTS = [
-    { kind: "policy", label: "Uniform policy", required: true, hint: "PDF, Word, or text. Read for garments, colours, decoration and placement.", accept: ".pdf,.doc,.docx,.txt" },
+    { kind: "policy", label: "Uniform policy", required: false, hint: "PDF, Word, or text, if the department sent one. Read for garments, colours, decoration and placement.", accept: ".pdf,.doc,.docx,.txt" },
     { kind: "artwork", label: "Artwork", required: true, hint: "Logos as images. They become the mockups and the collection banner.", accept: "image/*" },
     { kind: "contacts", label: "Contact list", required: false, hint: "The roster or contact sheet, if the department sent one.", accept: ".pdf,.doc,.docx,.txt,.csv,.xlsx" },
     { kind: "other", label: "Anything else", required: false, hint: "Other files that came with the packet." }
