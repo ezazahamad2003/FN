@@ -366,6 +366,7 @@
      Only the invented case needs to catch the eye. */
   const BASE_BADGES = {
     photo: { label: "blank photo", tone: "ok" },
+    shared: { label: "blank photo on file", tone: "ok" },
     supplier: { label: "supplier photo", tone: "info" },
     generated: { label: "AI blank", tone: "warn" }
   };
@@ -376,7 +377,9 @@
     return `<span class="ob-badge" data-tone="${esc(badge.tone)}" title="${esc(
       base === "generated"
         ? "The garment in this image was generated, not photographed. Upload a blank photo and re-run to replace it."
-        : "The garment in this image comes from a real photograph."
+        : base === "shared"
+          ? "The garment is the blank photo uploaded on another department's row of the same garment and colour."
+          : "The garment in this image comes from a real photograph."
     )}">${esc(badge.label)}</span>`;
   }
 
@@ -2265,11 +2268,11 @@
   function blankPhotoHtml(record, product, saved) {
     const colors = list(product?.colors);
     if (!colors.length) {
-      return `<div class="ob-slots"><p class="field-label">Blank garment photos <small>optional</small></p><p class="hint">Add colours and save the row to get a front and back slot per colour. Without photos the mockups use the supplier's picture of the blank.</p></div>`;
+      return `<div class="ob-slots"><p class="field-label">Blank garment photos <small>optional</small></p><p class="hint">Add colours and save the row to get a front and back slot per colour. Without photos the mockups use the supplier's picture of the blank, or one uploaded here for another department.</p></div>`;
     }
     return `
       <div class="ob-slots">
-        <p class="field-label">Blank garment photos <small>optional · front and back, per colour · without them the supplier's picture is used</small></p>
+        <p class="field-label">Blank garment photos <small>optional · front and back, per colour · without them the supplier's picture is used · a photo added here is kept for every department that orders this garment and colour</small></p>
         <div class="ob-slot-grid">
           ${colors
             .map((color) =>

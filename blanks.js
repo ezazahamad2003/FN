@@ -3,7 +3,7 @@ const fetch = require("node-fetch");
 const sharp = require("sharp");
 const { frameGarment } = require("./garmentFrame");
 const { extractSupplierFacts } = require("./ai");
-const { lookupSupplierLink, saveSupplierLink } = require("./linkBook");
+const { lookupSupplierLink, saveSupplierLink, readSupplierPhoto } = require("./linkBook");
 
 /*
  * Source the BLANK garment photo from the supplier instead of generating it.
@@ -601,6 +601,12 @@ function clearCachedBlank(cacheKey) {
   cache.delete(cacheKey);
 }
 
+/** Drop the back verdict cached for one front photo (its URL or uploaded
+    photo name), so a back photo booked after a build is used by the next. */
+function clearCachedBack(frontUrl) {
+  if (frontUrl) backCache.delete(frontUrl);
+}
+
 /*
  * Find a usable supplier photo for one style. Always resolves — a failure here
  * must never fail the onboarding run, it just falls back to generation.
@@ -642,7 +648,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
       for (const key of familyKeys(product)) {
         if (key === cacheKey) continue;
         const alt = await lookupSupplierLink(key);
-        if (alt && alt.status === "verified" && alt.imageUrl) {
+        if (alt && alt.status === "verified" && (alt.imageUrl || alt.photoBlob)) {
           log(`link book: using the verified entry booked as "${key}"`);
           booked = alt;
           break;
@@ -664,6 +670,41 @@ async function findSupplierBlank(product, { onLog } = {}) {
     };
     cache.set(cacheKey, result);
     return result;
+  }
+  /* A blank photo an operator uploaded on another department's row of this
+     garment and colour (supplierPhotos.js). It is a photograph of the real
+     blank, chosen by the person who orders it, so it outranks a web photo and
+     needs no search, no vision check and no SUPPLIER_BLANKS switch. */
+  if (booked?.status === "verified" && booked.photoBlob) {
+    try {
+      const buffer = await readSupplierPhoto(booked.photoBlob);
+      if (!buffer) throw new Error("the uploaded photo is no longer in storage");
+      const meta = await sharp(buffer).metadata();
+      if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_IMAGE_EDGE) {
+        throw new Error(`too small (${meta.width || 0}x${meta.height || 0})`);
+      }
+      const from = booked.photoFrom?.department || "another department";
+      log(`link book hit: the blank photo uploaded for ${from}`);
+      const result = {
+        imageBuffer: await normalizeBase(buffer),
+        imageUrl: null,
+        photoBlob: booked.photoBlob,
+        photoFrom: booked.photoFrom || null,
+        sourceUrl: booked.sourceUrl || null,
+        spec: booked.spec || "",
+        facts: booked.facts || null,
+        note: `Blank garment is the photo uploaded for ${from} (from the link book).`
+      };
+      cache.set(cacheKey, result);
+      return result;
+    } catch (error) {
+      /* Without its photo the entry is what it was before the upload: a web
+         photo if it had one, otherwise a stale entry for the repair queue. */
+      const { photoBlob: _gone, photoFrom: _from, ...rest } = booked;
+      booked = rest.imageUrl ? rest : { ...rest, status: "stale", staleReason: String(error.message || error) };
+      log(`link book photo unusable (${error.message}); ${rest.imageUrl ? "trying its web photo" : "marking stale and re-searching"}`);
+      saveSupplierLink(cacheKey, booked).catch(() => {});
+    }
   }
   if (supplierBlanksEnabled() && booked?.status === "verified" && booked.imageUrl) {
     try {
@@ -1093,16 +1134,17 @@ async function findSupplierBack(product, { frontUrl = "", onLog } = {}) {
   const log = (message) => {
     if (onLog) onLog(message);
   };
-  if (!frontUrl || !supplierBlanksEnabled()) return null;
+  if (!frontUrl) return null;
   if (backCache.has(frontUrl)) return backCache.get(frontUrl);
 
-  // The book entry that holds this front photo, under any of its keys.
+  // The book entry that holds this front photo, under any of its keys. The
+  // front is a web URL or the name of an uploaded photo (supplierPhotos.js).
   let entryKey = "";
   let entry = null;
   try {
     for (const key of [blankCacheKey(product), ...familyKeys(product)]) {
       const e = await lookupSupplierLink(key);
-      if (e && e.imageUrl === frontUrl) {
+      if (e && (e.imageUrl === frontUrl || e.photoBlob === frontUrl)) {
         entryKey = key;
         entry = e;
         break;
@@ -1116,6 +1158,20 @@ async function findSupplierBack(product, { frontUrl = "", onLog } = {}) {
     backCache.set(frontUrl, result);
     return result;
   };
+
+  // The back photo an operator uploaded for this garment and colour.
+  if (entry?.backPhotoBlob) {
+    try {
+      const buffer = await readSupplierPhoto(entry.backPhotoBlob);
+      if (!buffer) throw new Error("the uploaded photo is no longer in storage");
+      log(`link book hit (back): the blank photo uploaded for ${entry.backPhotoFrom?.department || "another department"}`);
+      return done({ imageBuffer: await normalizeBase(buffer), imageUrl: null, photoBlob: entry.backPhotoBlob, photoFrom: entry.backPhotoFrom || null });
+    } catch (error) {
+      log(`link book back photo unusable (${error.message}); re-checking`);
+    }
+  }
+  // An uploaded front has no supplier CDN to derive a back address from.
+  if (!supplierBlanksEnabled() || !/^https?:\/\//i.test(frontUrl)) return done(null);
 
   if (entry?.backStatus === "verified" && entry.backImageUrl) {
     try {
@@ -1166,6 +1222,7 @@ module.exports = {
   familyKeys,
   typeFamily,
   clearCachedBlank,
+  clearCachedBack,
   findSupplierBlank,
   // exported for tests
   scoreImageUrl,

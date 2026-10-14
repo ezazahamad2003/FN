@@ -362,25 +362,34 @@ function supplierQuery(product, color) {
   };
 }
 
+/* What a supplier lookup hands resolveBases. A photo an operator uploaded on
+   another department's row (link book `photoBlob`) is a photograph of the
+   real blank but not the supplier's, and the console badge has to say which. */
+function asBase(found) {
+  if (!found || !found.imageBuffer) return null;
+  if (!found.photoBlob) return found.imageBuffer;
+  return { buffer: found.imageBuffer, source: "shared", from: (found.photoFrom && found.photoFrom.department) || "" };
+}
+
 /* The back of the same supplier garment. Keyed on the front photo the
    supplier lookup just found, so the pair always belongs together. */
 function defaultSupplierBackLookup(product, onLog, frontUrls) {
   return async (color) => {
     const frontUrl = frontUrls.get(color);
     if (!frontUrl || !getRenderers().findSupplierBack) return null;
-    const found = await getRenderers().findSupplierBack(supplierQuery(product, color), { frontUrl, onLog });
-    return (found && found.imageBuffer) || null;
+    return asBase(await getRenderers().findSupplierBack(supplierQuery(product, color), { frontUrl, onLog }));
   };
 }
 
 function defaultSupplierLookup(product, onLog, frontUrls = null, specs = null) {
   return async (color) => {
     const found = await getRenderers().findSupplierBlank(supplierQuery(product, color), { onLog });
-    if (frontUrls && found && found.imageUrl) frontUrls.set(color, found.imageUrl);
+    // The front's identity for the back lookup: its URL, or the uploaded photo's name.
+    if (frontUrls && found && (found.imageUrl || found.photoBlob)) frontUrls.set(color, found.imageUrl || found.photoBlob);
     // A search that found no usable photo still describes the style; the
     // drawn fallback for this colour is built from that description.
     if (specs && found && found.spec) specs.set(color, String(found.spec));
-    return (found && found.imageBuffer) || null;
+    return asBase(found);
   };
 }
 
@@ -401,21 +410,28 @@ async function resolveBases({ product, color, photos, supplierLookup, supplierBa
       return false;
     }
     if (!raw) return false;
+    // A getter may name its own source ({ buffer, source, from }); a bare
+    // buffer came from `source`.
+    const buffer = asBuffer(raw);
+    if (!buffer) return false;
+    const label = (!Buffer.isBuffer(raw) && raw.source) || source;
+    const from = (!Buffer.isBuffer(raw) && raw.from) || "";
     try {
-      base[face] = { raw, model: await normalizeBlank(raw, { size: MODEL_INPUT_SIZE, mimetype: raw.mimetype || "" }), stockCache: new Map() };
+      base[face] = { raw: buffer, model: await normalizeBlank(buffer, { size: MODEL_INPUT_SIZE, mimetype: (!Buffer.isBuffer(raw) && raw.mimetype) || "" }), stockCache: new Map() };
     } catch (error) {
-      base.warnings.push(`${face} blank (${source}) for ${color} could not be read: ${error.message}`);
+      base.warnings.push(`${face} blank (${label}) for ${color} could not be read: ${error.message}`);
       return false;
     }
-    base[`${face}Source`] = source;
-    log(`${color}: ${face} blank from ${source}`);
+    base[`${face}Source`] = label;
+    base[`${face}From`] = from;
+    log(`${color}: ${face} blank from ${label}${from ? ` (${from})` : ""}`);
     return true;
   };
 
   const asBuffer = (value) => (Buffer.isBuffer(value) ? value : value && Buffer.isBuffer(value.buffer) ? value.buffer : null);
 
   (await take("front", "photo", async () => asBuffer(photos.front))) ||
-    (supplierLookup && (await take("front", "supplier", async () => asBuffer(await supplierLookup(color))))) ||
+    (supplierLookup && (await take("front", "supplier", async () => supplierLookup(color)))) ||
     (generateBlank && (await take("front", "generated", async () => asBuffer(await generateBlank({ face: "front", color, product })))));
 
   if (needBack) {
@@ -427,7 +443,7 @@ async function resolveBases({ product, color, photos, supplierLookup, supplierBa
          from that supplier. Before this the back was always the image model
          turning the front around — Pine Hollow's navy R112 came back with a
          white mesh the real cap does not have. */
-      (supplierBackLookup && base.frontSource === "supplier" && (await take("back", "supplier", async () => asBuffer(await supplierBackLookup(color))))) ||
+      (supplierBackLookup && (base.frontSource === "supplier" || base.frontSource === "shared") && (await take("back", "supplier", async () => supplierBackLookup(color)))) ||
       (deriveBack && base.front && (await take("back", "derived", async () => asBuffer(await deriveBack({ frontBuffer: base.front.model, color, product }))))) ||
       (generateBlank && (await take("back", "generated", async () => asBuffer(await generateBlank({ face: "back", color, product })))));
   } else if (photos.back) {
@@ -440,8 +456,14 @@ async function resolveBases({ product, color, photos, supplierLookup, supplierBa
      way it reaches him: the source is otherwise just a word in a log line that
      scrolls past during the build. */
   if (base.backSource === "derived") {
+    const frontWords =
+      base.frontSource === "photo"
+        ? "front photo"
+        : base.frontSource === "shared"
+          ? `front photo on file${base.frontFrom ? ` from ${base.frontFrom}` : ""}`
+          : "supplier's front photo";
     base.warnings.push(
-      `${color} back: no back photo was supplied, so the back view was made from the ${base.frontSource === "photo" ? "front photo" : "supplier's front photo"} by the image model. Upload a back photo of the blank and re-run to replace it.`
+      `${color} back: no back photo was supplied, so the back view was made from the ${frontWords} by the image model. Upload a back photo of the blank and re-run to replace it.`
     );
   }
   for (const face of ["front", "back"]) {
@@ -862,6 +884,7 @@ module.exports = {
   stylePlans,
   isClassBShirt,
   renderProductMockups,
+  supplierQuery,
   verifyMockup,
   renderBanner,
   bannerLogoChoice

@@ -15,6 +15,10 @@
                                                 colorway is not made) so nothing
                                                 keeps hunting for it
      node tools/book.js remove "<key>"          delete an entry outright
+     node tools/book.js learn                   book every blank photo uploaded on
+                                                any onboarding's rows, so a photo
+                                                Dan added before this existed is
+                                                reused by every department
 
    Keys look like "vendor|style|color|productType", all lowercase - exactly
    what blanks.js builds from an intake. "queue" prints them ready to paste.
@@ -23,7 +27,7 @@
 require("dotenv").config();
 const fetch = require("node-fetch");
 const sharp = require("sharp");
-const { listSupplierLinks, lookupSupplierLink, saveSupplierLink, removeSupplierLink } = require("../linkBook");
+const { flushSupplierLinkWrites, listSupplierLinks, lookupSupplierLink, saveSupplierLink, removeSupplierLink } = require("../linkBook");
 
 const MIN_EDGE = 500;
 
@@ -43,13 +47,52 @@ async function main() {
     for (const [entryKey, entry] of rows) {
       const detail =
         entry.status === "verified"
-          ? entry.imageUrl
+          ? entry.photoBlob
+            ? `photo uploaded for ${entry.photoFrom?.department || "a department"} (${entry.photoBlob})`
+            : entry.imageUrl
           : entry.status === "stale"
             ? `was ${entry.imageUrl} (${entry.staleReason || "stopped downloading"})`
             : entry.failReason || entry.reason || "";
       console.log(`${entry.status.padEnd(11)} ${entryKey}${detail ? `  ${detail}` : ""}`);
     }
     console.log(`${rows.length} entr${rows.length === 1 ? "y" : "ies"}`);
+    return;
+  }
+
+  if (command === "learn") {
+    const store = require("../onboardingStore");
+    const { bookBlankPhoto } = require("../supplierPhotos");
+    let learned = 0;
+    // Oldest onboarding first, so the newest upload of a garment is the one kept.
+    const summaries = (await store.listOnboardings()).reverse();
+    for (const summary of summaries) {
+      const record = await store.getOnboarding(summary.id);
+      const department = record.department?.name || record.id;
+      for (const product of record.products || []) {
+        for (const [color, faces] of Object.entries(product.blankPhotos || {})) {
+          for (const [face, assetId] of Object.entries(faces || {})) {
+            const asset = await store.getAsset(record.id, assetId);
+            const label = `${department}: ${product.styleNumber || product.id} ${color} ${face}`;
+            if (!asset) {
+              console.log(`skipped ${label} (asset ${assetId} is missing)`);
+              continue;
+            }
+            const result = await bookBlankPhoto({
+              product,
+              color,
+              face,
+              file: { buffer: asset.buffer, mimetype: asset.contentType },
+              origin: { onboardingId: record.id, assetId, department: record.department?.name || "" },
+              by: "tools/book.js learn"
+            });
+            console.log(result.booked ? `learned ${label} -> ${result.key}` : `skipped ${label} (${result.reason})`);
+            if (result.booked) learned++;
+          }
+        }
+      }
+    }
+    await flushSupplierLinkWrites();
+    console.log(`${learned} photo(s) learned`);
     return;
   }
 
