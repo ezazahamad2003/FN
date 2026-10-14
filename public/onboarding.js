@@ -994,7 +994,9 @@
     const action = event.target.closest("[data-ob]")?.dataset.ob;
     if (action === "new") openNewOnboarding();
     else if (action === "refresh-list") {
-      loadMenuHealth();
+      // Fresh: the server otherwise answers from a read up to a minute old,
+      // and whoever presses Refresh has usually just changed the menu.
+      loadMenuHealth({ fresh: true });
       loadCapabilities();
       loadOnboardings();
     } else if (action === "retry-caps") loadCapabilities();
@@ -3555,9 +3557,12 @@
       return;
     }
     if (action === "reload") {
-      // Refresh re-reads the menu too, fresh from Shopify on the Finish step.
-      state.healthStep = null;
-      loadMenuHealth();
+      /* Refresh re-reads the menu too, fresh from Shopify on every step: the
+         server otherwise answers from a read up to a minute old, and "put it
+         right in Shopify, then press Refresh" is what the finish card asks.
+         healthStep is left alone, so the Finish step's own fresh read does
+         not run a second time on the re-render. */
+      loadMenuHealth({ fresh: true });
       loadDetail(record.id);
       return;
     }
