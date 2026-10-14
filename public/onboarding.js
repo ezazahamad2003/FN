@@ -22,6 +22,9 @@
      POST   /api/onboardings/:id/shared-settings/*   → { onboarding }
      POST   /api/onboardings/:id/lock|final-check    → { onboarding }
      GET    /api/onboardings/capabilities            → { shopify, drive, … }
+     GET    /api/onboardings/menu-health[?fresh=1]   → MenuHealth
+     POST   /api/onboardings/menu-health/accept      → MenuHealth
+     POST   /api/onboardings/menu-health/restore     → { restored, skipped, health }
      GET    /api/reference/:table                    → { rows, proposals }
      POST   /api/reference/:table/rows|proposals/:id
      POST   /api/reference/department-codes/sync
@@ -91,7 +94,7 @@
       key: "finish",
       label: "Finish",
       title: "Mega Menu, Shopify Flow and Helium",
-      what: "Flow and Helium have no API, so you add the department tag in each by hand using the steps below. Then press finish: the agent adds the store to the Mega Menu and runs the final check."
+      what: "Flow and Helium have no write API, so you add the department tag in each by hand, with the steps under each box below, and only then tick it. Finishing adds the store to the Mega Menu and runs the final check. Not done in Flow or Helium yet? Press “Not yet” instead of ticking: the onboarding stays open until you confirm them."
     },
     {
       key: "done",
@@ -229,7 +232,25 @@
     // The wizard step on screen; null means "wherever the work is".
     step: null,
     // Master Reference garments ({label, brand, styleNumber, type, group, sizes}).
-    garments: null
+    garments: null,
+    /* The live Mega Menu compared with the agent's saved copy (MenuHealth from
+       GET …/menu-health). It belongs to the store, not to one onboarding, so it
+       survives navigation between the list and a record; null until the first
+       answer. `menuHealthSeq` drops an answer that a newer read, a restore or
+       an accept has already overtaken. */
+    menuHealth: null,
+    menuHealthLoading: false,
+    menuHealthError: "",
+    menuHealthSeq: 0,
+    // "restore" | "accept" while one of the banner's two writes is running.
+    menuBusy: "",
+    menuError: "",
+    // What the last restore/accept did, shown until dismissed or remounted.
+    menuNotice: null,
+    // The step the last fresh menu read was taken for (see renderDetail).
+    healthStep: null,
+    // id -> { updatedAt, todo } for the queue's "Flow & Helium to do" chip.
+    todoCache: new Map()
   };
   const objectUrls = new Set();
   // asset URL -> object URL, so a repaint reuses what was already fetched.
@@ -304,10 +325,19 @@
     }
   }
 
+  /* The status rides on the error because one answer is not a failure of the
+     request but a refusal with a reason: Helium approve answers 409 when a
+     form the agent can read does not carry the tag, and finish has to stop
+     there rather than report "that did not work". */
   async function api(path, options) {
     const res = await adminFetch(path, options);
     const payload = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(payload.error || `Request failed (${res.status}).`);
+    if (!res.ok) {
+      const error = new Error(payload.error || `Request failed (${res.status}).`);
+      error.status = res.status;
+      error.code = payload.code || "";
+      throw error;
+    }
     return payload;
   }
 
@@ -347,7 +377,8 @@
   function sharedTone(status) {
     const value = String(status || "");
     if (value === "verified" || value === "applied" || value === "confirmed" || value === "created") return "ok";
-    if (value === "error") return "danger";
+    // "blocked": the agent refused to write the Mega Menu because it looks wiped.
+    if (value === "error" || value === "blocked") return "danger";
     if (value === "proposed" || value === "approved") return "info";
     if (value === "manual" || value === "partial") return "warn";
     return "muted";
@@ -413,11 +444,13 @@
     if (!node) return;
     node.querySelector("[data-ob-banner-text]").textContent = message;
     // The banner is styled danger by default; an "ok" tone is how a finished
-    // background job reports itself without looking like a failure.
-    if (tone === "ok") node.dataset.tone = "ok";
+    // background job reports itself without looking like a failure, and "warn"
+    // is a step that worked but left something for the operator to do.
+    if (tone === "ok" || tone === "warn") node.dataset.tone = tone;
     else delete node.dataset.tone;
     node.hidden = false;
-    node.scrollIntoView({ block: "nearest", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    // Instant: a smooth scroll did not move this page at all (see goToStep).
+    node.scrollIntoView({ block: "nearest" });
   }
 
   function hideBanner(scope, id) {
@@ -599,6 +632,326 @@
   }
 
   /* =========================================================================
+     MEGA MENU HEALTH — the danger banner on the queue and on every record
+     -------------------------------------------------------------------------
+     Shopify's menuUpdate replaces the WHOLE menu: every item not sent is
+     deleted. On 2026-10-13 something outside the agent (an edit in Shopify,
+     Sidekick or another app) rewrote the Mega Menu keeping only its top-level
+     items. The agent then read an empty "Store", wrote one new store into it,
+     and reported the menu as done; Dan rebuilt about a hundred stores by hand.
+
+     The server now keeps a copy of the last good menu and refuses to write
+     into one that looks wiped. This banner is how the operator finds out, and
+     it carries the only two ways out: put the missing links back from that
+     copy, or say the menu is right as it is now.
+
+     It shows only when the menu was READ and looks wiped. A menu that could
+     not be read (no scope, Shopify down) is unknown, not an alarm.
+     ====================================================================== */
+  const MENU_PREVIEW = 12;
+
+  function menuLooksWiped(health = state.menuHealth) {
+    return Boolean(health && health.available && !health.healthy);
+  }
+
+  /* Store's own children are the store links everyone knows by name; anything
+     under another item (Contact's links, the Station Stores) carries its
+     parent, so "Email us" in a list of fire departments is not a mystery. */
+  function menuItemLabel(item) {
+    const title = String(item?.title || item?.url || "untitled link");
+    const parent = String(item?.parentTitle || "");
+    return parent && parent.toLowerCase() !== "store" ? `${parent} › ${title}` : title;
+  }
+
+  function titleRun(labels) {
+    const shown = labels.slice(0, MENU_PREVIEW);
+    const more = labels.length - shown.length;
+    return `${shown.join(", ")}${more > 0 ? ` … and ${more} more` : ""}`;
+  }
+
+  // The full list, grouped under the item each link sat under, in menu order.
+  function missingGroupsHtml(missing) {
+    const groups = new Map();
+    for (const item of missing) {
+      const parent = String(item?.parentTitle || "");
+      if (!groups.has(parent)) groups.set(parent, []);
+      groups.get(parent).push(item);
+    }
+    return [...groups]
+      .map(
+        ([parent, items]) => `
+        <div class="ob-menu-group">
+          <p class="ob-menu-group-title">${esc(parent ? `Under ${parent}` : "Top of the menu")} <span>${items.length}</span></p>
+          <ul>${items.map((item) => `<li>${esc(item?.title || item?.url || "untitled link")}</li>`).join("")}</ul>
+        </div>`
+      )
+      .join("");
+  }
+
+  /* Two slots, so the notice of what a write just did and the alert about the
+     menu as it stands repaint independently: a re-read that only moves the
+     "checked" time must not wipe the notice the operator is reading. */
+  function menuHealthHtml() {
+    return `
+      <div class="ob-menu-health" data-ob-menu-health>
+        <div class="ob-menu-slot" data-ob-menu-slot="notice">${menuSlotHtml("notice")}</div>
+        <div class="ob-menu-slot" data-ob-menu-slot="alert">${menuSlotHtml("alert")}</div>
+      </div>`;
+  }
+
+  function menuSlotHtml(slot) {
+    if (slot === "notice") return state.menuNotice ? menuNoticeHtml(state.menuNotice) : "";
+    return menuLooksWiped() ? menuAlertHtml(state.menuHealth) : "";
+  }
+
+  function menuAlertHtml(health) {
+    const missing = list(health.missing);
+    const count = missing.length;
+    const busy = state.menuBusy;
+    const baseline = health.baseline || null;
+    const storeCount = Number(health.storeCount) || 0;
+    const reasons = list(health.reasons).filter((reason) => reason && reason !== health.message);
+    const meta = [
+      // The server's message usually says this already.
+      health.message ? "" : `Store has ${storeCount} ${plural(storeCount, "store", "stores")} in the live menu now`,
+      baseline?.at ? `the agent's saved copy is from ${when(baseline.at)}${baseline.by ? `, kept by ${baseline.by}` : ""}` : "",
+      health.checkedAt ? `checked ${when(health.checkedAt)}` : ""
+    ].filter(Boolean);
+    return `
+      <section class="ob-menu-alert" role="alert" aria-labelledby="obMenuAlertTitle">
+        <span class="ob-menu-glyph" aria-hidden="true">${ICON_ALERT}</span>
+        <div class="ob-menu-body">
+          <h2 id="obMenuAlertTitle">The Mega Menu looks wiped — the agent won't touch it until it's fixed.</h2>
+          ${health.message ? `<p class="ob-menu-message">${esc(health.message)}</p>` : ""}
+          ${reasons.length ? `<ul class="ob-menu-reasons">${reasons.map((reason) => `<li>${esc(reason)}</li>`).join("")}</ul>` : ""}
+          ${count
+            ? `<p><b>Missing:</b> ${esc(titleRun(missing.map(menuItemLabel)))}</p>
+               <details class="ob-menu-details">
+                 <summary>Show all ${count} missing ${plural(count, "link", "links")}</summary>
+                 ${missingGroupsHtml(missing)}
+               </details>`
+            : ""}
+          <p>Something outside the agent — an edit in Shopify, Sidekick or another app — removed ${count ? "these links" : "links from the menu"}. Your collections and products are untouched; only the menu links are gone.</p>
+          ${meta.length ? `<p class="ob-menu-meta">${esc(capitalize(meta.join(" · ")))}.</p>` : ""}
+          <div class="ob-menu-controls">
+            <div class="field ob-operator">
+              <label for="obMenuOperator">Recorded as</label>
+              <input id="obMenuOperator" type="text" value="${esc(operator())}" placeholder="Dan" autocomplete="off" data-ob-operator ${busy ? "disabled" : ""}>
+            </div>
+            <div class="ob-menu-actions">
+              ${count
+                ? `<button class="btn btn-primary btn-sm ob-btn-wrap" type="button" data-ob="menu-restore" ${busy ? "disabled" : ""}>${
+                    busy === "restore" ? `<span class="spinner" aria-hidden="true"></span>Putting them back…` : `Put the ${count} missing ${plural(count, "item", "items")} back`
+                  }</button>`
+                : ""}
+              <button class="btn btn-secondary btn-sm ob-btn-wrap" type="button" data-ob="menu-accept" ${busy ? "disabled" : ""}>${
+                busy === "accept" ? `<span class="spinner" aria-hidden="true"></span>Saving…` : "It's intentional — keep the menu as it is"
+              }</button>
+            </div>
+          </div>
+          <p class="ob-menu-hint">${count ? "<b>Put back</b> writes the missing links into the live menu from the agent's saved copy. " : ""}<b>Keep the menu as it is</b> changes nothing in Shopify: the agent takes today's menu as the right one and checks against it from now on.</p>
+          ${state.menuError ? `<p class="ob-menu-error">${esc(state.menuError)}</p>` : ""}
+        </div>
+      </section>`;
+  }
+
+  /* What a restore or an accept actually did, from the server's answer — not
+     from what the button asked for. Anything skipped is listed with its
+     reason, because a link that did not come back is one Dan adds by hand. */
+  function menuNoticeHtml(notice) {
+    const restored = list(notice.restored).map((item) => (typeof item === "string" ? item : menuItemLabel(item)));
+    const skipped = list(notice.skipped);
+    return `
+      <div class="banner ob-banner ob-menu-notice" data-tone="${esc(notice.tone)}" role="status" tabindex="-1" data-ob-menu-notice>
+        <span class="b-glyph" aria-hidden="true">${ICON_ALERT}</span>
+        <div class="ob-menu-notice-body">
+          <p><b>${esc(notice.title)}</b></p>
+          ${notice.text ? `<p>${esc(notice.text)}</p>` : ""}
+          ${restored.length
+            ? `<p>Back in the menu: ${esc(titleRun(restored))}</p>
+               ${restored.length > MENU_PREVIEW
+                 ? `<details class="ob-menu-details"><summary>Show all ${restored.length}</summary><ul>${restored.map((title) => `<li>${esc(title)}</li>`).join("")}</ul></details>`
+                 : ""}`
+            : ""}
+          ${skipped.length
+            ? `<p>Not put back — add ${skipped.length === 1 ? "it" : "these"} by hand in Shopify:</p>
+               <ul class="ob-menu-skipped">${skipped
+                 .map((item) => `<li><b>${esc(item?.title || "untitled link")}</b>${item?.reason ? ` — ${esc(item.reason)}` : ""}</li>`)
+                 .join("")}</ul>`
+            : ""}
+          <button class="btn btn-ghost btn-sm" type="button" data-ob="menu-dismiss">Dismiss</button>
+        </div>
+      </div>`;
+  }
+
+  /* Repaints everything that depends on the menu's health, in place. Never a
+     full renderDetail: the read lands whenever Shopify answers, and a full
+     repaint would throw away product rows or a lock link being typed. */
+  function repaintMenuHealth() {
+    const holder = root()?.querySelector("[data-ob-menu-health]");
+    holder?.querySelectorAll("[data-ob-menu-slot]").forEach((slot) => swapHtml(slot, menuSlotHtml(slot.dataset.obMenuSlot)));
+    if (state.view === "detail" && state.record) repaintMenuDependents();
+  }
+
+  /* Replace a slot's markup only when it changed, and carry over what the
+     operator was in the middle of: focus, a name being typed, an expanded
+     list. role="alert" also re-announces on every insert, so an unchanged
+     alert must stay the same node. */
+  const menuSlotWritten = new WeakMap();
+  function swapHtml(node, html) {
+    if (!node || menuSlotWritten.get(node) === html) return;
+    const focusKey = node.contains(document.activeElement) ? focusSelector(document.activeElement) : "";
+    const typed = node.querySelector("#obMenuOperator")?.value;
+    const opened = [...node.querySelectorAll("details")].map((details) => details.open);
+    node.innerHTML = html;
+    menuSlotWritten.set(node, html);
+    const input = node.querySelector("#obMenuOperator");
+    if (input && typed !== undefined) input.value = typed;
+    node.querySelectorAll("details").forEach((details, index) => {
+      if (opened[index]) details.open = true;
+    });
+    if (focusKey) node.querySelector(focusKey)?.focus({ preventScroll: true });
+  }
+
+  // A page render writes the slots itself; remember what it wrote, so the
+  // first re-read after it does not re-insert an identical alert.
+  function seedMenuSlots() {
+    root()
+      ?.querySelectorAll("[data-ob-menu-slot]")
+      .forEach((slot) => menuSlotWritten.set(slot, menuSlotHtml(slot.dataset.obMenuSlot)));
+  }
+
+  async function loadMenuHealth({ fresh = false } = {}) {
+    const seq = ++state.menuHealthSeq;
+    state.menuHealthLoading = true;
+    state.menuHealthError = "";
+    repaintMenuHealth();
+    try {
+      const payload = await api(`${API}/menu-health${fresh ? "?fresh=1" : ""}`);
+      if (seq !== state.menuHealthSeq) return;
+      state.menuHealth = payload && typeof payload === "object" ? payload : null;
+    } catch (error) {
+      if (seq !== state.menuHealthSeq) return;
+      /* Unknown is not an alarm, and not a reason to forget a wiped menu
+         either: the last answer stays on screen. The finish card is the one
+         place that says the check failed, because it is about to write. */
+      state.menuHealthError = error?.message || "The Mega Menu could not be checked.";
+    }
+    state.menuHealthLoading = false;
+    repaintMenuHealth();
+  }
+
+  function menuOperator() {
+    const field = root()?.querySelector("#obMenuOperator");
+    const value = field?.value.trim() || operator();
+    if (value) setOperator(value);
+    return value;
+  }
+
+  function menuAction(action) {
+    if (action === "menu-restore") return restoreMenu();
+    if (action === "menu-accept") return acceptMenu();
+    if (action === "menu-dismiss") {
+      state.menuNotice = null;
+      repaintMenuHealth();
+    }
+  }
+
+  /* Both writes share the busy state, the "who" check and the error line.
+     `apply` turns the server's answer into the new health and the notice. */
+  async function runMenuWrite(kind, path, apply) {
+    if (state.menuBusy) return;
+    const by = menuOperator();
+    if (!by) {
+      state.menuError = "Type your name in “Recorded as” first — it goes on the record with this change.";
+      repaintMenuHealth();
+      root()?.querySelector("#obMenuOperator")?.focus();
+      return;
+    }
+    state.menuBusy = kind;
+    state.menuError = "";
+    state.menuNotice = null;
+    repaintMenuHealth();
+    try {
+      const payload = await api(path, { method: "POST", body: JSON.stringify({ by }) });
+      // Overtakes any read still in flight: it was taken before this write.
+      state.menuHealthSeq += 1;
+      state.menuHealthLoading = false;
+      apply(payload || {});
+      state.menuBusy = "";
+      repaintMenuHealth();
+      root()?.querySelector("[data-ob-menu-notice]")?.focus({ preventScroll: true });
+      // Read the live menu again, so what the banner says next is Shopify's
+      // answer and not only the server's account of its own write.
+      loadMenuHealth({ fresh: true });
+    } catch (error) {
+      state.menuBusy = "";
+      state.menuError = `${kind === "restore" ? "Putting the links back" : "Keeping the menu"} did not go through: ${error?.message || "no answer from the server."}`;
+      repaintMenuHealth();
+      // The busy button was disabled, which drops keyboard focus; hand it back.
+      root()?.querySelector(`[data-ob="menu-${kind}"]`)?.focus({ preventScroll: true });
+      // Whatever did or did not land, the banner should show the menu as it is.
+      if (kind === "restore") loadMenuHealth({ fresh: true });
+    }
+  }
+
+  function restoreMenu() {
+    const health = state.menuHealth;
+    const count = list(health?.missing).length;
+    if (!count) return;
+    const from = health?.baseline?.at ? ` from ${when(health.baseline.at)}` : "";
+    if (
+      !window.confirm(
+        `Put the ${count} missing ${plural(count, "link", "links")} back in the Mega Menu?\n\nThe agent writes ${count === 1 ? "it" : "them"} into the live menu from its saved copy${from}.`
+      )
+    )
+      return;
+    return runMenuWrite("restore", `${API}/menu-health/restore`, (payload) => {
+      const restored = list(payload.restored);
+      const skipped = list(payload.skipped);
+      if (payload.health) state.menuHealth = payload.health;
+      state.menuNotice = {
+        tone: skipped.length || !restored.length ? "warn" : "ok",
+        title: restored.length
+          ? `Put ${restored.length} ${plural(restored.length, "link", "links")} back in the Mega Menu.`
+          : "Nothing was put back in the Mega Menu.",
+        text: skipped.length ? `${skipped.length} ${plural(skipped.length, "link was", "links were")} skipped.` : "",
+        restored,
+        skipped
+      };
+    });
+  }
+
+  function acceptMenu() {
+    const health = state.menuHealth;
+    const count = list(health?.missing).length;
+    const stores = Number(health?.storeCount) || 0;
+    if (
+      !window.confirm(
+        `Keep the Mega Menu exactly as it is now, with ${stores} ${plural(stores, "store", "stores")} under Store?\n\nNothing changes in Shopify.${
+          count ? ` The ${count} missing ${plural(count, "link stays", "links stay")} gone, and the` : " The"
+        } agent checks against this menu from now on.`
+      )
+    )
+      return;
+    return runMenuWrite("accept", `${API}/menu-health/accept`, (payload) => {
+      state.menuHealth = payload;
+      const now = Number(payload.storeCount) || 0;
+      state.menuNotice = payload.healthy
+        ? {
+            tone: "ok",
+            title: "Saved. The menu as it is now is the one the agent checks against.",
+            text: `Store has ${now} ${plural(now, "store", "stores")}.`
+          }
+        : {
+            tone: "warn",
+            title: "Saved, but the menu still does not look right to the agent.",
+            text: payload.message || ""
+          };
+    });
+  }
+
+  /* =========================================================================
      LIST VIEW — the onboarding queue
      ====================================================================== */
   function renderList() {
@@ -606,6 +959,7 @@
     if (!node) return;
     node.innerHTML = `
       <div class="ob-list" data-ob-page="list">
+        ${menuHealthHtml()}
         <section class="hero">
           <p class="eyebrow">Department Onboarding Agent</p>
           <h2>Build a fire department's private store from the packet, by the rules.</h2>
@@ -624,6 +978,9 @@
     // never stack up across mounts.
     const listPage = node.querySelector("[data-ob-page='list']");
     listPage.addEventListener("click", onListClick);
+    listPage.addEventListener("change", onListChange);
+    seedMenuSlots();
+    loadMenuHealth();
     loadCapabilities();
     loadOnboardings();
   }
@@ -632,9 +989,17 @@
     const action = event.target.closest("[data-ob]")?.dataset.ob;
     if (action === "new") openNewOnboarding();
     else if (action === "refresh-list") {
+      loadMenuHealth();
       loadCapabilities();
       loadOnboardings();
     } else if (action === "retry-caps") loadCapabilities();
+    else if (String(action || "").startsWith("menu-")) menuAction(action);
+  }
+
+  // The menu banner's "Recorded as" is the only field on the queue.
+  function onListChange(event) {
+    const operatorInput = event.target.closest("[data-ob-operator]");
+    if (operatorInput) setOperator(operatorInput.value.trim());
   }
 
   async function loadCapabilities() {
@@ -741,6 +1106,7 @@
         return;
       }
       body.innerHTML = `<div class="store-card-grid">${records.map(onboardingCard).join("")}</div>`;
+      fillTodoChips(records);
     } catch (error) {
       if (!isCurrent("list")) return;
       body.innerHTML = stateBlock({
@@ -796,12 +1162,76 @@
           <span class="ob-card-chips">
             ${codeChip(department)}
             <em class="status-chip" data-tone="${esc(tone)}">${esc(statusLabel(summary?.status))}</em>
+            ${todoSlotHtml(summary)}
             <em class="ob-phase-chip">${esc(phaseLabel(summary?.phase))}</em>
           </span>
           <small>${esc(meta)}</small>
           ${progress}
         </span>
       </a>`;
+  }
+
+  /* ---- "Flow & Helium to do" ----------------------------------------------
+     Flow and Helium are the two steps the agent can neither do nor fully
+     check, and on 2026-10-13 both were ticked "to do later" and forgotten. A
+     built store with either still open says so in the queue, in red, so a
+     green "built" chip cannot pass for finished.
+
+     The list payload is a summary without the shared settings, so a built
+     record's own page is read for it — only built ones, three at a time,
+     and not again until the record changes. A summary that does carry
+     sharedSettings is used as it is. */
+  const BUILT_STATUSES = ["built", "built-partial"];
+
+  function flowHeliumTodo(sharedSettings) {
+    const open = [
+      { key: "flow", label: "Flow" },
+      { key: "helium", label: "Helium" }
+    ].filter((item) => !["confirmed", "verified"].includes(sharedSettings?.[item.key]?.status));
+    return open.length ? `${open.map((item) => item.label).join(" & ")} to do` : "";
+  }
+
+  function todoChipHtml(todo) {
+    const what = todo.replace(/ to do$/, "").replace("Flow", "Shopify Flow");
+    return `<em class="status-chip" data-tone="danger" title="${esc(
+      `${what} ${what.includes("&") ? "are" : "is"} not confirmed yet. The onboarding stays open until ${what.includes("&") ? "they are" : "it is"} — see its Finish step.`
+    )}">${esc(todo)}</em>`;
+  }
+
+  function todoSlotHtml(summary) {
+    if (!BUILT_STATUSES.includes(summary?.status)) return "";
+    if (summary.sharedSettings) {
+      const todo = flowHeliumTodo(summary.sharedSettings);
+      return todo ? todoChipHtml(todo) : "";
+    }
+    const cached = state.todoCache.get(summary.id);
+    if (cached && cached.updatedAt === summary.updatedAt) return cached.todo ? todoChipHtml(cached.todo) : "";
+    return `<span data-ob-todo="${esc(summary.id || "")}" hidden></span>`;
+  }
+
+  async function fillTodoChips(records) {
+    const queue = records.filter((summary) => {
+      if (!BUILT_STATUSES.includes(summary?.status) || summary.sharedSettings || !summary.id) return false;
+      const cached = state.todoCache.get(summary.id);
+      return !(cached && cached.updatedAt === summary.updatedAt);
+    });
+    const worker = async () => {
+      while (queue.length) {
+        const summary = queue.shift();
+        try {
+          const payload = await api(recordPath(summary.id));
+          const todo = flowHeliumTodo(payload?.onboarding?.sharedSettings);
+          state.todoCache.set(summary.id, { updatedAt: summary.updatedAt, todo });
+          if (!isCurrent("list")) return;
+          const slot = [...(el("obListBody")?.querySelectorAll("[data-ob-todo]") || [])].find((node) => node.dataset.obTodo === summary.id);
+          if (slot) slot.outerHTML = todo ? todoChipHtml(todo) : "";
+        } catch {
+          /* Left without a chip: the record's own Finish step says the same,
+             and a queue that fails to load one record must still load. */
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   }
 
   function phaseLabel(phase) {
@@ -1133,6 +1563,7 @@
           <span aria-hidden="true">/</span>
           <span aria-current="page">${esc(record.department?.name || "Department")}</span>
         </nav>
+        ${menuHealthHtml()}
         ${detailHeader(record)}
         ${stepperHtml(record)}
         <div class="ob-layout">
@@ -1158,6 +1589,13 @@
     detailPage.addEventListener("change", onDetailChange);
     wirePacketDropzones(detailPage);
     hydrateAssetImages(detailPage);
+    seedMenuSlots();
+    /* Finish is the one step that writes the menu, so the menu is read fresh
+       from Shopify every time that step comes on screen — not on every
+       repaint of it, which would re-read Shopify after each button. */
+    const enteringFinish = key === "finish" && state.healthStep !== "finish";
+    state.healthStep = key;
+    if (enteringFinish) loadMenuHealth({ fresh: true });
     maybePoll();
   }
 
@@ -1354,24 +1792,174 @@
      approval cards. An operator finishing a department should not have to
      assemble that into a plan. This asks the two questions only a human can
      answer, does everything the agent can do itself, and runs the final check.
+
+     The two ticks are the weak spot. Flow has no API at all and only one of
+     the three Helium forms can be read, so a tick IS the record — and on
+     2026-10-13 both were ticked "to do it later" because ticking was the only
+     way past this card. So the card says what each tick costs when it is not
+     true, puts the steps right under each box, and has an honest way past:
+     "Not yet", which records nothing for either.
      ------------------------------------------------------------------------ */
+  const FINISH_ASKS = [
+    {
+      key: "flow",
+      label: "Shopify Flow",
+      short: "Flow",
+      tick: "I added it in Shopify Flow",
+      consequence: "If the tag is not in the Flow condition, new customers from this department get the wrong email."
+    },
+    {
+      key: "helium",
+      label: "Helium",
+      short: "Helium",
+      tick: "I added it to all three Helium forms",
+      consequence: "If the department is not in Helium, members cannot pick it when they register, so the store's lock never opens for them."
+    }
+  ];
+
+  const COUNT_WORDS = ["none", "one", "two", "three"];
+
+  function sharedDone(settings, key) {
+    return ["applied", "verified", "confirmed"].includes(settings?.[key]?.status);
+  }
+
+  /* How many of the three Helium forms the agent can read: the record's last
+     check first, the capabilities strip second. With neither, the setup the
+     store has today — one form configured. */
+  function heliumReadable(record) {
+    const forms = list(record?.sharedSettings?.helium?.forms);
+    const source = forms.length ? forms : list(state.caps?.helium?.forms);
+    if (!source.length) return 1;
+    return Math.min(3, source.filter((form) => form && form.public !== false).length);
+  }
+
+  function heliumReach(record) {
+    const readable = heliumReadable(record);
+    if (readable >= 3) return "it reads the three Helium forms only when you finish";
+    if (!readable) return "it cannot read any of the three Helium forms";
+    return `it can only read ${COUNT_WORDS[readable]} of the three Helium forms`;
+  }
+
+  function asksLead(asks, record) {
+    const flow = asks.some((item) => item.key === "flow");
+    const helium = asks.some((item) => item.key === "helium");
+    if (flow && helium) {
+      return `Do these two in Shopify Flow and Helium before you tick them. Ticking records them as done — the agent cannot read Flow at all, and ${heliumReach(record)}.`;
+    }
+    if (flow) return "Do this in Shopify Flow before you tick it. Ticking records it as done — the agent cannot read Flow at all.";
+    return `Do this in Helium before you tick it. Ticking records it as done — ${heliumReach(record)}.`;
+  }
+
+  /* The Helium forms the agent DID read and found without the tag (or with
+     it spelled differently). Finishing reads them again and refuses, so
+     saying it here first saves a round trip to a red banner. */
+  function heliumLastReadHtml(record) {
+    const tag = record.department?.tag || record.department?.name || "";
+    const wrong = list(record.sharedSettings?.helium?.forms).filter(
+      (form) => form && form.public !== false && !form.error && (!form.present || form.exactCase === false)
+    );
+    return wrong
+      .map((form) => {
+        const what = form.present ? `the tag was there but not exactly “${tag}” — capitals and spaces count` : "the tag was not there";
+        return `<p class="ob-finish-read">When the agent last read the ${esc(form.label || form.id || "Helium")} form, ${esc(what)}. Finishing reads it again and stops if it is still not right.</p>`;
+      })
+      .join("");
+  }
+
+  /* Whether the Mega Menu must not be written from this screen, and the words
+     for why. Either source is enough:
+       • a read of the live menu says it looks wiped (the banner is up);
+       • the record says the agent already refused ("blocked") and no read
+         since has shown the menu whole again.
+     A completed read that shows the menu whole clears a stale "blocked":
+     the server checks again before it writes, and without this the card
+     would stay shut after Dan had put the menu right. */
+  function menuStop(record) {
+    const health = state.menuHealth;
+    if (menuLooksWiped(health)) {
+      return { title: "The Mega Menu looks wiped — fix it with the banner at the top first.", detail: health.message || "" };
+    }
+    const menu = record?.sharedSettings?.megaMenu || {};
+    if (menu.status !== "blocked") return null;
+    if (health?.available && health.healthy && !state.menuHealthLoading) return null;
+    return {
+      title: "The agent stopped before touching the Mega Menu because it looked wiped.",
+      detail: [
+        menu.error,
+        state.menuHealthLoading
+          ? "Reading the live menu again now…"
+          : "Finishing unlocks once a fresh read shows the menu whole again — put it right in Shopify, then press Refresh at the top."
+      ]
+        .filter(Boolean)
+        .join(" ")
+    };
+  }
+
+  /* Exactly what each finish button sends, in the order it sends it. The card
+     builds its sentences from this list and finishOnboarding sends this list,
+     so what a button says it does and what it does cannot drift apart.
+
+     Helium goes first: it is the one request that can refuse (a form the
+     agent can read does not carry the tag), and a refusal must stop the
+     finish before anything else is recorded or written. The Mega Menu is
+     the only real write and goes last before the check, and only when the
+     scope allows it and the menu does not look wiped. */
+  function finishSends(record, { later = false, by = "" } = {}) {
+    const settings = record.sharedSettings || {};
+    const steps = [];
+    if (!later) {
+      if (!sharedDone(settings, "helium")) {
+        steps.push({
+          kind: "helium",
+          name: "Helium",
+          busy: "Checking Helium…",
+          suffix: "/shared-settings/helium/approve",
+          body: { by, applied: true },
+          says: heliumReadable(record) ? "checks the Helium form the agent can read and records Helium as done" : "records Helium as done"
+        });
+      }
+      if (!sharedDone(settings, "flow")) {
+        steps.push({
+          kind: "flow",
+          name: "Shopify Flow",
+          busy: "Recording Flow…",
+          suffix: "/shared-settings/flow/approve",
+          body: { by, applied: true },
+          says: "records Shopify Flow as done"
+        });
+      }
+    }
+    /* applied:true means "a human already made this change" — the server
+       stamps it done and calls nothing. That was right while the app had no
+       navigation scope and the menu could only be edited by hand; with the
+       scope granted it would record a menu item that was never created. The
+       card promises "adds the store to the Mega Menu", so send applied:false
+       and let the server actually insert it — or refuse, "blocked", when the
+       menu looks wiped by the time it reads it. */
+    if (!sharedDone(settings, "megaMenu") && state.caps?.megaMenu?.writable && !menuStop(record)) {
+      steps.push({
+        kind: "megaMenu",
+        name: "the Mega Menu",
+        busy: "Adding to the Mega Menu…",
+        suffix: "/shared-settings/megaMenu/approve",
+        body: { by, applied: false },
+        says: "adds the store to the Mega Menu"
+      });
+    }
+    steps.push({ kind: "check", name: "the final check", busy: "Checking everything…", suffix: "/final-check", body: { by }, says: "runs the final check" });
+    return steps;
+  }
+
+  function sendsSentence(steps) {
+    const says = steps.map((step) => step.says);
+    return says.length > 1 ? `${says.slice(0, -1).join(", ")}, then ${says[says.length - 1]}` : says[0] || "";
+  }
+
   function finishCard(record) {
     const settings = record.sharedSettings || {};
-    const done = (key) => ["applied", "verified", "confirmed"].includes(settings[key]?.status);
+    const done = (key) => sharedDone(settings, key);
     const menuWritable = Boolean(state.caps?.megaMenu?.writable);
     const complete = record.status === "complete";
-
-    // What only a person can do, because these have no write API at all.
-    const asks = [
-      { key: "flow", label: "Shopify Flow", ask: "Added the department tag to the condition step?" },
-      { key: "helium", label: "Helium", ask: "Added the tag to all three Department fields?" }
-    ].filter((item) => !done(item.key));
-
-    // What pressing the button will do on the operator's behalf.
-    const willDo = [];
-    if (!done("megaMenu") && menuWritable) willDo.push("add the store to the Mega Menu");
-    if (asks.length) willDo.push("record " + asks.map((a) => a.label).join(" and ") + " as done");
-    willDo.push("run the final check");
 
     if (complete) {
       return `
@@ -1383,6 +1971,13 @@
       </section>`;
     }
 
+    // What only a person can do, because these have no write API at all.
+    const asks = FINISH_ASKS.filter((item) => !done(item.key));
+    const stop = menuStop(record);
+    const yes = finishSends(record);
+    const notYet = finishSends(record, { later: true });
+    const tag = record.department?.tag || record.department?.name || "";
+
     /* report.unresolved is everything that kept the last final check from
        passing; missingInformation is only the part of it the classifier
        labelled "missing", so it is the fallback for reports written before
@@ -1391,42 +1986,152 @@
     const reported = Array.isArray(record.report?.unresolved) ? record.report.unresolved : list(record.report?.missingInformation);
     const blockers = reported.filter((m) => !/Mega Menu|Shopify Flow|Helium/i.test(m));
     const heading = asks.length
-      ? "Two things only you can do"
+      ? `${asks.length === 1 ? "One thing" : "Two things"} only you can do`
       : blockers.length
         ? `${blockers.length === 1 ? "One thing is" : `${blockers.length} things are`} still open`
         : "Nothing left for you outside the console";
 
+    /* The card's own word on the menu read it is about to rely on — only
+       while finishing would write the menu. Once the item is in, or when the
+       menu is a hand job anyway, the read is not this card's business. */
+    const menuPending = !done("megaMenu") && menuWritable && !stop;
+    const menuCheck = !menuPending
+      ? ""
+      : state.menuHealthLoading
+        ? `<p class="hint ob-finish-why">Checking the live Mega Menu…</p>`
+        : state.menuHealthError
+          ? `<p class="hint ob-finish-why" data-tone="warn">Could not check the Mega Menu just now (${esc(state.menuHealthError.replace(/\.$/, ""))}). The agent reads it again before it writes, and does not write into a menu that looks wiped.</p>`
+          : "";
+    const why = stop ? stop.title : asks.length ? `“Yes — finish” unlocks once you tick ${asks.length === 2 ? "both boxes" : "the box"} above.` : "";
+    const heliumStops = yes.some((step) => step.kind === "helium") && heliumReadable(record) > 0;
+
     return `
-      <section class="card card-pad ob-finish" data-tone="${asks.length || blockers.length ? "warn" : "ok"}">
+      <section class="card card-pad ob-finish" data-tone="${stop ? "danger" : asks.length || blockers.length ? "warn" : "ok"}" data-ob-finish-card>
         <p class="eyebrow">Ready to finish?</p>
         <h3>${esc(heading)}</h3>
         ${asks.length
+          ? `<div class="ob-finish-danger">
+               <p><b>${esc(asksLead(asks, record))}</b></p>
+               <ul>${asks.map((item) => `<li><b>${esc(item.label)}:</b> ${esc(item.consequence)}</li>`).join("")}</ul>
+               ${tag ? `<button class="btn btn-ghost btn-sm ob-btn-wrap" type="button" data-ob="copy" data-ob-copy-text="${esc(tag)}">Copy the tag “${esc(tag)}”</button>` : ""}
+             </div>`
+          : ""}
+        ${stop
+          ? `<div class="ob-finish-danger">
+               <p><b>${esc(stop.title)}</b></p>
+               ${stop.detail ? `<p>${esc(stop.detail)}</p>` : ""}
+             </div>`
+          : ""}
+        ${asks.length
           ? `<ul class="ob-finish-asks">${asks
-              .map(
-                (item) => `<li>
+              .map((item) => {
+                const steps = list(settings[item.key]?.checklist);
+                return `<li>
                   <label>
-                    <input type="checkbox" data-ob-finish-ask="${esc(item.key)}">
-                    <span><b>${esc(item.label)}</b> — ${esc(item.ask)}</span>
+                    <input type="checkbox" data-ob-finish-ask="${esc(item.key)}" aria-describedby="obFinishSteps-${esc(item.key)}">
+                    <span><b>${esc(item.tick)}</b></span>
                   </label>
-                </li>`
-              )
-              .join("")}</ul>
-             <p class="hint">The exact steps for each are in the Shopify Flow and Helium cards below. Neither app has an API to write, so the agent cannot do these for you.</p>`
+                  <div class="ob-finish-steps" id="obFinishSteps-${esc(item.key)}">
+                    ${steps.length
+                      ? `<ol class="ob-checklist">${steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>`
+                      : `<p class="hint">No steps yet. Press “Compute proposals” in the shared settings below to get them.</p>`}
+                    ${item.key === "helium" ? heliumLastReadHtml(record) : ""}
+                  </div>
+                </li>`;
+              })
+              .join("")}</ul>`
           : `<p class="muted">Flow and Helium are already recorded.</p>`}
         ${blockers.length
           ? `<div class="ob-finish-blockers"><p><b>The last final check found:</b></p><ul>${blockers.map((b) => `<li>${esc(b)}</li>`).join("")}</ul>
               <p class="hint">Fix ${blockers.length === 1 ? "it" : "these"} in Shopify or on the earlier steps, then press finish again — it re-checks everything.</p></div>`
           : ""}
-        <p class="muted">Pressing yes will ${esc(willDo.join(", then "))}.</p>
+        ${menuCheck}
+        <p class="muted"><b>Yes — finish</b> ${esc(sendsSentence(yes))}.${heliumStops ? " If that Helium form does not carry the tag, it stops there and sends nothing else." : ""}</p>
+        ${asks.length
+          ? `<p class="muted"><b>Not yet</b> ${esc(sendsSentence(notYet))}. Nothing is recorded for ${esc(asks.map((item) => item.label).join(" or "))}, so the onboarding stays open.</p>`
+          : ""}
         <div class="field ob-operator">
           <label for="obRailOperator">Recorded as</label>
           <input id="obRailOperator" type="text" value="${esc(operator())}" placeholder="Dan" autocomplete="off" data-ob-operator>
         </div>
         <div class="ob-finish-actions">
-          <button class="btn btn-primary" type="button" data-ob="finish" ${asks.length ? "disabled" : ""}>Yes — finish this onboarding</button>
-          ${!menuWritable && !done("megaMenu") ? `<span class="hint" data-tone="warn">The Mega Menu has to be edited by hand — no navigation scope.</span>` : ""}
+          <button class="btn btn-primary ob-btn-wrap" type="button" data-ob="finish" ${asks.length || stop ? "disabled" : ""} ${why ? 'aria-describedby="obFinishWhy"' : ""}>Yes — finish this onboarding</button>
+          ${asks.length
+            ? `<button class="btn btn-secondary ob-btn-wrap" type="button" data-ob="finish-later" ${stop ? 'disabled aria-describedby="obFinishWhy"' : ""}>Not yet — ${
+                notYet.some((step) => step.kind === "megaMenu") ? "save the menu" : "run the final check"
+              } and finish ${esc(asks.map((item) => item.short).join(" & "))} later</button>`
+            : ""}
         </div>
+        ${why ? `<p class="hint ob-finish-why" id="obFinishWhy" ${stop ? 'data-tone="danger"' : ""}>${esc(why)}</p>` : ""}
+        ${!menuWritable && !done("megaMenu") ? `<p class="hint ob-finish-why" data-tone="warn">The Mega Menu has to be edited by hand — no navigation scope.</p>` : ""}
       </section>`;
+  }
+
+  /* The finish buttons' enabled state, from the ticks and the menu. One
+     function, called after a tick, after a menu read and after a finish, so
+     no path can leave "Yes" clickable with a box unticked or the menu wiped. */
+  function syncFinishControls(scope) {
+    const card = scope?.querySelector("[data-ob-finish-card]");
+    if (!card || !state.record || state.finishing) return;
+    const stop = Boolean(menuStop(state.record));
+    const boxes = [...card.querySelectorAll("[data-ob-finish-ask]")];
+    boxes.forEach((box) => {
+      box.disabled = false;
+    });
+    const ticked = boxes.every((box) => box.checked);
+    const finish = card.querySelector("[data-ob='finish']");
+    const later = card.querySelector("[data-ob='finish-later']");
+    if (finish) finish.disabled = stop || !ticked;
+    if (later) later.disabled = stop;
+    // "Unlocks once you tick…" is done saying anything once both are ticked.
+    const why = card.querySelector("#obFinishWhy");
+    if (why) why.hidden = !stop && ticked;
+  }
+
+  // While a finish runs, nothing else in the card can be pressed or ticked.
+  function lockFinishCard(scope) {
+    scope
+      ?.querySelector("[data-ob-finish-card]")
+      ?.querySelectorAll("[data-ob='finish'], [data-ob='finish-later'], [data-ob-finish-ask]")
+      .forEach((node) => {
+        node.disabled = true;
+      });
+  }
+
+  function focusSelector(node) {
+    if (!node) return "";
+    if (node.id) return `#${node.id}`;
+    if (node.dataset?.obFinishAsk) return `[data-ob-finish-ask="${node.dataset.obFinishAsk}"]`;
+    if (node.dataset?.ob) return `[data-ob="${node.dataset.ob}"]`;
+    return "";
+  }
+
+  /* The finish card and the Mega Menu card both read the menu's health, so a
+     read that lands swaps them in place, keeping the ticks, the name being
+     typed and focus. Never while a finish runs: its busy button must not be
+     replaced by a fresh, clickable one. */
+  function repaintMenuDependents() {
+    const scope = page();
+    if (!scope || !state.record || state.finishing) return;
+    const card = scope.querySelector("[data-ob-finish-card]");
+    if (card) {
+      const ticked = new Set([...card.querySelectorAll("[data-ob-finish-ask]:checked")].map((box) => box.dataset.obFinishAsk));
+      const typed = card.querySelector("#obRailOperator")?.value;
+      const focusKey = card.contains(document.activeElement) ? focusSelector(document.activeElement) : "";
+      card.outerHTML = finishCard(state.record);
+      const next = scope.querySelector("[data-ob-finish-card]");
+      next?.querySelectorAll("[data-ob-finish-ask]").forEach((box) => {
+        box.checked = ticked.has(box.dataset.obFinishAsk);
+      });
+      const input = next?.querySelector("#obRailOperator");
+      if (input && typed !== undefined) input.value = typed;
+      syncFinishControls(scope);
+      if (focusKey) next?.querySelector(focusKey)?.focus({ preventScroll: true });
+    }
+    const menuCard = scope.querySelector("[data-ob-shared='megaMenu']");
+    if (menuCard && !menuCard.querySelector("[data-ob-busy]")) {
+      menuCard.outerHTML = sharedCardHtml(state.record, SHARED_KINDS.find((kind) => kind.key === "megaMenu"));
+    }
   }
 
   /* Every step is a button. Steps up to the first unfinished one can be
@@ -2558,6 +3263,9 @@
     const checklist = list(node.checklist);
     const sentence = sharedSentence(record, kind.key, node);
     const forms = kind.key === "helium" ? list(node.forms) : [];
+    const blocked = kind.key === "megaMenu" && status === "blocked";
+    // The menu write is refused on screen for the same reasons finish is.
+    const menuStopped = kind.key === "megaMenu" ? menuStop(record) : null;
     return `
       <div class="ob-shared" data-ob-shared="${esc(kind.key)}" data-tone="${esc(sharedTone(status))}">
         <div class="ob-shared-head">
@@ -2565,7 +3273,13 @@
           ${chip(status, sharedTone(status))}
         </div>
         <p class="ob-shared-sub">${esc(kind.sub)}</p>
-        ${sentence ? `<p class="ob-proposal">${esc(sentence)}</p>` : `<p class="hint">No proposal computed yet.</p>`}
+        ${blocked
+          ? menuBlockedHtml(node)
+          : menuStopped
+            ? `<p class="hint">While the menu looks wiped, no position for this store can be trusted. Once it is whole again, press “Re-compute proposals”.</p>`
+            : sentence
+              ? `<p class="ob-proposal">${esc(sentence)}</p>`
+              : `<p class="hint">No proposal computed yet.</p>`}
         ${forms.length
           ? `<ul class="ob-form-list">${forms
               .map(
@@ -2579,21 +3293,26 @@
         ${checklist.length
           ? `<ol class="ob-checklist">${checklist.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>`
           : ""}
-        ${node.error ? `<p class="build-error">${esc(node.error)}</p>` : ""}
+        ${node.error && !blocked ? `<p class="build-error">${esc(node.error)}</p>` : ""}
         <div class="ob-shared-actions">
           ${/* "Approve & apply" is only honest where the agent can actually
                 write the change. Shopify Flow has no API at all and Helium has
                 no write API, so for those two the only truthful button is the
                 one that records what Dan did by hand; offering "apply" there
-                marked the setting done with nothing applied. */
+                marked the setting done with nothing applied. With the menu
+                looking wiped it stays visible but off, and says why; "I did
+                this" stays on — it records Dan's hand edit and writes nothing. */
             kind.key === "megaMenu" && state.caps?.megaMenu?.writable
-              ? `<button class="btn btn-secondary btn-sm" type="button" data-ob="approve-shared" data-ob-kind="${esc(kind.key)}">Approve &amp; apply</button>`
+              ? `<button class="btn btn-secondary btn-sm" type="button" data-ob="approve-shared" data-ob-kind="${esc(kind.key)}" ${
+                  menuStopped ? 'disabled aria-describedby="obMenuApplyWhy"' : ""
+                }>Approve &amp; apply</button>`
               : ""}
           <button class="btn btn-ghost btn-sm" type="button" data-ob="confirm-shared" data-ob-kind="${esc(kind.key)}">${esc(
             kind.key === "megaMenu" && state.caps?.megaMenu?.writable ? "I did this" : "I did this — confirm"
           )}</button>
           <button class="btn btn-ghost btn-sm" type="button" data-ob="copy" data-ob-copy-text="${esc(record.department?.tag || record.department?.name || "")}">Copy tag</button>
         </div>
+        ${menuStopped && state.caps?.megaMenu?.writable ? `<p class="hint ob-shared-why" id="obMenuApplyWhy">${esc(menuStopped.title)}</p>` : ""}
         ${node.approvedBy || node.confirmedBy ? `<p class="hint">${esc(node.approvedBy ? `approved by ${node.approvedBy}` : `confirmed by ${node.confirmedBy}`)}${node.appliedAt ? ` · applied ${esc(when(node.appliedAt))}` : ""}${node.verifiedAt ? ` · verified ${esc(when(node.verifiedAt))}` : ""}</p>` : ""}
       </div>`;
   }
@@ -2622,6 +3341,33 @@
       return `${pending} of ${forms.length} form${plural(forms.length, "", "s")} still need the tag, inserted in alphabetical order.`;
     }
     return "";
+  }
+
+  /* "blocked": the agent refused to write the menu because it looked wiped.
+     The proposal sentence is left out on purpose — a position worked out
+     against an emptied "Store" is exactly the wrong one. The record keeps at
+     most 50 missing titles, so the live read's count wins when there is one. */
+  function menuBlockedHtml(node) {
+    const health = node.health || {};
+    const recorded = list(health.missing);
+    const live = state.menuHealth?.available ? state.menuHealth : null;
+    const count = live && !live.healthy ? list(live.missing).length : recorded.length;
+    const atLeast = !(live && !live.healthy) && recorded.length >= 50;
+    const stores = Number(health.storeCount);
+    return `
+      <div class="ob-shared-blocked">
+        <p><b>${esc(node.error || "The agent did not touch the menu: it looks wiped.")}</b></p>
+        ${count
+          ? `<p>${atLeast ? "At least 50" : count} ${plural(count, "link", "links")} from the agent's saved copy${
+              health.baselineAt ? ` of ${esc(when(health.baselineAt))}` : ""
+            } ${count === 1 ? "is" : "are"} missing${
+              Number.isFinite(stores) ? `; Store had ${stores} ${plural(stores, "store", "stores")} when the agent stopped` : ""
+            }.</p>`
+          : ""}
+        ${live?.healthy
+          ? `<p>A read since then shows the menu whole again${live.checkedAt ? ` (${esc(when(live.checkedAt))})` : ""}, so the agent can try again.</p>`
+          : ""}
+      </div>`;
   }
 
   function lockCardHtml(record) {
@@ -2755,10 +3501,7 @@
   function onDetailChange(event) {
     // The two "have you done this?" ticks arm the finish button.
     if (event.target.closest("[data-ob-finish-ask]")) {
-      const scope = page();
-      const asks = [...(scope?.querySelectorAll("[data-ob-finish-ask]") || [])];
-      const finish = scope?.querySelector('[data-ob="finish"]');
-      if (finish) finish.disabled = !asks.every((box) => box.checked);
+      syncFinishControls(page());
       return;
     }
     const upload = event.target.closest("input[data-ob-upload]");
@@ -2807,9 +3550,13 @@
       return;
     }
     if (action === "reload") {
+      // Refresh re-reads the menu too, fresh from Shopify on the Finish step.
+      state.healthStep = null;
+      loadMenuHealth();
       loadDetail(record.id);
       return;
     }
+    if (action.startsWith("menu-")) return menuAction(action);
     if (action === "pick-code") {
       const input = page()?.querySelector("#obCodeValue");
       if (input) {
@@ -2843,6 +3590,7 @@
     if (action === "propose-shared") return runSimple(trigger, "Computing…", "/shared-settings/propose");
     if (action === "verify-shared") return runSimple(trigger, "Verifying…", "/shared-settings/verify");
     if (action === "finish") return finishOnboarding(trigger);
+    if (action === "finish-later") return finishOnboarding(trigger, { later: true });
     if (action === "approve-shared") return approveShared(trigger, false);
     if (action === "confirm-shared") return approveShared(trigger, true);
     if (action === "save-lock") return saveLock(trigger);
@@ -3051,88 +3799,171 @@
     return runSimple(button, "Approving — creating folders and reviewing the policy…", "/code", { code: value, by: currentOperator() }, afterCodeApproval);
   }
 
+  // "Helium, Shopify Flow and the final check" — for sentences about steps.
+  function namesList(names) {
+    return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] || "";
+  }
+
+  function capitalize(text) {
+    const value = String(text || "");
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+
   /*
-   * The whole tail of an onboarding behind one button.
+   * The whole tail of an onboarding behind one button — or, with `later`,
+   * everything except the two attestations.
    *
-   * Order matters: the Mega Menu is a real write and can fail, so it goes
-   * first and a failure stops the rest rather than recording approvals for a
-   * store that is not in the navigation. Flow and Helium are attestations of
-   * work already done outside. The final check runs last and decides whether
-   * the record reaches "complete".
+   * finishSends decides what goes and in what order, the same list the card
+   * describes. Helium goes first because it is the one request that can
+   * refuse: a form the agent can read does not carry the tag. That refusal
+   * (409) stops everything — the record is untouched, the Helium box is
+   * unticked, and the server's own sentence says which form. Any other
+   * failure part-way shows the record as it now stands, because the steps
+   * before it did land, and names what went through and what was not sent.
+   *
+   * Not runAction: a failure after the first step repaints the page, and
+   * runAction would show its error in the page it started on, which is gone
+   * by then.
    */
-  async function finishOnboarding(button) {
+  async function finishOnboarding(button, { later = false } = {}) {
     const id = state.record?.id;
-    if (!id) return;
+    if (!id || state.finishing) return;
+    const record = state.record;
+    const scope = page();
+    // The buttons are already off in both cases; this is the backstop for a
+    // screen that has not caught up with the record or the menu.
+    const stop = menuStop(record);
+    if (stop) {
+      fail(stop.title);
+      syncFinishControls(scope);
+      return;
+    }
+    if (!later && [...(scope?.querySelectorAll("[data-ob-finish-ask]") || [])].some((box) => !box.checked)) {
+      fail("Tick a box only once that part is done — or press “Not yet” to finish it later.");
+      return;
+    }
     const by = currentOperator();
-    const settings = state.record.sharedSettings || {};
-    const done = (key) => ["applied", "verified", "confirmed"].includes(settings[key]?.status);
+    const steps = finishSends(record, { later, by });
+    const menuStep = steps.some((step) => step.kind === "megaMenu");
+    const original = button.innerHTML;
+    const landed = [];
+    let payload = null;
+    let failed = null;
 
-    const steps = [];
-    /* applied:true means "a human already made this change" — the server
-       stamps it done and calls nothing. That was right while the app had no
-       navigation scope and the menu could only be edited by hand; with the
-       scope granted it would record a menu item that was never created. The
-       card promises "add the store to the Mega Menu", so send applied:false
-       and let the server actually insert it. */
-    const menuStep = !done("megaMenu") && state.caps?.megaMenu?.writable;
-    if (menuStep) {
-      steps.push({ label: "Adding to the Mega Menu…", suffix: "/shared-settings/megaMenu/approve", body: { by, applied: false } });
-    }
-    for (const kind of ["flow", "helium"]) {
-      if (!done(kind)) steps.push({ label: `Recording ${kind === "flow" ? "Flow" : "Helium"}…`, suffix: `/shared-settings/${kind}/approve`, body: { by, applied: true } });
-    }
-    steps.push({ label: "Checking everything…", suffix: "/final-check", body: { by } });
-
-    return runAction(
-      button,
-      steps[0].label,
-      async () => {
-        let payload = null;
-        for (const step of steps) {
-          button.textContent = step.label;
+    state.finishing = true;
+    lockFinishCard(scope);
+    button.dataset.obBusy = "true";
+    hideBanner(scope, "obDetailError");
+    try {
+      for (const step of steps) {
+        button.innerHTML = `<span class="spinner" aria-hidden="true"></span>${esc(step.busy)}`;
+        try {
           payload = await api(recordPath(id, step.suffix), { method: "POST", body: JSON.stringify(step.body) });
-          if (!isCurrent("detail", id)) return;
+        } catch (error) {
+          failed = { step, error };
+          break;
         }
+        if (!isCurrent("detail", id)) return;
+        landed.push(step);
+      }
+    } finally {
+      state.finishing = false;
+    }
+    if (!isCurrent("detail", id)) return;
+
+    if (failed) {
+      const { step, error } = failed;
+      const rest = steps.slice(steps.indexOf(step) + 1).map((next) => next.name);
+      const notSent = rest.length ? ` ${capitalize(namesList(rest))} ${rest.length === 1 ? "was" : "were"} not sent.` : "";
+      if (step.kind === "helium" && (error.status === 409 || error.code === "HELIUM_TAG_MISSING")) {
+        /* Nothing on the record changed (the server only notes the refusal),
+           so the screen stays as it is: Helium unticked, the card re-armed,
+           and the server's sentence saying which form is missing the tag. */
+        button.innerHTML = original;
+        delete button.dataset.obBusy;
+        const box = scope?.querySelector("[data-ob-finish-ask='helium']");
+        if (box) box.checked = false;
+        syncFinishControls(scope);
+        showBanner(scope, "obDetailError", `${error.message} The agent stopped there:${notSent || " nothing else was sent."}`);
+        box?.focus({ preventScroll: true });
+        return;
+      }
+      if (payload) {
+        // Earlier steps landed: show the record as it now stands.
         applyRecord(payload);
-        const record = state.record;
-        /* The insert can still fail on a live menu — a stale proposal, a
-           neighbour renamed since the build. The server falls back to
-           "manual" and keeps the checklist; saying nothing here would leave
-           the operator believing the store is in the menu. */
-        const menu = record.sharedSettings?.megaMenu || {};
-        if (menuStep && !["applied", "verified"].includes(menu.status)) {
-          showBanner(
-            page(),
-            "obDetailError",
-            `Everything else is recorded, but the Mega Menu was not saved${menu.error ? ` (${menu.error})` : ""}. Add the item by hand with the checklist in Approvals, then press finish again.`
-          );
-        } else if (record.status === "complete") {
-          goToStep("done");
-        } else {
-          /* Re-rendering the same card used to be the only response, so a
-             final check that found something read as a dead button. */
-          const open = Array.isArray(record.report?.unresolved) ? record.report.unresolved : list(record.report?.missingInformation);
-          showBanner(
-            page(),
-            "obDetailError",
-            open.length
-              ? `Not finished — the final check found ${open.length === 1 ? "one thing" : `${open.length} things`} still open, listed in the card below. Fix ${open.length === 1 ? "it" : "them"}, then press finish again.`
-              : "Not finished — the final check did not pass. Press finish again to re-check."
-          );
-        }
-      },
-      page(),
-      "obDetailError"
-    );
+      } else {
+        button.innerHTML = original;
+        delete button.dataset.obBusy;
+        syncFinishControls(scope);
+      }
+      const went = landed.map((done) => done.name);
+      fail(
+        `${capitalize(step.name)} did not go through: ${error.message}${went.length ? ` ${capitalize(namesList(went))} went through before it.` : ""}${notSent}`
+      );
+      return;
+    }
+
+    applyRecord(payload);
+    const after = state.record;
+    const menu = after.sharedSettings?.megaMenu || {};
+    const recorded = landed.filter((step) => step.kind === "helium" || step.kind === "flow").map((step) => step.name);
+    const again = later ? "“Not yet”" : "finish";
+    if (menu.status === "blocked") {
+      /* The server refused to write a menu that looks wiped. Its own reason,
+         not the generic "not saved": the fix is the banner, not the
+         checklist, and adding the item by hand would build on the wreck. */
+      fail(
+        `${menu.error || "The agent did not touch the Mega Menu: it looks wiped."}${
+          recorded.length ? ` ${capitalize(namesList(recorded))} ${recorded.length === 1 ? "is" : "are"} recorded.` : ""
+        } Fix the menu with the banner at the top, then press ${again} again.`
+      );
+      loadMenuHealth({ fresh: true });
+    } else if (menuStep && !["applied", "verified"].includes(menu.status)) {
+      /* The insert can still fail on a live menu — a stale proposal, a
+         neighbour renamed since the build. The server falls back to "manual"
+         and keeps the checklist; saying nothing here would leave the operator
+         believing the store is in the menu. */
+      fail(
+        `${recorded.length ? "Everything else is recorded, but the" : "The"} Mega Menu was not saved${menu.error ? ` (${menu.error})` : ""}. Add the item by hand with the checklist in the shared settings below, then press ${again} again.`
+      );
+    } else if (after.status === "complete") {
+      goToStep("done");
+    } else if (later) {
+      const left = FINISH_ASKS.filter((item) => !sharedDone(after.sharedSettings, item.key)).map((item) => item.short);
+      showBanner(
+        page(),
+        "obDetailError",
+        `${menuStep ? "Saved" : "Checked"}. ${namesList(left) || "Flow and Helium"} ${left.length === 1 ? "is" : "are"} still to do — this onboarding stays open until you confirm ${
+          left.length === 1 ? "it" : "them"
+        }.`,
+        "warn"
+      );
+    } else {
+      /* Re-rendering the same card used to be the only response, so a final
+         check that found something read as a dead button. */
+      const open = Array.isArray(after.report?.unresolved) ? after.report.unresolved : list(after.report?.missingInformation);
+      fail(
+        open.length
+          ? `Not finished — the final check found ${open.length === 1 ? "one thing" : `${open.length} things`} still open, listed in the card below. Fix ${open.length === 1 ? "it" : "them"}, then press finish again.`
+          : "Not finished — the final check did not pass. Press finish again to re-check."
+      );
+    }
   }
 
   function approveShared(button, applied) {
     const kind = button.dataset.obKind;
     if (!kind) return;
-    return runSimple(button, applied ? "Recording…" : "Applying…", `/shared-settings/${encodeURIComponent(kind)}/approve`, {
-      by: currentOperator(),
-      applied: Boolean(applied)
-    });
+    return runSimple(
+      button,
+      applied ? "Recording…" : "Applying…",
+      `/shared-settings/${encodeURIComponent(kind)}/approve`,
+      { by: currentOperator(), applied: Boolean(applied) },
+      (record) => {
+        // A refusal to write a wiped menu raises the banner at the top now,
+        // not on the next visit.
+        if (kind === "megaMenu" && record?.sharedSettings?.megaMenu?.status === "blocked") loadMenuHealth({ fresh: true });
+      }
+    );
   }
 
   function saveLock(button) {
@@ -3958,7 +4789,13 @@ They are rebuilt from the current logos and blank photos. The product's title, S
     state.id = id || null;
     state.record = null;
     state.step = null;
+    state.healthStep = null;
+    // A notice belongs to the page it answered; the menu's health is kept.
+    state.menuNotice = null;
+    state.menuError = "";
     if (view === "detail") {
+      // The banner sits on the record page too (renderList reads it itself).
+      loadMenuHealth();
       // A deep link opens the detail view without the list ever rendering, so
       // the capabilities it reads (can Locksmith be called? is the menu
       // writable?) are fetched here too. Failure is not fatal: the card falls

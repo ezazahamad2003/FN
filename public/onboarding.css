@@ -1326,6 +1326,204 @@
   flex-wrap: wrap;
 }
 
+/* Red, because a tick on Flow or Helium that is not true costs a department
+   its email or its lock, and a menu written while wiped cost Dan a hundred
+   stores. The card's border turns red only for the menu: that one stops the
+   finish outright. */
+.ob-finish[data-tone="danger"] { border-left-color: var(--danger); }
+
+.ob-finish-danger {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ob-finish-danger p { margin: 0; }
+.ob-finish-danger p b { color: var(--danger); }
+.ob-finish-danger ul { display: grid; gap: var(--space-1); margin: 0; padding-left: 1.1rem; }
+
+/* The steps sit under their own box, so the box is ticked with them in view. */
+.ob-finish-asks > li { display: grid; gap: var(--space-2); min-width: 0; }
+.ob-finish-steps { display: grid; gap: var(--space-2); padding-left: var(--space-5); min-width: 0; overflow-wrap: anywhere; }
+.ob-finish-steps .hint { margin: 0; color: var(--text-subtle); font-size: var(--fs-xs); }
+
+.ob-finish-read {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.ob-finish-why { margin: 0; color: var(--text-subtle); font-size: var(--fs-xs); line-height: 1.5; }
+.ob-finish-why[data-tone="danger"] { color: var(--danger); font-weight: 700; }
+.ob-finish-why[data-tone="warn"] { color: var(--warn); }
+
+/* Long, honest button labels ("Not yet — save the menu and finish Flow &
+   Helium later") wrap instead of pushing the card past a phone's width. */
+.ob-btn-wrap { white-space: normal; text-align: center; line-height: 1.3; padding-block: var(--space-2); max-width: 100%; }
+
+/* =============================================================================
+   Mega Menu health — the danger banner on the queue and on every record
+   -----------------------------------------------------------------------------
+   Shown only when the live menu was read and looks wiped. Bigger than the
+   one-line .banner on purpose: it carries what is missing and the two ways
+   out, and it has to be impossible to scroll past.
+   ========================================================================== */
+.ob-menu-health { display: grid; gap: var(--space-3); min-width: 0; }
+.ob-menu-slot { display: grid; min-width: 0; }
+.ob-menu-slot:empty,
+.ob-menu-health:not(:has(.ob-menu-slot:not(:empty))) { display: none; }
+
+.ob-menu-alert {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--danger-border);
+  border-left: 4px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--text);
+}
+
+.ob-menu-glyph { color: var(--danger); margin-top: 2px; }
+.ob-menu-body { display: grid; gap: var(--space-2); min-width: 0; font-size: var(--fs-sm); line-height: 1.5; }
+.ob-menu-body h2 { margin: 0; color: var(--danger); font-size: var(--fs-lg); line-height: 1.35; }
+.ob-menu-body p { margin: 0; overflow-wrap: anywhere; }
+.ob-menu-message { font-weight: 700; }
+.ob-menu-reasons { margin: 0; padding-left: 1.1rem; }
+.ob-menu-meta,
+.ob-menu-hint { color: var(--text-muted); font-size: var(--fs-xs); }
+
+.ob-menu-details summary {
+  cursor: pointer;
+  width: fit-content;
+  color: inherit;
+  font-weight: 700;
+}
+
+.ob-menu-alert .ob-menu-details summary { color: var(--danger); }
+.ob-menu-details summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: var(--radius-sm); }
+
+.ob-menu-details[open] {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-menu-details[open] > summary { margin-bottom: var(--space-1); }
+
+.ob-menu-group {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.ob-menu-group-title { margin: 0 0 var(--space-1); font-weight: 700; }
+.ob-menu-group-title span { color: var(--text-subtle); font-weight: 600; }
+
+.ob-menu-group ul,
+.ob-menu-details > ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  columns: 2 220px;
+  column-gap: var(--space-5);
+  font-size: var(--fs-xs);
+}
+
+.ob-menu-group li,
+.ob-menu-details > ul li { break-inside: avoid; overflow-wrap: anywhere; }
+
+.ob-menu-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+
+.ob-menu-controls .field { margin: 0; min-width: 0; flex: 0 1 220px; }
+.ob-menu-controls .field input { width: 100%; }
+
+.ob-menu-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
+
+.ob-menu-error {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* What a restore or an accept did. .banner is danger by default; ok comes
+   from styles.css and warn is added here for this view. */
+.onboarding-root .banner[data-tone="warn"] {
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.onboarding-root .banner[data-tone="warn"] .b-glyph { color: var(--warn); }
+
+.ob-menu-notice { margin: 0; }
+.ob-menu-notice:focus { outline: none; }
+.ob-menu-notice:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.ob-menu-notice-body { display: grid; gap: var(--space-2); justify-items: start; min-width: 0; color: var(--text); line-height: 1.5; }
+.ob-menu-notice-body p { margin: 0; overflow-wrap: anywhere; }
+.ob-menu-notice-body p b { color: inherit; }
+.ob-menu-notice[data-tone="ok"] .ob-menu-notice-body > p:first-child { color: var(--success); }
+.ob-menu-notice[data-tone="warn"] .ob-menu-notice-body > p:first-child { color: var(--warn); }
+.ob-menu-skipped { display: grid; gap: var(--space-1); margin: 0; padding-left: 1.1rem; }
+
+/* styles.css has no danger chip; the queue's "Flow & Helium to do" needs one. */
+.onboarding-root .status-chip[data-tone="danger"] {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* Shared settings: the Mega Menu card when the agent refused to write. */
+.ob-shared-blocked {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ob-shared-blocked p { margin: 0; }
+.ob-shared-blocked p b { color: var(--danger); }
+.ob-shared-why { margin: 0; color: var(--danger); font-size: var(--fs-xs); font-weight: 700; }
+
+@media (max-width: 620px) {
+  .ob-menu-alert { grid-template-columns: minmax(0, 1fr); padding: var(--space-4); }
+  .ob-menu-glyph { display: none; }
+  .ob-menu-controls { flex-direction: column; align-items: stretch; }
+  .ob-menu-controls .field { flex: none; }
+  .ob-menu-actions .btn,
+  .ob-finish-actions .btn { flex: 1 1 100%; }
+  .ob-finish-steps { padding-left: 0; }
+}
+
 /* =============================================================================
    Product row — where each logo comes from, and the store's own naming
    ========================================================================== */
