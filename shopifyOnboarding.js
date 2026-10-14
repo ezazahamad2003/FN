@@ -6,7 +6,9 @@
  * to duplicate from, duplicate it, overwrite the copy with the department's
  * options/variants/SKUs (productSet), attach mockups, create the department
  * collection with its banner and description, read/insert the Mega Menu
- * item, and take the verification snapshots the final check compares.
+ * item (never into a menu megaMenuGuard says looks wiped), put a wiped menu
+ * back from the last good copy, and take the verification snapshots the final
+ * check compares.
  *
  * Rules (SKUs, tags, vendor, titles, insertion positions) are NOT decided
  * here — callers pass what onboardingRules.js produced. This module talks to
@@ -25,6 +27,7 @@ const nodeFetch = require("node-fetch");
 const shopify = require("./shopify");
 const catalog = require("./catalog");
 const rules = require("./onboardingRules");
+const menuGuard = require("./megaMenuGuard");
 
 const MASTER_REFERENCE_TAG = "Master Reference";
 const ONLINE_STORE_PUBLICATION = "Online Store";
@@ -1300,11 +1303,9 @@ async function readMegaMenu() {
 
 // The "Store" item is the top-level entry the department stores hang under:
 // by title first (the store's menu names it "Store"), else the COLLECTIONS-type
-// entry.
-function findStoreItem(menu) {
-  const items = menu?.items || [];
-  return items.find((it) => normText(it.title) === normText(STORE_ITEM_TITLE)) || items.find((it) => it.type === "COLLECTIONS") || null;
-}
+// entry. The rule lives in megaMenuGuard so the insert and the guard that
+// decides whether the menu is fit to write to can never disagree about it.
+const { findStoreItem } = menuGuard;
 
 function menuTitleMatches(item, title, gid) {
   return normText(item.title) === normText(title) || (Boolean(gid) && item.resourceId === gid);
@@ -1375,10 +1376,42 @@ function codedError(message, code) {
   return error;
 }
 
+/* Refuses a menu that looks wiped. menuUpdate replaces the whole tree, so a
+   write computed from a Store list somebody else emptied makes the emptying
+   permanent — on 13 Oct 2026 it turned ~112 stores into one. The live read is
+   judged against the last good copy (`baseline`, from megaMenuGuard) and, with
+   no copy at all, against the absolute rules: an empty Store list is never
+   written to. */
+function assertMenuHealthy(live, baseline) {
+  const assessment = menuGuard.assessMenu(live, baseline || null);
+  if (assessment.healthy) return assessment;
+  const error = codedError(`${assessment.message} Nothing was written to it.`, "MENU_SUSPECT");
+  error.assessment = assessment;
+  throw error;
+}
+
+function allItemIds(items, out = new Map()) {
+  for (const item of items || []) {
+    if (item.id) out.set(item.id, item.title);
+    allItemIds(item.items, out);
+  }
+  return out;
+}
+
+// Every item that was in `before` and is not in `after`, by id: an insert
+// sends every existing item back with its id, so any id that vanished is an
+// item the write deleted.
+function lostMenuItems(before, after) {
+  const kept = allItemIds(after?.items);
+  return [...allItemIds(before?.items)].filter(([id]) => !kept.has(id)).map(([id, title]) => ({ id, title }));
+}
+
 // Applies an APPROVED proposal. The menu is re-read and the position
 // recomputed first: approval covered the exact change Dan saw, so if another
 // department landed in between, this stops rather than inserting elsewhere.
-async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
+// A re-read that looks wiped stops it too (MENU_SUSPECT), before anything is
+// computed from it.
+async function applyMegaMenuInsert(menu, proposal, { onLog, baseline = null } = {}) {
   const log = logger(onLog);
   if (!proposal?.newItem?.title) throw new Error("applyMegaMenuInsert needs the proposal to apply.");
   const fresh = await readMegaMenu();
@@ -1386,6 +1419,7 @@ async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
     throw codedError(`Mega Menu is not writable: ${fresh.reason}`, fresh.accessDenied ? "ACCESS_DENIED" : "MENU_UNAVAILABLE");
   }
   const live = fresh.menu;
+  assertMenuHealthy(live, baseline);
   if (menu?.id && live.id !== menu.id) {
     throw codedError(`Mega Menu id changed (${menu.id} → ${live.id}); propose again.`, "STALE_PROPOSAL");
   }
@@ -1396,7 +1430,7 @@ async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
   });
   if (recomputed.alreadyPresent) {
     log(`"${proposal.newItem.title}" is already in the Mega Menu`);
-    return { applied: true, alreadyPresent: true, menuItemId: recomputed.existingItemId, index: recomputed.index, insertAfter: recomputed.insertAfter, insertBefore: recomputed.insertBefore };
+    return { applied: true, alreadyPresent: true, menuItemId: recomputed.existingItemId, index: recomputed.index, insertAfter: recomputed.insertAfter, insertBefore: recomputed.insertBefore, lostItems: [], before: live, after: live };
   }
   if (!recomputed.storeItemId) throw codedError(recomputed.reason, "MENU_UNAVAILABLE");
   if (recomputed.index !== proposal.index || recomputed.insertAfter !== proposal.insertAfter || recomputed.insertBefore !== proposal.insertBefore) {
@@ -1423,7 +1457,21 @@ async function applyMegaMenuInsert(menu, proposal, { onLog } = {}) {
   const store = updated ? findStoreItem(updated) : null;
   const inserted = (store?.items || []).find((it) => menuTitleMatches(it, proposal.newItem.title, recomputed.collectionGid));
   log(`Inserted "${proposal.newItem.title}" into the Mega Menu at index ${recomputed.index}`);
-  return { applied: true, alreadyPresent: false, menuItemId: inserted?.id || null, index: recomputed.index, insertAfter: recomputed.insertAfter, insertBefore: recomputed.insertBefore };
+  /* The tree Shopify answered with is the proof the write kept everything.
+     `before` goes back too, so the caller can keep it as a restore point. */
+  const lostItems = updated ? lostMenuItems(live, updated) : [];
+  if (lostItems.length) log(`The Mega Menu write dropped ${lostItems.length} item(s) that were there before: ${lostItems.map((it) => it.title).join(", ")}`);
+  return {
+    applied: true,
+    alreadyPresent: false,
+    menuItemId: inserted?.id || null,
+    index: recomputed.index,
+    insertAfter: recomputed.insertAfter,
+    insertBefore: recomputed.insertBefore,
+    lostItems,
+    before: live,
+    after: updated
+  };
 }
 
 /* ---------------------------------------------------------------------------
@@ -1492,10 +1540,14 @@ async function deleteCollection(gidOrId) {
 
 // Drop every Mega Menu item that links to this collection, matched by the
 // collection's id only — never by title, so no other store can be touched.
-async function removeMegaMenuItemsFor(gidOrId) {
+// The same whole-tree write as the insert, so the same guard: a menu that
+// looks wiped is reported (`suspect`) and left exactly as it is.
+async function removeMegaMenuItemsFor(gidOrId, { baseline = null } = {}) {
   const gid = collectionGid(gidOrId);
   const read = await readMegaMenu();
   if (!read.available) return { removed: 0, available: false, reason: read.reason };
+  const assessment = menuGuard.assessMenu(read.menu, baseline);
+  if (!assessment.healthy) return { removed: 0, available: true, suspect: true, reason: assessment.message };
   let removed = 0;
   const prune = (items) =>
     (items || [])
@@ -1517,14 +1569,16 @@ async function removeMegaMenuItemsFor(gidOrId) {
 /* `collectionGid` matters: an item Dan added by hand is named however he named
    it, and matching on the title alone reports a store that IS in the menu as
    missing. menuTitleMatches accepts either, exactly as the proposal's
-   already-present check does. */
-async function verifyMegaMenu(title, { collectionGid = null } = {}) {
+   already-present check does.
+   `includeMenu` hands back the menu that was read, so the agent can judge
+   the whole menu from the same read instead of reading it twice. */
+async function verifyMegaMenu(title, { collectionGid = null, includeMenu = false } = {}) {
   const fresh = await readMegaMenu();
   if (!fresh.available) return { available: false, present: false, index: -1, before: null, after: null, reason: fresh.reason, accessDenied: Boolean(fresh.accessDenied) };
   const store = findStoreItem(fresh.menu);
   const children = store?.items || [];
   const index = children.findIndex((it) => menuTitleMatches(it, title, collectionGid));
-  return {
+  const result = {
     available: true,
     present: index !== -1,
     index,
@@ -1532,6 +1586,197 @@ async function verifyMegaMenu(title, { collectionGid = null } = {}) {
     after: index !== -1 && children[index + 1] ? children[index + 1].title : null,
     storeItemTitle: store?.title || null
   };
+  if (includeMenu) result.menu = fresh.menu;
+  return result;
+}
+
+/* ---------------------------------------------------------------------------
+   Putting a wiped Mega Menu back from the last good copy
+   ------------------------------------------------------------------------- */
+
+const MENU_RESOURCES_QUERY = `
+query menuResources($ids: [ID!]!) {
+  nodes(ids: $ids) { id }
+}`;
+
+// Shopify caps nodes(ids:) at 250 ids per call.
+const NODES_PAGE = 250;
+
+function restoredNode(item) {
+  return { title: item.title, type: item.type, url: item.url || null, resourceId: item.resourceId || null, tags: Array.isArray(item.tags) ? [...item.tags] : [], items: [] };
+}
+
+function cloneMenuItems(items, map) {
+  return (items || []).map((item) => {
+    const copy = { ...item, tags: Array.isArray(item.tags) ? [...item.tags] : [], items: [] };
+    map.set(item, copy);
+    copy.items = cloneMenuItems(item.items, map);
+    return copy;
+  });
+}
+
+/**
+ * The whole menuUpdate tree that puts back what the last good copy had and
+ * the live menu lost. Pure. The live menu is never edited, only added to:
+ * every live item keeps its id, its place and its children, so nothing a
+ * person did since — a "Get Scanned" link, a store rebuilt by hand — is
+ * removed, renamed or reordered.
+ *
+ * A missing item goes back under its own parent (top-level parents by title,
+ * the Store list by the Store rule), directly after the nearest item that came
+ * before it in the copy and is still there — else first — and brings its own
+ * missing children with it. Restored items carry no id: menuUpdate creates
+ * them. An item whose parent is gone and cannot itself come back, or whose
+ * collection was deleted (`goneResourceIds`), is skipped with the reason.
+ *
+ * → { items: MenuItemUpdateInput[], restored: [{ title, parentTitle, type,
+ *     resourceId }], skipped: [{ title, reason }] }
+ */
+function planMenuRestore(liveMenu, baselineMenu, { goneResourceIds = [] } = {}) {
+  const gone = new Set(goneResourceIds);
+  const { baseline, pairs } = menuGuard.matchMenus(baselineMenu, liveMenu);
+  const entryOf = new Map(baseline.map((entry) => [entry.node, entry]));
+  const cloneOf = new Map();
+  const tree = cloneMenuItems(liveMenu?.items, cloneOf);
+  // Where each copy item sits in the working tree: its live twin, or the
+  // node made for it here.
+  const placed = new Map();
+  const restored = [];
+  const skipped = [];
+
+  // A missing item that cannot come back takes its missing children with it;
+  // a child that is still live somewhere keeps having its own children put
+  // back under it.
+  const skipMissing = (item, reason) => {
+    skipped.push({ title: item.title, reason });
+    for (const child of item.items || []) {
+      const twin = pairs.get(entryOf.get(child));
+      if (twin) walk(child, cloneOf.get(twin.node), child.title);
+      else skipMissing(child, `"${item.title}", the item it sat under, could not be put back`);
+    }
+  };
+
+  // Puts back the missing children of `copyParent` under `target` (a node in
+  // the working tree, or null when the parent is gone for good).
+  function walk(copyParent, target, parentTitle) {
+    const children = copyParent.items || [];
+    children.forEach((item, i) => {
+      const twin = pairs.get(entryOf.get(item));
+      if (twin) {
+        const node = cloneOf.get(twin.node);
+        placed.set(item, node);
+        walk(item, node, item.title);
+        return;
+      }
+      if (!target) {
+        skipMissing(item, `"${parentTitle}", the item it sat under, is no longer in the menu`);
+        return;
+      }
+      if (item.resourceId && gone.has(item.resourceId)) {
+        skipMissing(item, /\/Collection\//.test(item.resourceId) ? "the collection no longer exists" : "what it linked to no longer exists");
+        return;
+      }
+      let at = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        const index = target.items.indexOf(placed.get(children[j]));
+        if (index !== -1) {
+          at = index + 1;
+          break;
+        }
+      }
+      const node = restoredNode(item);
+      target.items.splice(at, 0, node);
+      placed.set(item, node);
+      restored.push({ title: item.title, parentTitle, type: item.type, resourceId: item.resourceId || null });
+      walk(item, node, item.title);
+    });
+  }
+
+  const copyStore = menuGuard.findStoreItem(baselineMenu);
+  const liveStore = menuGuard.findStoreItem({ items: tree });
+  for (const top of baselineMenu?.items || []) {
+    const twin =
+      tree.find((item) => normText(item.title) === normText(top.title)) || (top === copyStore ? liveStore : null);
+    walk(top, twin || null, top.title);
+  }
+
+  return { items: tree.map(toMenuItemUpdateInput), restored, skipped };
+}
+
+// Which of these resource ids Shopify no longer has (nodes() answers null).
+async function missingResources(ids) {
+  const gone = [];
+  for (let i = 0; i < ids.length; i += NODES_PAGE) {
+    const page = ids.slice(i, i + NODES_PAGE);
+    const data = await gql(MENU_RESOURCES_QUERY, { ids: page });
+    const nodes = data?.nodes || [];
+    page.forEach((id, k) => {
+      if (!nodes[k]) gone.push(id);
+    });
+  }
+  return gone;
+}
+
+/**
+ * Put back what `baselineMenu` has and the live menu lost — one menuUpdate,
+ * and only additions (planMenuRestore). Collections deleted since the copy
+ * are checked first and skipped, because a menu item cannot link to a
+ * collection that does not exist. The menu is then read back: every item
+ * that was live before must still be there (else RESTORE_LOST_ITEMS), and an
+ * item Shopify did not keep is reported as skipped, never as restored.
+ * Nothing to restore → no write.
+ */
+async function restoreMegaMenuItems(baselineMenu, { onLog } = {}) {
+  const log = logger(onLog);
+  if (!baselineMenu || !Array.isArray(baselineMenu.items)) throw new Error("restoreMegaMenuItems needs the copy of the menu to restore from.");
+  const fresh = await readMegaMenu();
+  if (!fresh.available) {
+    throw codedError(`Mega Menu could not be read: ${fresh.reason}`, fresh.accessDenied ? "ACCESS_DENIED" : "MENU_UNAVAILABLE");
+  }
+  const live = fresh.menu;
+  let plan = planMenuRestore(live, baselineMenu);
+  const collectionIds = [...new Set(plan.restored.map((item) => item.resourceId).filter((id) => /^gid:\/\/shopify\/Collection\//.test(String(id || ""))))];
+  if (collectionIds.length) {
+    const gone = await missingResources(collectionIds);
+    if (gone.length) {
+      log(`${gone.length} collection(s) in the copy no longer exist and will not be put back`);
+      plan = planMenuRestore(live, baselineMenu, { goneResourceIds: gone });
+    }
+  }
+  if (!plan.restored.length) {
+    log("Nothing to restore — the Mega Menu already has everything in the copy");
+    return { applied: false, restored: [], skipped: plan.skipped, before: live, after: live };
+  }
+
+  let data;
+  try {
+    data = await gql(MENU_UPDATE_MUTATION, { id: live.id, title: live.title, items: plan.items });
+  } catch (error) {
+    if (isAccessDenied(error)) throw codedError(`Mega Menu is not writable: ${error.message}`, "ACCESS_DENIED");
+    throw error;
+  }
+  assertNoUserErrors("menuUpdate", data?.menuUpdate?.userErrors);
+  const reread = await readMegaMenu();
+  const after = reread.available ? reread.menu : data?.menuUpdate?.menu ? normalizeMenu(data.menuUpdate.menu) : null;
+  if (!after) throw codedError("The Mega Menu was written but could not be read back to check it.", "MENU_UNAVAILABLE");
+
+  const lost = lostMenuItems(live, after);
+  if (lost.length) {
+    const error = codedError(
+      `The restore write dropped ${lost.length} item(s) that were in the menu before it: ${lost.map((it) => it.title).join(", ")}. Restore again from the copy taken just before the write.`,
+      "RESTORE_LOST_ITEMS"
+    );
+    error.lostItems = lost;
+    throw error;
+  }
+  // What the copy still has and the menu still lacks did not come back.
+  const check = menuGuard.matchMenus(baselineMenu, after);
+  const stillMissing = check.baseline.filter((entry) => !check.pairs.has(entry));
+  const notKept = (item) => stillMissing.some((entry) => entry.title === item.title && entry.parentTitle === item.parentTitle);
+  const restored = plan.restored.filter((item) => !notKept(item));
+  const skipped = [...plan.skipped, ...plan.restored.filter(notKept).map((item) => ({ title: item.title, reason: "Shopify did not keep it when the menu was saved" }))];
+  log(`Restored ${restored.length} Mega Menu item(s)${skipped.length ? `; ${skipped.length} could not be put back` : ""}`);
+  return { applied: true, restored, skipped, before: live, after };
 }
 
 /* ---------------------------------------------------------------------------
@@ -1658,6 +1903,8 @@ module.exports = {
   buildMenuUpdateItems,
   applyMegaMenuInsert,
   verifyMegaMenu,
+  planMenuRestore,
+  restoreMegaMenuItems,
   // storefront
   storefrontNavContains,
   storefrontMenuVerdict,
