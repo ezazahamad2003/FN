@@ -1218,6 +1218,256 @@ test("a live menu that moved under the approved proposal is refused, not inserte
   });
 });
 
+/* ---------------------------------------------------------------------------
+   A Mega Menu that looks wiped is never written to (13 Oct 2026).
+
+   Something outside the agent rewrote the MegaMenu keeping only its top-level
+   items. The agent then read the empty Store list, proposed "index 0, nothing
+   above, nothing below", re-read the same empty list at finish — so the
+   staleness check matched — and wrote Store = [the new store]. These pin the
+   guard on the real insert, over the real menu.
+   ------------------------------------------------------------------------- */
+
+// The 112-store menu the 16:17 UTC final check read: the live dump plus four.
+function menu112() {
+  const menu = liveMenu();
+  const store = storeItemOf(menu);
+  const at = store.items.findIndex((item) => item.title === "FN Simple Merch");
+  store.items.splice(
+    at,
+    0,
+    collectionItem(881, "Foresthill Fire Protection District", 900881, "1-foresthill-fire-protection-district"),
+    collectionItem(882, "Lodi Fire Department", 900882, "1-lodi-fire-department"),
+    collectionItem(883, "Galt Fire Department", 900883, "1-galt-fire-department"),
+    collectionItem(884, "Dixon Fire Department", 900884, "1-dixon-fire-department")
+  );
+  return menu;
+}
+
+// What the outside rewrite left: the top level (with its new "Get Scanned"
+// link), and nothing below it.
+function wipedMenu(menu = menu112()) {
+  const items = menu.items.map((item) => ({ ...item, items: [] }));
+  items.splice(2, 0, { id: "gid://shopify/MenuItem/990001", title: "Get Scanned", type: "HTTP", url: "https://scan.example/fn", resourceId: null, tags: [], items: [] });
+  return { ...menu, items };
+}
+
+const BASELINE_112 = () => ({ at: "2026-10-13T15:17:00.000Z", by: "", reason: "final-check", menu: menu112() });
+
+const SCC = { title: "SCC Fire Investigation Task Force", collectionHandle: "1-scc-fire-investigation-task-force", collectionGid: "gid://shopify/Collection/900990" };
+
+test("THE INCIDENT: an empty Store list with a 112-store baseline is refused, and menuUpdate is never sent", async (t) => {
+  t.after(resetShopify);
+  const calls = stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [wipedMenu()] } }),
+    menuUpdate: () => {
+      throw new Error("menuUpdate must never be sent to a wiped menu");
+    }
+  });
+
+  // 19:43 — the proposal computed against the empty Store list.
+  const read = await shopifyOnboarding.readMegaMenu();
+  const proposal = shopifyOnboarding.proposeMegaMenuInsert(read.menu, SCC);
+  assert.equal(proposal.index, 0);
+  assert.equal(proposal.insertAfter, null);
+  assert.equal(proposal.insertBefore, null);
+
+  // 19:44 — the finish re-reads the same empty list, so the staleness check
+  // matches; the guard is what stops it now.
+  await assert.rejects(() => shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, { baseline: BASELINE_112() }), (error) => {
+    assert.equal(error.code, "MENU_SUSPECT");
+    assert.equal(error.assessment.storeCount, 0);
+    assert.equal(error.assessment.baselineCount, 112);
+    assert.match(error.message, /Store list has 0 stores; the last good read \(13 Oct 2026, 15:17 UTC\) had 112/);
+    assert.match(error.message, /Nothing was written/);
+    return true;
+  });
+
+  // With no copy at all, an empty Store list is still never written to.
+  await assert.rejects(() => shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, {}), (error) => {
+    assert.equal(error.code, "MENU_SUSPECT");
+    return true;
+  });
+  assert.equal(callsNamed(calls, "menuUpdate").length, 0);
+});
+
+test("applyMegaMenuInsert reports any item its write dropped, and hands back the menu it wrote over", async (t) => {
+  t.after(resetShopify);
+  let dropSfCityGear = false;
+  stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [megaMenuFixture()] } }),
+    menuUpdate: (vars) => {
+      const menu = megaMenuFixture();
+      const store = menu.items.find((i) => i.title === "Store");
+      store.items.splice(3, 0, collectionItem(28, NEW_STORE.title, 700, NEW_STORE.collectionHandle));
+      if (dropSfCityGear) store.items = store.items.filter((i) => i.title !== "SF City Gear");
+      return { menuUpdate: { menu: { ...menu, id: vars.id, title: vars.title }, userErrors: [] } };
+    }
+  });
+
+  const read = await shopifyOnboarding.readMegaMenu();
+  const proposal = shopifyOnboarding.proposeMegaMenuInsert(read.menu, NEW_STORE);
+  const clean = await shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, { baseline: { at: "2026-10-13T15:17:00.000Z", menu: megaMenuFixture() } });
+  assert.deepEqual(clean.lostItems, []);
+  assert.deepEqual(clean.before, read.menu, "the pre-write menu, for the restore point");
+  assert.equal(shopifyOnboarding.findStoreItem(clean.after).items.length, 8);
+
+  dropSfCityGear = true;
+  const lossy = await shopifyOnboarding.applyMegaMenuInsert(read.menu, proposal, {});
+  assert.deepEqual(lossy.lostItems, [{ id: "gid://shopify/MenuItem/25", title: "SF City Gear" }]);
+});
+
+test("removeMegaMenuItemsFor leaves a wiped menu alone and says why", async (t) => {
+  t.after(resetShopify);
+  const calls = stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [wipedMenu()] } }),
+    menuUpdate: () => {
+      throw new Error("menuUpdate must never be sent to a wiped menu");
+    }
+  });
+  const result = await shopifyOnboarding.removeMegaMenuItemsFor("gid://shopify/Collection/900881", { baseline: BASELINE_112() });
+  assert.equal(result.removed, 0);
+  assert.equal(result.available, true);
+  assert.equal(result.suspect, true);
+  assert.match(result.reason, /^The Store list has 0 stores; the last good read \(13 Oct 2026, 15:17 UTC\) had 112\.$/);
+  assert.equal(callsNamed(calls, "menuUpdate").length, 0);
+});
+
+/* ---------------------------------------------------------------------------
+   Putting it back: planMenuRestore (pure) and restoreMegaMenuItems
+   ------------------------------------------------------------------------- */
+
+function idsIn(items, out = []) {
+  for (const item of items || []) {
+    if (item.id) out.push(item.id);
+    idsIn(item.items, out);
+  }
+  return out;
+}
+
+test("planMenuRestore re-adds what went, in place, around what Dan rebuilt — and moves or removes nothing live", () => {
+  const baseline = megaMenuFixture();
+  const live = megaMenuFixture();
+  // After the wipe Dan rebuilt two stores by hand (new ids), the agent wrote
+  // one new store, and Contact lost "FAQ".
+  live.items.splice(2, 0, { id: "gid://shopify/MenuItem/90", title: "Get Scanned", type: "HTTP", url: "https://scan.example/fn", resourceId: null, tags: [], items: [] });
+  live.items.find((i) => i.title === "Store").items = [
+    collectionItem(40, SCC.title, 900990, SCC.collectionHandle),
+    collectionItem(41, "Bishop Fire Department", 602, "1-bishop-fire-department"),
+    collectionItem(42, "FN Simple Merch", 604, "fn-simple-merch")
+  ];
+  live.items.find((i) => i.title === "Contact").items = live.items.find((i) => i.title === "Contact").items.filter((i) => i.title !== "FAQ");
+
+  const plan = shopifyOnboarding.planMenuRestore(live, baseline);
+
+  // The top level is the live one, untouched — "Get Scanned" included.
+  assert.deepEqual(plan.items.map((i) => i.title), ["Home", "Store", "Get Scanned", "Sizing", "Custom Orders", "Contact", "About Us"]);
+  const store = plan.items.find((i) => i.title === "Store");
+  assert.deepEqual(store.items.map((i) => i.title), [
+    "Ripon Fire Department", // nothing before it in the copy is live → first
+    SCC.title,
+    "Bishop Fire Department",
+    "Bishop Fire Department Union", // directly after Bishop, as in the copy
+    "FN Simple Merch",
+    "SF City Gear",
+    "Bay Area Firefighter",
+    "LOGIN to see your Shop"
+  ]);
+  // Live items keep their ids; restored ones have none (menuUpdate makes them).
+  assert.deepEqual(store.items.filter((i) => i.id).map((i) => i.id), ["gid://shopify/MenuItem/40", "gid://shopify/MenuItem/41", "gid://shopify/MenuItem/42"]);
+  assert.deepEqual(idsIn(plan.items).sort(), idsIn(live.items).sort(), "every live id survives, none is invented");
+  const login = store.items.find((i) => i.title === "LOGIN to see your Shop");
+  assert.deepEqual(login, { title: "LOGIN to see your Shop", type: "HTTP", url: "https://fnsimple.com/account/login", tags: ["login"] });
+  assert.deepEqual(plan.items.find((i) => i.title === "Contact").items.map((i) => i.title), ["Contact Us", "FAQ"]);
+
+  assert.deepEqual(
+    plan.restored.map((r) => `${r.parentTitle} > ${r.title}`),
+    ["Store > Ripon Fire Department", "Store > Bishop Fire Department Union", "Store > SF City Gear", "Store > Bay Area Firefighter", "Store > LOGIN to see your Shop", "Contact > FAQ"]
+  );
+  assert.deepEqual(plan.skipped, []);
+});
+
+test("planMenuRestore brings a group back with its children, and skips what has nowhere to go", () => {
+  const baseline = menu112();
+  const plan = shopifyOnboarding.planMenuRestore(wipedMenu(), baseline);
+  const store = plan.items.find((i) => i.title === "Store");
+  assert.equal(store.items.length, 112);
+  assert.deepEqual(store.items.map((i) => i.title), storeItemOf(baseline).items.map((i) => i.title));
+  const stations = store.items.find((i) => i.title === "Station Stores");
+  assert.equal(stations.items.length, 20);
+  assert.equal(stations.items.some((i) => i.id), false);
+  assert.equal(plan.items.find((i) => i.title === "Contact").items.length, 3);
+  assert.deepEqual(plan.skipped, []);
+
+  // A top-level item that is gone cannot take its children back.
+  const noContact = wipedMenu();
+  noContact.items = noContact.items.filter((i) => i.title !== "Contact");
+  const orphaned = shopifyOnboarding.planMenuRestore(noContact, baseline);
+  assert.equal(orphaned.items.some((i) => i.title === "Contact"), false, "a top-level item is never invented");
+  assert.deepEqual(
+    orphaned.skipped.map((s) => s.title),
+    ["Onboard Now", "Contact Us", "Returns & Exchanges"]
+  );
+  assert.match(orphaned.skipped[0].reason, /"Contact", the item it sat under, is no longer in the menu/);
+
+  // A deleted collection is skipped, and its children with it.
+  const stationGid = storeItemOf(baseline).items.find((i) => i.title === "Station Stores").resourceId;
+  const deleted = shopifyOnboarding.planMenuRestore(wipedMenu(), baseline, { goneResourceIds: [stationGid] });
+  assert.equal(deleted.items.find((i) => i.title === "Store").items.some((i) => i.title === "Station Stores"), false);
+  assert.deepEqual(deleted.skipped[0], { title: "Station Stores", reason: "the collection no longer exists" });
+  assert.equal(deleted.skipped.length, 21);
+  assert.match(deleted.skipped[1].reason, /"Station Stores", the item it sat under, could not be put back/);
+});
+
+test("restoreMegaMenuItems puts the wiped menu back in one write, skipping a collection that was deleted", async (t) => {
+  t.after(resetShopify);
+  let current = wipedMenu();
+  const foresthill = "gid://shopify/Collection/900881";
+  const calls = stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [current] } }),
+    menuResources: (vars) => ({ nodes: vars.ids.map((id) => (id === foresthill ? null : { id })) }),
+    menuUpdate: (vars) => {
+      current = { ...current, items: applyMenuUpdateInput(vars.items) };
+      return { menuUpdate: { menu: current, userErrors: [] } };
+    }
+  });
+
+  const logs = [];
+  const result = await shopifyOnboarding.restoreMegaMenuItems(menu112(), { onLog: (line) => logs.push(line) });
+  assert.equal(result.applied, true);
+  assert.equal(callsNamed(calls, "menuUpdate").length, 1);
+  assert.equal(callsNamed(calls, "menuResources").length, 1);
+  assert.deepEqual(result.skipped, [{ title: "Foresthill Fire Protection District", reason: "the collection no longer exists" }]);
+  assert.equal(storeItemOf(current).items.length, 111);
+  assert.equal(current.items.find((i) => i.title === "Get Scanned").id, "gid://shopify/MenuItem/990001", "what was added since stays, with its id");
+  assert.equal(result.restored.length, 111 + 27 + 3);
+  assert.ok(logs.some((line) => /Restored 141 Mega Menu item/.test(line)));
+
+  // Nothing left to restore → no second write.
+  const again = await shopifyOnboarding.restoreMegaMenuItems(menu112(), {});
+  assert.equal(again.applied, false);
+  assert.deepEqual(again.restored, []);
+  assert.equal(callsNamed(calls, "menuUpdate").length, 1);
+});
+
+test("restoreMegaMenuItems refuses to call a restore good when the write dropped something that was live", async (t) => {
+  t.after(resetShopify);
+  let current = wipedMenu();
+  stubGraphql({
+    megaMenu: () => ({ menus: { nodes: [current] } }),
+    menuResources: (vars) => ({ nodes: vars.ids.map((id) => ({ id })) }),
+    menuUpdate: (vars) => {
+      current = { ...current, items: applyMenuUpdateInput(vars.items).filter((i) => i.title !== "Get Scanned") };
+      return { menuUpdate: { menu: current, userErrors: [] } };
+    }
+  });
+  await assert.rejects(() => shopifyOnboarding.restoreMegaMenuItems(menu112(), {}), (error) => {
+    assert.equal(error.code, "RESTORE_LOST_ITEMS");
+    assert.deepEqual(error.lostItems, [{ id: "gid://shopify/MenuItem/990001", title: "Get Scanned" }]);
+    return true;
+  });
+});
+
 
 test("verifyMegaMenu reports where the store ended up, or why it could not look", async (t) => {
   t.after(resetShopify);

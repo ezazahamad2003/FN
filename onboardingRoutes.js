@@ -68,6 +68,9 @@ function fail(res, error) {
     case "STORAGE_UNCONFIGURED":
       return res.status(503).json({ error: message });
     case "BUILD_RUNNING":
+    // A Helium form the agent just read does not carry the tag: confirming
+    // it anyway would record something the agent knows to be untrue.
+    case "HELIUM_TAG_MISSING":
       return res.status(409).json({ error: message });
     default:
       return res.status(500).json({ error: message });
@@ -191,6 +194,32 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
   router.get("/onboardings/capabilities", gate, async (req, res) => {
     try {
       res.json(await agent.capabilities());
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  /* The Mega Menu as a whole (also before "/onboardings/:id"): is it healthy,
+     "it is right as it is now", and "put back what the last good copy had". */
+  router.get("/onboardings/menu-health", gate, async (req, res) => {
+    try {
+      res.json(await agent.menuHealth({ fresh: ["1", "true"].includes(String(req.query?.fresh || "")) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.post("/onboardings/menu-health/accept", gate, async (req, res) => {
+    try {
+      res.json(await agent.acceptMenuBaseline({ by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.post("/onboardings/menu-health/restore", gate, async (req, res) => {
+    try {
+      res.json(await agent.restoreMegaMenu({ by: byOf(req) }));
     } catch (error) {
       fail(res, error);
     }

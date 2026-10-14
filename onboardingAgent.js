@@ -44,7 +44,8 @@ const LOADERS = {
   policy: () => require("./onboardingPolicy"),
   drive: () => require("./drive"),
   auth: () => require("./auth"),
-  referenceTables: () => require("./referenceTables")
+  referenceTables: () => require("./referenceTables"),
+  menuGuard: () => require("./megaMenuGuard")
 };
 
 const loaded = new Map();
@@ -63,12 +64,15 @@ function dep(name) {
 /**
  * Test hook: replace any subset of the collaborators
  * ({ store, shopify, shopifyCore, catalog, locksmith, helium, mockups,
- * policy, drive, auth, referenceTables }). setDeps(null) restores every
- * real module. Returns the previous overrides so a test can put them back.
+ * policy, drive, auth, referenceTables, menuGuard }). setDeps(null) restores
+ * every real module. Returns the previous overrides so a test can put them
+ * back. The cached Mega Menu health is forgotten: it was read through the
+ * collaborators being replaced.
  */
 function setDeps(partial) {
   const previous = injected;
   injected = partial ? { ...injected, ...partial } : {};
+  menuHealthCache = { at: 0, value: null };
   return previous;
 }
 
@@ -83,6 +87,7 @@ const policy = () => dep("policy");
 const drive = () => dep("drive");
 const auth = () => dep("auth");
 const tables = () => dep("referenceTables");
+const menuGuard = () => dep("menuGuard");
 
 /* ---------------------------------------------------------------------------
    Small shared helpers
@@ -168,6 +173,102 @@ function storefrontCollectionUrl(handle) {
 }
 
 /* ---------------------------------------------------------------------------
+   The Mega Menu's health. menuUpdate replaces the whole tree, and on 13 Oct
+   2026 the agent wrote one store into a Store list somebody else had emptied,
+   making the wipe permanent. So every successful read of the live menu is
+   judged by megaMenuGuard against the last good copy, the copies are kept,
+   and the console's banner is refreshed from that same read.
+   ------------------------------------------------------------------------- */
+
+const MENU_HEALTH_CACHE_MS = 60 * 1000;
+// How many missing titles a "blocked" record keeps; the banner has the rest.
+const HEALTH_MISSING_CAP = 50;
+let menuHealthCache = { at: 0, value: null };
+
+// "Unknown is not an alarm": a menu that cannot be read raises no banner.
+function unknownMenuHealth(baseline = null) {
+  return { checkedAt: nowIso(), available: false, healthy: true, storeCount: 0, baseline, missing: [], nestedMissing: 0, reasons: [], message: "" };
+}
+
+/* The console's MenuHealth from what observe() returned. A healthy read just
+   became the baseline, so nothing is missing from it any more; a read the
+   baseline could not move to (storage down) still lists what it lacks. */
+function menuHealthFrom(seen) {
+  return {
+    checkedAt: nowIso(),
+    available: true,
+    healthy: seen.healthy,
+    storeCount: seen.storeCount,
+    baseline: seen.baseline || null,
+    missing: seen.advanced ? [] : seen.missing,
+    nestedMissing: seen.advanced ? 0 : seen.nestedMissing,
+    reasons: seen.healthy ? [] : seen.reasons,
+    message: seen.healthy ? "" : seen.message
+  };
+}
+
+// What a "blocked" record keeps about the menu it refused to touch.
+function recordMenuHealth(seen) {
+  return {
+    storeCount: seen.storeCount,
+    baselineCount: seen.baselineCount,
+    baselineAt: seen.baselineAt,
+    missing: (seen.missing || []).slice(0, HEALTH_MISSING_CAP).map((item) => item.title)
+  };
+}
+
+// "The Store list has 0 stores; …" read as the end of a sentence.
+function wipedReason(seen) {
+  const text = (seen?.reasons || []).join(" ");
+  return text ? text.charAt(0).toLowerCase() + text.slice(1) : "the menu could not be judged.";
+}
+
+function restoreMenuFirstStep(seen) {
+  return `Restore the Mega Menu first. ${seen.message} Put the missing items back from the agent's saved copy (or by hand in Shopify admin), or accept the menu as it is if the change was on purpose. The agent will not change the menu until then.`;
+}
+
+function menuSuspectError(seen) {
+  const error = new Error(`${seen.message} Nothing was written to it.`);
+  error.code = "MENU_SUSPECT";
+  error.assessment = seen;
+  return error;
+}
+
+/* Every successful read of the live menu goes through here. Returns the
+   guard's verdict, or null when the guard itself failed — "unknown", which
+   the Shopify layer's own check still covers on every write. */
+async function observeMenu(menu, reason, { by = "", snapshot = true } = {}) {
+  if (!menu || !Array.isArray(menu.items)) return null;
+  try {
+    const seen = await menuGuard().observe(menu, { reason, by: clean(by), snapshot });
+    menuHealthCache = { at: Date.now(), value: menuHealthFrom(seen) };
+    return seen;
+  } catch {
+    return null;
+  }
+}
+
+// The last good copy a write is judged against; none when storage is down,
+// which leaves the absolute rules (an empty Store list is never written to).
+async function baselineForWrite() {
+  try {
+    return await menuGuard().loadBaseline();
+  } catch {
+    return null;
+  }
+}
+
+// A restore point. Losing one must not stop the write it brackets.
+async function keepMenuSnapshot(menu, reason, by) {
+  if (!menu) return null;
+  try {
+    return await menuGuard().saveSnapshot(menu, { reason, by: clean(by) });
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    §1 capabilities — what this deployment can actually do right now
    ------------------------------------------------------------------------- */
 
@@ -179,6 +280,7 @@ async function megaMenuCapability() {
   let value;
   try {
     const read = await shop().readMegaMenu();
+    if (read.available) await observeMenu(read.menu, "capability");
     value = read.available
       ? { readable: true, writable: true, reason: "" }
       : { readable: false, writable: false, reason: read.reason || "The Mega Menu could not be read." };
@@ -1668,8 +1770,14 @@ async function runBuild(id, build, { by = "" } = {}) {
   step = stepStart(build, "shared-settings", "Shared settings");
   try {
     record = await proposeSharedSettings(id, { by });
-    stepDone(step, "proposed; waiting for approval");
-    log("Mega Menu, Flow and Helium changes proposed — none saved without approval.");
+    // The build log says what happened: a wiped menu got no proposal.
+    if (record.sharedSettings.megaMenu.status === "blocked") {
+      stepDone(step, "Flow and Helium proposed; the Mega Menu looks wiped, so nothing was proposed for it");
+      log(`Flow and Helium changes proposed — none saved without approval. ${record.sharedSettings.megaMenu.error} The agent will not change the menu until it is restored, or accepted as it is.`);
+    } else {
+      stepDone(step, "proposed; waiting for approval");
+      log("Mega Menu, Flow and Helium changes proposed — none saved without approval.");
+    }
   } catch (error) {
     stepFail(step, error);
     failures.push(`Shared settings: ${errorText(error)}`);
@@ -2169,15 +2277,31 @@ async function proposeSharedSettings(id, { by = "" } = {}) {
   const menuTitle = rules.megaMenuItemTitle(title);
   const tag = record.department.tag;
 
+  /* `health` is set only while the menu is "blocked"; every other outcome —
+     a healthy read above all — clears what an earlier blocked read left. */
   const menu = {
     status: "manual",
     proposal: { insertAfter: "", insertBefore: "", index: 0, title: menuTitle, url: record.collection.storefrontUrl || "", newItem: null, collectionHandle: record.collection.handle || "", collectionGid: record.collection.gid || "" },
     checklist: [],
-    error: ""
+    error: "",
+    health: null
   };
+  let blocked = null;
   try {
     const read = await shop().readMegaMenu();
-    if (read.available) {
+    const seen = read.available ? await observeMenu(read.menu, "propose", { by }) : null;
+    if (seen && !seen.healthy) {
+      /* A position computed from a wiped Store list is "first, between
+         nothing and nothing" — exactly what was proposed, approved and
+         written on 13 Oct 2026. Nothing is proposed: the placeholder stays
+         (no newItem), so an approval after the menu is restored works from
+         a fresh read instead of from this one. */
+      blocked = seen;
+      menu.status = "blocked";
+      menu.error = seen.message;
+      menu.health = recordMenuHealth(seen);
+      menu.checklist = [restoreMenuFirstStep(seen), ...megaMenuChecklist({ menuTitle, collectionTitle: title })];
+    } else if (read.available) {
       const proposal = shop().proposeMegaMenuInsert(read.menu, { title: menuTitle, collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
       /* newItem/collectionHandle/collectionGid travel with the proposal
          because applyMegaMenuInsert re-reads the live menu and rebuilds the
@@ -2221,12 +2345,34 @@ async function proposeSharedSettings(id, { by = "" } = {}) {
       forms,
       checklist: helium().manualChecklist({ departmentTag: tag, forms })
     };
-    note(r, { type: "shared-settings", message: "Mega Menu, Flow and Helium changes proposed — nothing saved without approval.", by });
+    note(r, { type: "shared-settings", message: `${blocked ? "Flow and Helium" : "Mega Menu, Flow and Helium"} changes proposed — nothing saved without approval.`, by });
+    if (blocked) {
+      note(r, {
+        type: "warning",
+        message: `Mega Menu NOT proposed — it looks wiped: ${wipedReason(blocked)} The agent will not change the menu until it is restored, or accepted as it is.`,
+        by
+      });
+    }
     return r;
   });
 }
 
 const SHARED_KINDS = { megaMenu: "menu", flow: "flow", helium: "helium" };
+
+// The refusal Dan reads when a Helium form the agent just read lacks the tag:
+// which form, what to type where, and why a save a moment ago may not show.
+function heliumTagMissing(tag, lacking) {
+  const parts = lacking.map((form) => {
+    const label = clean(form.label) || form.id;
+    const what = form.present ? `does not have "${tag}" spelled exactly that way yet` : `does not have "${tag}" yet`;
+    return `Helium's ${label} form ${what} — the agent just read it. ${helium().insertionSentence(tag, form)}`.trim();
+  });
+  const error = new Error(
+    `${parts.join(" ")} Save it in Helium, then confirm again. If you saved it within the last minute, wait a moment: Helium can take a minute to publish.`
+  );
+  error.code = "HELIUM_TAG_MISSING";
+  return error;
+}
 
 /**
  * §8: Dan approves one shared setting. `applied: true` means he made the
@@ -2262,6 +2408,22 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
       forms = await helium().checkAllForms(record.department.tag);
     } catch (error) {
       readError = errorText(error);
+    }
+    /* Dan's word stands in for a form the agent CANNOT read — never against
+       one it just read. On 13 Oct 2026 the Registration form was read, the
+       tag was not on it, and this recorded "confirmed" anyway because the box
+       had been ticked "to do later". A read that proves the tag is missing (or
+       spelled differently) refuses the confirmation and says exactly what to
+       type; nothing on the record changes but one warning note. */
+    const tag = record.department.tag;
+    const lacking = (forms || []).filter((f) => f.public !== false && !f.error && !(f.present && f.exactCase));
+    if (lacking.length) {
+      const labels = lacking.map((f) => clean(f.label) || f.id);
+      await store().updateOnboarding(id, (r) => {
+        note(r, { type: "warning", message: `Helium confirmation refused: ${labels.join(", ")} ${labels.length === 1 ? "does" : "do"} not carry "${tag}".`, by });
+        return r;
+      });
+      throw heliumTagMissing(tag, lacking);
     }
     return store().updateOnboarding(id, (r) => {
       const stamped = (forms || r.sharedSettings.helium.forms || []).map((f) => ({ ...f, confirmedAt: nowIso() }));
@@ -2315,6 +2477,9 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
      happen. It starts as whatever the build stored and is replaced the moment
      a live read gives something better. */
   let checklistFrom = menu.proposal?.newItem ? menu.proposal : null;
+  // The guard's verdict when it refused the write, and anything a write lost.
+  let suspect = null;
+  let lostItems = [];
   if (applied) {
     patch.status = "applied";
     patch.appliedAt = nowIso();
@@ -2327,6 +2492,11 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
       try {
         const read = await shop().readMegaMenu();
         if (!read.available) throw new Error(read.reason || "The Mega Menu could not be read.");
+        /* Judged here, on the read the position comes from, and again inside
+           applyMegaMenuInsert on its own fresh read against the same copy — a
+           menu wiped between the two reads is caught by the second. */
+        const seen = await observeMenu(read.menu, "approve", { by });
+        if (seen && !seen.healthy) throw menuSuspectError(seen);
         const proposal = shop().proposeMegaMenuInsert(read.menu, { title: menuTitle, collectionHandle: record.collection.handle, collectionGid: record.collection.gid });
         checklistFrom = proposal;
         /* applyMegaMenuInsert refuses a stale proposal rather than inserting
@@ -2350,17 +2520,36 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
         proposal.index = approved?.index ?? proposal.index;
         proposal.insertAfter = approvedNeighbour(approved?.insertAfter, proposal.insertAfter);
         proposal.insertBefore = approvedNeighbour(approved?.insertBefore, proposal.insertBefore);
-        const result = await shop().applyMegaMenuInsert(read.menu, proposal, {});
+        // A restore point either side of the write: the menu it was computed
+        // from, and the menu Shopify answered with.
+        await keepMenuSnapshot(read.menu, "before-insert", by);
+        const result = await shop().applyMegaMenuInsert(read.menu, proposal, { baseline: await baselineForWrite() });
+        if (!result.alreadyPresent && result.after) {
+          await keepMenuSnapshot(result.after, "after-insert", by);
+          await observeMenu(result.after, "after-insert", { by, snapshot: false });
+        }
         patch.status = "applied";
         patch.appliedAt = nowIso();
         patch.error = "";
         patch.menuItemId = result.menuItemId || "";
+        lostItems = result.lostItems || [];
+        if (lostItems.length) {
+          patch.error = `The write removed ${lostItems.length} item(s) that were in the menu before it: ${lostItems.map((item) => `"${item.title}"`).join(", ")}. Put them back from the saved copy.`;
+        }
       } catch (error) {
-        patch.status = "manual";
-        patch.error = errorText(error);
+        if (error.code === "MENU_SUSPECT" && error.assessment) {
+          suspect = error.assessment;
+          patch.status = "blocked";
+          patch.error = suspect.message;
+          patch.health = recordMenuHealth(suspect);
+        } else {
+          patch.status = "manual";
+          patch.error = errorText(error);
+        }
       }
     }
   }
+  if (patch.status !== "blocked") patch.health = null;
 
   /* Re-derive the checklist from the rule as it stands now, not as it stood
      when the build ran. Records built before the menu item lost its "N."
@@ -2374,17 +2563,26 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
       insertAfter: checklistFrom?.insertAfter || "",
       insertBefore: checklistFrom?.insertBefore || ""
     });
+    // A position read off a wiped menu is no position: restoring comes first.
+    if (suspect) patch.checklist = [restoreMenuFirstStep(suspect), ...megaMenuChecklist({ menuTitle, collectionTitle: record.collection.title })];
     patch.proposal = { ...(menu.proposal || {}), title: menuTitle };
   }
 
   return store().updateOnboarding(id, (r) => {
     r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, ...patch };
     recordApproval(r, { kind: "menu", subject: r.collection.title, by });
-    note(r, {
-      type: "shared-settings",
-      message: patch.status === "applied" ? `Mega Menu item "${r.collection.title}" saved.` : `Mega Menu change approved but not writable here (${patch.error || "no scope"}); Dan applies the checklist.`,
-      by
-    });
+    if (patch.status === "blocked") {
+      note(r, { type: "warning", message: `Mega Menu NOT changed — it looks wiped: ${wipedReason(suspect)} Restore it, or accept it as it is, then approve again.`, by });
+    } else {
+      note(r, {
+        type: "shared-settings",
+        message: patch.status === "applied" ? `Mega Menu item "${r.collection.title}" saved.` : `Mega Menu change approved but not writable here (${patch.error || "no scope"}); Dan applies the checklist.`,
+        by
+      });
+    }
+    if (lostItems.length) {
+      note(r, { type: "warning", message: `The Mega Menu write removed ${lostItems.length} item(s) that were there before: ${lostItems.map((item) => `"${item.title}"`).join(", ")}.`, by });
+    }
     return r;
   });
 }
@@ -2396,17 +2594,23 @@ async function verifySharedSettings(id, { by = "" } = {}) {
 
   let menu = null;
   try {
-    menu = await shop().verifyMegaMenu(rules.megaMenuItemTitle(record.collection.title), { collectionGid: record.collection.gid });
+    menu = await shop().verifyMegaMenu(rules.megaMenuItemTitle(record.collection.title), { collectionGid: record.collection.gid, includeMenu: true });
   } catch (error) {
     menu = { available: false, present: false, reason: errorText(error) };
   }
+  // The item being there is not proof the menu is: alone in a wiped Store
+  // list it is "there" too.
+  const seen = menu.available ? await observeMenu(menu.menu, "verify", { by }) : null;
+  const wiped = Boolean(seen && !seen.healthy);
   const forms = await helium()
     .checkAllForms(tag)
     .catch(() => record.sharedSettings.helium.forms || []);
 
   return store().updateOnboarding(id, (r) => {
-    if (menu.available && menu.present) {
-      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "" };
+    if (wiped) {
+      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, error: seen.message };
+    } else if (menu.available && menu.present) {
+      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "", health: null };
     } else if (!menu.available) {
       r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, error: menu.reason || "The Mega Menu could not be read." };
     }
@@ -2419,11 +2623,77 @@ async function verifySharedSettings(id, { by = "" } = {}) {
     };
     note(r, {
       type: "shared-settings",
-      message: `Verified: Mega Menu ${menu.present ? "present" : "not confirmed"}, Helium ${present.length}/${verifiable.length || 0} form(s) carry "${tag}".`,
+      message: `Verified: Mega Menu ${wiped ? "not confirmed (it looks wiped)" : menu.present ? "present" : "not confirmed"}, Helium ${present.length}/${verifiable.length || 0} form(s) carry "${tag}".`,
       by
     });
     return r;
   });
+}
+
+/* ---------------------------------------------------------------------------
+   The Mega Menu as a whole: is it healthy, accept it, put it back
+   ------------------------------------------------------------------------- */
+
+/**
+ * MenuHealth for the console's banner: { checkedAt, available, healthy,
+ * storeCount, baseline, missing, nestedMissing, reasons, message }. Answered
+ * from the last read any part of the agent made in the past minute, unless
+ * `fresh`. A menu that cannot be read is "available: false, healthy: true" —
+ * unknown is not an alarm.
+ */
+async function menuHealth({ fresh = false } = {}) {
+  if (!fresh && menuHealthCache.value && Date.now() - menuHealthCache.at < MENU_HEALTH_CACHE_MS) return menuHealthCache.value;
+  let read;
+  try {
+    read = await shop().readMegaMenu();
+  } catch (error) {
+    read = { available: false, reason: errorText(error) };
+  }
+  const seen = read.available ? await observeMenu(read.menu, "health-check") : null;
+  if (seen) return menuHealthCache.value;
+  let baseline = null;
+  try {
+    baseline = menuGuard().baselineSummary(await menuGuard().loadBaseline());
+  } catch {
+    baseline = null;
+  }
+  menuHealthCache = { at: Date.now(), value: unknownMenuHealth(baseline) };
+  return menuHealthCache.value;
+}
+
+/**
+ * Dan: "the menu is right as it is now". The live menu becomes the copy every
+ * later read is judged against; the copy it replaces is kept in history. A
+ * menu with no Store list, or an empty one, is refused (BAD_REQUEST) — that
+ * is never right, and accepting it would bury the copy a restore needs.
+ */
+async function acceptMenuBaseline({ by = "" } = {}) {
+  const read = await shop().readMegaMenu();
+  if (!read.available) throw new Error(`The Mega Menu could not be read, so it cannot be accepted as it is: ${read.reason || "no reason given"}`);
+  await menuGuard().acceptBaseline(read.menu, { by: clean(by), reason: "accepted" });
+  const seen = await observeMenu(read.menu, "accepted", { by, snapshot: false });
+  return seen ? menuHealthCache.value : unknownMenuHealth(null);
+}
+
+/**
+ * Put back what the last good copy has and the live menu lost, without
+ * moving or removing anything live (shopifyOnboarding.restoreMegaMenuItems).
+ * → { restored: [title], skipped: [{ title, reason }], health }.
+ */
+async function restoreMegaMenu({ by = "" } = {}) {
+  const baseline = await menuGuard().loadBaseline();
+  if (!baseline) throw badRequest("There is no saved copy of the Mega Menu yet, so there is nothing to restore it from.");
+  // The restore point is the menu as it stood just before the write.
+  const before = await shop().readMegaMenu();
+  if (before.available) await keepMenuSnapshot(before.menu, "before-restore", by);
+  const result = await shop().restoreMegaMenuItems(baseline.menu, {});
+  if (result.applied) await keepMenuSnapshot(result.after, "after-restore", by);
+  const seen = await observeMenu(result.after, "after-restore", { by, snapshot: false });
+  return {
+    restored: result.restored.map((item) => item.title),
+    skipped: result.skipped.map((item) => ({ title: item.title, reason: item.reason })),
+    health: seen ? menuHealthCache.value : unknownMenuHealth(menuGuard().baselineSummary(baseline))
+  };
 }
 
 /* ---------------------------------------------------------------------------
@@ -2734,12 +3004,23 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   const menuStatus = record.sharedSettings.megaMenu.status;
   let menuCheck;
   try {
-    menuCheck = await shop().verifyMegaMenu(rules.megaMenuItemTitle(record.collection.title), { collectionGid: record.collection.gid });
+    menuCheck = await shop().verifyMegaMenu(rules.megaMenuItemTitle(record.collection.title), { collectionGid: record.collection.gid, includeMenu: true });
   } catch (error) {
     menuCheck = { available: false, present: false, reason: errorText(error) };
   }
+  /* The item being in the live menu proves the item, not the menu. On 13 Oct
+     2026 it was there — alone, in a Store list that had held 112 stores an
+     hour earlier — and this check reported "Mega Menu carries …" and let the
+     record complete. A menu that looks wiped holds the record open until it
+     is restored or Dan accepts it as it is. "is not confirmed" is what files
+     the line under missing information (see the classifier below). */
+  const menuSeen = menuCheck.available ? await observeMenu(menuCheck.menu, "final-check", { by }) : null;
+  const menuWiped = Boolean(menuSeen && !menuSeen.healthy);
+  if (menuWiped) {
+    unresolved.push(`The Mega Menu's Store list is not confirmed healthy: ${menuSeen.reasons.join(" ")} Restore it, or accept it as it is, before finishing.`);
+  }
   if (menuCheck.available && menuCheck.present) {
-    report.completed.push(
+    if (!menuWiped) report.completed.push(
       `Mega Menu carries "${record.collection.title}"${menuCheck.before ? `, directly below "${menuCheck.before}"` : ""}${
         menuCheck.after ? ` and above "${menuCheck.after}"` : ""
       } (read back from the live menu).`
@@ -2758,8 +3039,13 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   } else {
     unresolved.push(`The Mega Menu item for "${record.collection.title}" is not confirmed (${menuStatus}).`);
   }
-  if (record.sharedSettings.flow.status === "confirmed") report.completed.push(`Shopify Flow condition carries "${record.department.tag}".`);
-  else unresolved.push(`The Shopify Flow condition for "${record.department.tag}" is not confirmed (${record.sharedSettings.flow.status}).`);
+  /* Flow has no API: "confirmed" is the operator's word, so the report says
+     whose word it is instead of claiming the condition carries the tag. */
+  if (record.sharedSettings.flow.status === "confirmed") {
+    report.completed.push(
+      `Shopify Flow confirmed by ${clean(record.sharedSettings.flow.confirmedBy) || "the operator"} for "${record.department.tag}" — Flow has no API, so the agent cannot read it back.`
+    );
+  } else unresolved.push(`The Shopify Flow condition for "${record.department.tag}" is not confirmed (${record.sharedSettings.flow.status}).`);
   const heliumStatus = record.sharedSettings.helium.status;
   if (heliumStatus === "verified") report.completed.push(`All Helium forms carry "${record.department.tag}" (read back and checked).`);
   else if (heliumStatus === "confirmed")
@@ -2834,8 +3120,8 @@ async function finalCheck(id, { by = "", build = null } = {}) {
     r.report = { ...r.report, ...report };
     // The read-back above is the same proof verifySharedSettings records, so
     // the console shows "verified" rather than the operator's "applied".
-    if (menuCheck.available && menuCheck.present && r.sharedSettings.megaMenu.status !== "verified") {
-      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "" };
+    if (menuCheck.available && menuCheck.present && !menuWiped && r.sharedSettings.megaMenu.status !== "verified") {
+      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "", health: null };
     }
     // §12 "Never report an onboarding as complete while anything is unresolved."
     if (complete) {
@@ -3093,8 +3379,24 @@ async function deleteStore(collectionId, { confirmName = "", by = "" } = {}) {
     }
   };
 
+  /* The removal is a whole-tree menuUpdate like the insert, so a menu that
+     looks wiped is left exactly as it is: taking one item out of it would
+     make the wipe permanent. Judged on a read here, and again by
+     removeMegaMenuItemsFor on its own read against the same copy. */
   await step("Mega Menu", async () => {
-    const result = await shop().removeMegaMenuItemsFor(gid);
+    const leftAlone = (reason) =>
+      manual.push(`The Mega Menu looks wiped, so the agent did not touch it: ${reason} Once it is restored, remove "${record.collection.title}" from it by hand if it is there.`);
+    const read = await shop().readMegaMenu();
+    const seen = read.available ? await observeMenu(read.menu, "delete-store", { by }) : null;
+    if (seen && !seen.healthy) {
+      leftAlone(wipedReason(seen));
+      return "";
+    }
+    const result = await shop().removeMegaMenuItemsFor(gid, { baseline: await baselineForWrite() });
+    if (result.suspect) {
+      leftAlone(wipedReason({ reasons: [result.reason] }));
+      return "";
+    }
     if (!result.available) {
       manual.push(`Check the Mega Menu by hand — it could not be read (${result.reason}).`);
       return "";
@@ -3208,6 +3510,9 @@ module.exports = {
   proposeSharedSettings,
   approveSharedSetting,
   verifySharedSettings,
+  menuHealth,
+  acceptMenuBaseline,
+  restoreMegaMenu,
   recordLock,
   createLock,
   finalCheck,

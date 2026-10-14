@@ -11,6 +11,7 @@ const realPolicy = require("../onboardingPolicy");
 const realHelium = require("../helium");
 const createOnboardingRouter = require("../onboardingRoutes");
 const shopifyOnboarding = require("../shopifyOnboarding");
+const menuGuard = require("../megaMenuGuard");
 
 /*
  * No blob storage, no Shopify, no Drive, no keys: the record store runs on
@@ -122,6 +123,22 @@ function fakeHelium({ present = false } = {}) {
         tag
       }));
     }
+  };
+}
+
+// The neighbours the fake proposal names, and three more department stores.
+const FAKE_MENU_STORES = ["Bishop Fire Department", "Ripon Fire District", "Pine Hollow Fire Department", "Suisun City Fire Department", "FN Simple Merch"];
+
+function fakeMenu(extraTitles = []) {
+  const item = (title, i) => ({ id: `gid://shopify/MenuItem/${700 + i}`, title, type: "COLLECTION", url: `/collections/${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, resourceId: `gid://shopify/Collection/${700 + i}`, tags: [], items: [] });
+  return {
+    id: "gid://shopify/Menu/1",
+    handle: "megamenu",
+    title: "Mega Menu",
+    items: [
+      { id: "gid://shopify/MenuItem/1", title: "Home", type: "FRONTPAGE", url: "/", resourceId: null, tags: [], items: [] },
+      { id: "gid://shopify/MenuItem/9", title: "Store", type: "COLLECTIONS", url: "/collections", resourceId: null, tags: [], items: [...FAKE_MENU_STORES, ...extraTitles].map(item) }
+    ]
   };
 }
 
@@ -239,9 +256,13 @@ function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, m
         collections: [{ id: "111", gid: COLLECTION_GID, title: COLLECTION_TITLE }]
       };
     },
+    /* A Store list with stores in it, plus whatever the live menu has gained.
+       This used to answer a menu with no items at all — which megaMenuGuard
+       now (rightly) refuses to write to, exactly as it refused the wiped menu
+       of 13 Oct 2026. */
     async readMegaMenu() {
       if (!megaMenuAvailable) return { available: false, accessDenied: true, reason: "Access denied to menus." };
-      return { available: true, menu: { id: "gid://shopify/Menu/1", handle: "megamenu", title: "Mega Menu", items: [] } };
+      return { available: true, menu: fakeMenu(liveMenuTitles) };
     },
     // Echoes the title it is asked for, so a caller that asks for the wrong
     // one (the collection's "N." ordinal) shows up in the live menu below.
@@ -301,12 +322,16 @@ function wireRealMegaMenu(shopify) {
       items: rebuild(item.items)
     }));
 
+  let writes = 0;
   shopifyOnboarding.setGraphql(async (query, variables = {}) => {
     if (/query megaMenu/.test(query)) return { menus: { nodes: [current] } };
     if (/mutation menuUpdate/.test(query)) {
+      writes += 1;
       current = { ...current, items: rebuild(variables.items) };
       return { menuUpdate: { menu: current, userErrors: [] } };
     }
+    // Every collection the menu links to still exists.
+    if (/query menuResources/.test(query)) return { nodes: variables.ids.map((id) => ({ id })) };
     throw new Error(`the live-menu stub has no handler for: ${String(query).slice(0, 40)}`);
   });
 
@@ -314,7 +339,22 @@ function wireRealMegaMenu(shopify) {
   shopify.proposeMegaMenuInsert = (...args) => shopifyOnboarding.proposeMegaMenuInsert(...args);
   shopify.applyMegaMenuInsert = (...args) => shopifyOnboarding.applyMegaMenuInsert(...args);
   shopify.verifyMegaMenu = (...args) => shopifyOnboarding.verifyMegaMenu(...args);
+  shopify.removeMegaMenuItemsFor = (...args) => shopifyOnboarding.removeMegaMenuItemsFor(...args);
+  shopify.restoreMegaMenuItems = (...args) => shopifyOnboarding.restoreMegaMenuItems(...args);
   shopify.storeItemTitles = () => (current.items.find((i) => i.type === "COLLECTIONS").items || []).map((i) => i.title);
+  // A change made outside the agent — Shopify admin, Sidekick, another app.
+  shopify.changeMenuOutsideTheAgent = (change) => {
+    current = change(JSON.parse(JSON.stringify(current)));
+  };
+  shopify.menuWrites = () => writes;
+}
+
+// What the 13 Oct 2026 rewrite left: the top level, with a new "Get Scanned"
+// link, and nothing below it.
+function wipeMenu(menu) {
+  const items = menu.items.map((item) => ({ ...item, items: [] }));
+  items.splice(2, 0, { id: "gid://shopify/MenuItem/990001", title: "Get Scanned", type: "HTTP", url: "https://scan.example/fn", resourceId: null, tags: [], items: [] });
+  return { ...menu, items };
 }
 
 function fakeMockups({ base = "photo" } = {}) {
@@ -392,6 +432,9 @@ function fakeLocksmith(access = {}) {
 
 function harness(options = {}) {
   store.setBlobAdapter(store.memoryBlobAdapter());
+  // A fresh last-good copy per test: one test's 108-store menu must not be
+  // the baseline another test's five-store menu is judged against.
+  menuGuard.setStorage(menuGuard.memoryStorage());
   referenceTables.invalidate();
   const order = [];
   const shopify = options.shopify || fakeShopify({ order, liveProducts: options.liveProducts || 0, ...(options.shopifyOptions || {}) });
@@ -445,6 +488,7 @@ async function seedVacavilleOnList() {
 
 test.afterEach(() => {
   agent.setDeps(null);
+  menuGuard.setStorage(null);
   referenceTables.invalidate();
 });
 
@@ -1311,6 +1355,160 @@ test("the manual checklist is re-derived at finish, not replayed from the build"
   assert.equal(after.sharedSettings.megaMenu.proposal.title, MENU_ITEM_TITLE);
 });
 
+/* ---------------------------------------------------------------------------
+   13 Oct 2026: the Mega Menu wiped from outside, then written into.
+
+   16:17 the final check read every store. ~17:12 something outside the agent
+   rewrote the menu keeping only its top level. 19:43 the agent proposed into
+   the empty Store list ("index 0, nothing above, nothing below"); 19:44 the
+   finish wrote Store = [the new store], called it saved "read back from the
+   live menu", and the record completed. Replayed here on the real menu code.
+   ------------------------------------------------------------------------- */
+
+test("THE INCIDENT: a menu wiped from outside is never written to, never completes, and can be put back", async (t) => {
+  t.after(resetRealMegaMenu);
+  // 16:17 — the build reads the full menu, which becomes the last good copy.
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  const full = deps.shopify.storeItemTitles();
+  assert.equal(full.length, 107);
+  assert.equal((await agent.menuHealth({ fresh: true })).healthy, true);
+
+  // ~17:12 — the outside rewrite.
+  deps.shopify.changeMenuOutsideTheAgent(wipeMenu);
+
+  // 19:43 — the empty Store list is read, and nothing is proposed from it.
+  const proposed = await agent.proposeSharedSettings(id, { by: "dan" });
+  const blocked = proposed.sharedSettings.megaMenu;
+  assert.equal(blocked.status, "blocked");
+  assert.match(blocked.error, /^The Mega Menu looks wiped: the Store list has 0 stores; the last good read \(.+ UTC\) had 107\.$/);
+  assert.equal(blocked.health.storeCount, 0);
+  assert.equal(blocked.health.baselineCount, 107);
+  assert.equal(blocked.health.missing.length, 50, "the record keeps the first 50 titles");
+  assert.equal(blocked.health.missing[0], "Blank Uniforms");
+  assert.equal(blocked.proposal.newItem, null, "no position was read off the wiped menu");
+  assert.match(blocked.checklist[0], /^Restore the Mega Menu first\. The Mega Menu looks wiped/);
+  assert.ok(proposed.events.some((e) => e.type === "warning" && /^Mega Menu NOT proposed — it looks wiped: the Store list has 0 stores/.test(e.message)));
+
+  // 19:44 — Finish: the menu, Flow and Helium, then the final check.
+  await settleAllButTheMenu(deps, id);
+  const approved = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+  assert.equal(approved.sharedSettings.megaMenu.status, "blocked");
+  assert.equal(deps.shopify.menuWrites(), 0, "menuUpdate was never sent");
+  assert.deepEqual(deps.shopify.storeItemTitles(), []);
+  assert.ok(approved.events.some((e) => e.type === "warning" && /^Mega Menu NOT changed — it looks wiped: the Store list has 0 stores/.test(e.message)));
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.notEqual(checked.status, "complete");
+  assert.ok(
+    checked.report.missingInformation.some((m) => /^The Mega Menu's Store list is not confirmed healthy: The Store list has 0 stores; .* Restore it, or accept it as it is, before finishing\.$/.test(m)),
+    JSON.stringify(checked.report.missingInformation)
+  );
+  assert.equal(checked.report.completed.some((c) => /Mega Menu carries/.test(c)), false);
+
+  // The way out: put everything back from the copy, then finish for real.
+  const health = await agent.menuHealth({ fresh: true });
+  assert.equal(health.healthy, false);
+  assert.equal(health.missing.length, 107 + 27 + 3, "every store, the nested items and Contact's three");
+  const restored = await agent.restoreMegaMenu({ by: "dan" });
+  assert.equal(restored.restored.length, 137);
+  assert.deepEqual(restored.skipped, []);
+  assert.equal(restored.health.healthy, true);
+  assert.deepEqual(deps.shopify.storeItemTitles(), full, "every store back, in its place");
+
+  const after = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+  assert.equal(after.sharedSettings.megaMenu.status, "applied", after.sharedSettings.megaMenu.error);
+  assert.equal(after.sharedSettings.megaMenu.health, null, "a healthy write clears the blocked state");
+  assert.equal(deps.shopify.storeItemTitles()[full.indexOf("FN Simple Merch")], MENU_ITEM_TITLE);
+  const done = await agent.finalCheck(id, { by: "dan" });
+  assert.equal(done.status, "complete", JSON.stringify(done.report.missingInformation));
+});
+
+test("a healthy read clears a blocked proposal", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  const full = JSON.parse(JSON.stringify(require("./fixtures/megamenu-live.json")));
+  deps.shopify.changeMenuOutsideTheAgent(wipeMenu);
+  assert.equal((await agent.proposeSharedSettings(id, { by: "dan" })).sharedSettings.megaMenu.status, "blocked");
+
+  // Dan rebuilds the stores by hand in Shopify admin.
+  deps.shopify.changeMenuOutsideTheAgent((menu) => {
+    menu.items.find((i) => i.title === "Store").items = full.items.find((i) => i.title === "Store").items.filter((i) => i.title !== DEPARTMENT);
+    return menu;
+  });
+  const again = (await agent.proposeSharedSettings(id, { by: "dan" })).sharedSettings.megaMenu;
+  assert.equal(again.status, "proposed");
+  assert.equal(again.health, null);
+  assert.equal(again.error, "");
+  assert.equal(again.proposal.insertBefore, "FN Simple Merch");
+});
+
+test("accepting the menu as it is clears the alarm; an empty Store list cannot be accepted", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps } = await builtOnboarding({ shopifyOptions: { realMenu: true } });
+  // Dan really did retire twenty stores at once — over the 11-store line.
+  deps.shopify.changeMenuOutsideTheAgent((menu) => {
+    const store = menu.items.find((i) => i.title === "Store");
+    let retired = 0;
+    store.items = store.items.filter((item) => !(item.type === "COLLECTION" && !(item.items || []).length && retired++ < 20));
+    return menu;
+  });
+  const alarm = await agent.menuHealth({ fresh: true });
+  assert.equal(alarm.healthy, false);
+  assert.equal(alarm.missing.length, 20);
+
+  const accepted = await agent.acceptMenuBaseline({ by: "Dan" });
+  assert.equal(accepted.healthy, true);
+  assert.equal(accepted.storeCount, 87);
+  assert.deepEqual(accepted.baseline && { by: accepted.baseline.by, reason: accepted.baseline.reason, storeCount: accepted.baseline.storeCount }, { by: "Dan", reason: "accepted", storeCount: 87 });
+
+  deps.shopify.changeMenuOutsideTheAgent(wipeMenu);
+  await assert.rejects(() => agent.acceptMenuBaseline({ by: "Dan" }), (error) => {
+    assert.equal(error.code, "BAD_REQUEST");
+    assert.match(error.message, /The Store list has 0 stores/);
+    return true;
+  });
+  assert.equal((await agent.menuHealth({ fresh: true })).baseline.storeCount, 87, "the accepted copy is still the one to restore from");
+});
+
+test("a write that dropped items is saved but flagged, naming them", async () => {
+  const { deps, id } = await builtOnboarding({ liveProducts: 1 });
+  let given = null;
+  deps.shopify.applyMegaMenuInsert = async (menu, proposal, options) => {
+    given = options;
+    return {
+      applied: true,
+      alreadyPresent: false,
+      menuItemId: "gid://shopify/MenuItem/50",
+      index: 3,
+      lostItems: [{ id: "gid://shopify/MenuItem/701", title: "Ripon Fire District" }],
+      before: menu,
+      after: fakeMenu([proposal.newItem.title])
+    };
+  };
+  const after = await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: false });
+  assert.ok(given?.baseline?.menu, "the write is judged against the last good copy");
+  assert.equal(after.sharedSettings.megaMenu.status, "applied");
+  assert.match(after.sharedSettings.megaMenu.error, /removed 1 item\(s\) that were in the menu before it: "Ripon Fire District"/);
+  assert.ok(after.events.some((e) => e.type === "warning" && /removed 1 item\(s\) that were there before: "Ripon Fire District"/.test(e.message)));
+  const history = await menuGuard.listHistory();
+  assert.ok(history.some((name) => /-before-insert\.json$/.test(name)), "a restore point from before the write");
+  assert.ok(history.some((name) => /-after-insert\.json$/.test(name)), "and one from after it");
+});
+
+test("the report says whose word Flow rests on, never that the agent saw the condition", async () => {
+  const { deps, id } = await builtOnboarding({ liveProducts: 1 });
+  await settleAllButTheMenu(deps, id);
+  deps.shopify.addMenuTitleByHand(MENU_ITEM_TITLE);
+  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.ok(
+    checked.report.completed.includes(`Shopify Flow confirmed by dan for "${DEPARTMENT}" — Flow has no API, so the agent cannot read it back.`),
+    JSON.stringify(checked.report.completed)
+  );
+  assert.equal(checked.report.completed.some((c) => /Flow condition carries/.test(c)), false);
+});
+
 
 const SECRET_LINK = "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123";
 
@@ -1395,12 +1593,32 @@ test("a lock proven to work is reported with the evidence, not just the link", a
   assert.ok(checked.lock.access.checkedAt);
 });
 
+/* The live set-up: Registration is the one form whose JSON the agent can
+   read; the other two are not configured, so they cannot be read at all. */
+function heliumWithForms(forms) {
+  return {
+    ...realHelium,
+    async checkAllForms(tag) {
+      return forms.map((form, i) => ({ id: `form${i}`, index: 3, insertAfter: "Suisun City Fire Department", insertBefore: "Vallejo Fire Department", total: 12, similar: [], checkedAt: new Date().toISOString(), tag, ...form }));
+    }
+  };
+}
+
+const UNREADABLE = { public: false, error: "Helium form is not configured" };
+
 test("Dan can confirm Helium by hand, exactly as he confirms Flow", async () => {
   /* Helium has no write API and only one of its three form ids is known, so
      "verified" — every form read back carrying the tag — can never be reached.
      Requiring it meant no onboarding could ever finish. Flow, equally
-     unautomatable, has always been satisfied by Dan saying he did it. */
-  const { id } = await builtOnboarding({ liveProducts: 1, helium: fakeHelium({ present: false }) });
+     unautomatable, has always been satisfied by Dan saying he did it.
+     Since 13 Oct 2026 his word covers only the forms the agent CANNOT read:
+     the one it can read has to carry the tag (refused below otherwise). */
+  const helium = heliumWithForms([
+    { label: "Edit Account", ...UNREADABLE },
+    { label: "Registration", public: true, present: true, exactCase: true },
+    { label: "Registration backup copy", ...UNREADABLE }
+  ]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
 
   const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
   assert.equal(after.sharedSettings.helium.status, "confirmed");
@@ -1425,6 +1643,60 @@ test("a Helium read that finds every form still reports the stronger verdict", a
   const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
   assert.equal(after.sharedSettings.helium.status, "verified", "read-back beats attestation");
   assert.equal(after.sharedSettings.helium.confirmedBy, "");
+});
+
+/* 13 Oct 2026: the Registration form was read at the finish, the tag was not
+   on it, and the confirmation went through anyway — the box had been ticked
+   "to do it later". A read that proves the tag missing now refuses it. */
+test("a Helium form the agent just read without the tag refuses the confirmation and says what to type", async () => {
+  const helium = heliumWithForms([
+    { label: "Edit Account", ...UNREADABLE },
+    { label: "Registration", public: true, present: false, exactCase: false },
+    { label: "Registration backup copy", ...UNREADABLE }
+  ]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
+  const before = await store.getOnboarding(id);
+
+  await assert.rejects(() => agent.approveSharedSetting(id, "helium", { by: "Dan" }), (error) => {
+    assert.equal(error.code, "HELIUM_TAG_MISSING");
+    assert.equal(
+      error.message,
+      `Helium's Registration form does not have "${DEPARTMENT}" yet — the agent just read it. Insert exactly '${DEPARTMENT}' between 'Suisun City Fire Department' and 'Vallejo Fire Department' (position 4 of 13). Save it in Helium, then confirm again. If you saved it within the last minute, wait a moment: Helium can take a minute to publish.`
+    );
+    return true;
+  });
+
+  const after = await store.getOnboarding(id);
+  assert.deepEqual(after.sharedSettings.helium, before.sharedSettings.helium, "the Helium status is unchanged");
+  assert.deepEqual(after.approvals, before.approvals, "no approval is recorded");
+  const last = after.events[after.events.length - 1];
+  assert.equal(last.type, "warning");
+  assert.equal(last.message, `Helium confirmation refused: Registration does not carry "${DEPARTMENT}".`);
+  assert.equal(after.events.filter((e) => /Helium confirmation refused/.test(e.message)).length, 1, "one note, nothing else");
+
+  const checked = await agent.finalCheck(id, { by: "Dan" });
+  assert.notEqual(checked.status, "complete");
+  assert.ok(checked.report.missingInformation.some((m) => /Helium forms .* are not confirmed/.test(m)));
+});
+
+test("a tag spelled with different capitals is refused too, with the spelling to fix", async () => {
+  const helium = heliumWithForms([
+    { label: "Registration", public: true, present: true, exactCase: false, matched: { label: "Vacaville fire department", value: "Vacaville fire department" } }
+  ]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
+  await assert.rejects(() => agent.approveSharedSetting(id, "helium", { by: "Dan" }), (error) => {
+    assert.equal(error.code, "HELIUM_TAG_MISSING");
+    assert.match(error.message, new RegExp(`^Helium's Registration form does not have "${DEPARTMENT}" spelled exactly that way yet`));
+    assert.match(error.message, new RegExp(`Present as "Vacaville fire department" .* correct it to exactly "${DEPARTMENT}"`));
+    return true;
+  });
+});
+
+test("a form that answered without a Department field is not proof either way, so Dan's word stands", async () => {
+  const helium = heliumWithForms([{ label: "Registration", public: true, present: false, exactCase: false, error: "The form has no Department field" }]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
+  const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
+  assert.equal(after.sharedSettings.helium.status, "confirmed");
 });
 
 test("final check catches a product Shopify says is ACTIVE or carries another department's tag", async () => {
@@ -1538,12 +1810,87 @@ test("the router creates, reads and 404s an onboarding over HTTP", async () => {
   });
 });
 
+const JSON_POST = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const MENU_HEALTH_KEYS = ["available", "baseline", "checkedAt", "healthy", "message", "missing", "nestedMissing", "reasons", "storeCount"];
+
+test("the menu-health routes answer the contract's shapes, and a Helium refusal is a 409", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  await withServer(async (base) => {
+    const healthy = await fetch(`${base}/api/onboardings/menu-health`);
+    assert.equal(healthy.status, 200);
+    const body = await healthy.json();
+    assert.deepEqual(Object.keys(body).sort(), MENU_HEALTH_KEYS);
+    assert.equal(body.available, true);
+    assert.equal(body.healthy, true);
+    assert.equal(body.storeCount, 107);
+    assert.deepEqual(Object.keys(body.baseline).sort(), ["at", "by", "reason", "storeCount"]);
+    assert.deepEqual([body.missing, body.nestedMissing, body.reasons, body.message], [[], 0, [], ""]);
+
+    deps.shopify.changeMenuOutsideTheAgent(wipeMenu);
+    const cached = await (await fetch(`${base}/api/onboardings/menu-health`)).json();
+    assert.equal(cached.checkedAt, body.checkedAt, "answered from the read a moment ago");
+    const fresh = await (await fetch(`${base}/api/onboardings/menu-health?fresh=1`)).json();
+    assert.deepEqual(Object.keys(fresh).sort(), MENU_HEALTH_KEYS);
+    assert.equal(fresh.healthy, false);
+    assert.equal(fresh.storeCount, 0);
+    assert.equal(fresh.baseline.storeCount, 107);
+    assert.deepEqual(fresh.missing[0], { title: "Blank Uniforms", url: "/collections/fn-simple-blank-uniforms", parentTitle: "Store" });
+    assert.equal(fresh.nestedMissing, 27);
+    assert.match(fresh.message, /^The Mega Menu looks wiped: /);
+    assert.ok(fresh.reasons.length >= 1);
+
+    const refused = await fetch(`${base}/api/onboardings/menu-health/accept`, JSON_POST({ by: "Dan" }));
+    assert.equal(refused.status, 400);
+    assert.match((await refused.json()).error, /0 stores/);
+
+    const restore = await fetch(`${base}/api/onboardings/menu-health/restore`, JSON_POST({ by: "Dan" }));
+    assert.equal(restore.status, 200);
+    const restored = await restore.json();
+    assert.deepEqual(Object.keys(restored).sort(), ["health", "restored", "skipped"]);
+    assert.equal(restored.restored.length, 137);
+    assert.equal(typeof restored.restored[0], "string");
+    assert.deepEqual(restored.skipped, []);
+    assert.deepEqual(Object.keys(restored.health).sort(), MENU_HEALTH_KEYS);
+    assert.equal(restored.health.healthy, true);
+
+    const accept = await fetch(`${base}/api/onboardings/menu-health/accept`, JSON_POST({ by: "Dan" }));
+    assert.equal(accept.status, 200);
+    const accepted = await accept.json();
+    assert.deepEqual(Object.keys(accepted).sort(), MENU_HEALTH_KEYS);
+    assert.equal(accepted.baseline.by, "Dan");
+    assert.equal(accepted.baseline.reason, "accepted");
+
+    agent.setDeps({ helium: heliumWithForms([{ label: "Registration", public: true, present: false, exactCase: false }]) });
+    const helium = await fetch(`${base}/api/onboardings/${id}/shared-settings/helium/approve`, JSON_POST({ by: "Dan" }));
+    assert.equal(helium.status, 409);
+    assert.match((await helium.json()).error, /^Helium's Registration form does not have "Vacaville Fire Department" yet/);
+  });
+});
+
+test("menu-health with an unreadable menu raises no alarm, and there is nothing to restore without a copy", async () => {
+  harness({ shopifyOptions: { megaMenuAvailable: false } });
+  await withServer(async (base) => {
+    const health = await (await fetch(`${base}/api/onboardings/menu-health?fresh=1`)).json();
+    assert.deepEqual(Object.keys(health).sort(), MENU_HEALTH_KEYS);
+    assert.equal(health.available, false);
+    assert.equal(health.healthy, true);
+    assert.equal(health.message, "");
+    assert.equal(health.baseline, null);
+
+    const restore = await fetch(`${base}/api/onboardings/menu-health/restore`, JSON_POST({ by: "Dan" }));
+    assert.equal(restore.status, 400);
+    assert.match((await restore.json()).error, /no saved copy of the Mega Menu/);
+  });
+});
+
 /* ---------------------------------------------------------------------------
    Deleting a store the agent built
    ------------------------------------------------------------------------- */
 
-async function builtStore({ products, menu = { available: true, removed: 1 }, lock = { id: 4242 } } = {}) {
+async function builtStore({ products, menu = { available: true, removed: 1 }, lock = { id: 4242 }, readMegaMenu = null } = {}) {
   const shopify = fakeShopify();
+  if (readMegaMenu) shopify.readMegaMenu = readMegaMenu;
   const calls = { deletedProducts: [], deletedCollections: [], menu: [], locks: [], trashed: [] };
   shopify.storeProducts = async () => ({
     title: COLLECTION_TITLE,
@@ -1613,6 +1960,18 @@ test("deleteStore removes the products, collection, menu item, lock, Drive folde
   const rows = await referenceTables.departmentCodeRows();
   assert.ok(!rows.some((r) => r.code === "VAC"), "the code is freed");
   await assert.rejects(() => store.getOnboarding(id));
+});
+
+test("deleteStore leaves a wiped Mega Menu alone, says so, and still deletes everything else", async () => {
+  const { calls } = await builtStore({ readMegaMenu: async () => ({ available: true, menu: wipeMenu(fakeMenu()) }) });
+  const result = await agent.deleteStore("111", { confirmName: COLLECTION_TITLE, by: "dan" });
+  assert.deepEqual(calls.menu, [], "removeMegaMenuItemsFor is never called on a wiped menu");
+  assert.match(
+    result.manual.join("\n"),
+    /The Mega Menu looks wiped, so the agent did not touch it: the Store list has 0 stores\. Once it is restored, remove "1\. Vacaville Fire Department" from it by hand if it is there\./
+  );
+  assert.deepEqual(calls.deletedCollections, [COLLECTION_GID]);
+  assert.equal(result.deleted, true);
 });
 
 test("deleteStore refuses older stores, a wrong name, and any store with an Active product", async () => {
