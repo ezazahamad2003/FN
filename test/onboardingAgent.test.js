@@ -27,6 +27,11 @@ delete process.env.LOCKSMITH_ACCESS_TOKEN; // §7 falls back to the checklist
 process.env.GDRIVE_PARENT_FOLDER_ID = "parent-departments";
 process.env.GDRIVE_OMNI_PRINTER_FOLDER_ID = "parent-omni";
 process.env.SHOPIFY_STOREFRONT_DOMAIN = "fnsimple.com";
+// The supplier link book runs in memory: a blank photo added to a row is
+// booked there for every other department.
+const linkBook = require("../linkBook");
+linkBook.setBookAdapter(linkBook.memoryBookAdapter());
+const sharp = require("sharp");
 
 const DEPARTMENT = "Vacaville Fire Department";
 const COLLECTION_TITLE = "1. Vacaville Fire Department";
@@ -819,6 +824,44 @@ test("re-saving a row keeps the blank photos already attached to it", async () =
   const withoutId = await agent.saveProducts(id, [idless], { by: "dan" });
   assert.ok(withoutId.products[0].blankPhotos.Navy.front);
   assert.equal(withoutId.products.length, 1);
+});
+
+/* Foresthill, 2026-10-13: Dan uploaded a blank photo of the Delta FF180 and
+   redid its images; SCC ordered the same hat two hours later and was drawn an
+   invented one, because the photo lived only on Foresthill's row. */
+test("a blank photo added to a row is kept in the link book for every other department", async () => {
+  const { id } = await readyForProducts();
+  await agent.saveProducts(id, [TEE_ROW], { by: "dan" });
+  const png = await sharp({ create: { width: 600, height: 600, channels: 3, background: "#1f2a44" } }).png().toBuffer();
+  const record = await agent.addFiles(id, {
+    files: [{ fieldname: "files", originalname: "navy-front.png", mimetype: "image/png", buffer: png, size: png.length }],
+    kind: "blank",
+    productId: "p1",
+    color: "Navy",
+    face: "front",
+    by: "dan"
+  });
+  const assetId = record.products[0].blankPhotos.Navy.front;
+  assert.match(record.events.at(-1).message, /kept for every department that orders this garment and colour/);
+
+  // Booked the way a build looks the garment up, pointing back at this upload.
+  const entry = await linkBook.lookupSupplierLink("next level|nl3600|navy|t-shirt");
+  assert.equal(entry.status, "verified");
+  assert.equal(entry.source, "upload");
+  assert.deepEqual([entry.photoFrom.onboardingId, entry.photoFrom.assetId, entry.photoFrom.department], [id, assetId, DEPARTMENT]);
+  assert.ok((await linkBook.readSupplierPhoto(entry.photoBlob)).equals(png));
+
+  // A file that is not a usable photo is still added to the row, and the event says why it is not shared.
+  const tiny = await agent.addFiles(id, { files: [packetFile("files", "navy-back.png", "image/png")], kind: "blank", productId: "p1", color: "Navy", face: "back" });
+  assert.ok(tiny.products[0].blankPhotos.Navy.back);
+  assert.match(tiny.events.at(-1).message, /not kept for other departments: the file is not an image/);
+
+  // Removing the upload from its row forgets it; the garment is back in the repair queue.
+  await agent.removeFile(id, assetId, { by: "dan" });
+  const after = await linkBook.lookupSupplierLink("next level|nl3600|navy|t-shirt");
+  assert.equal(after.status, "failed");
+  assert.equal(after.photoBlob, undefined);
+  assert.equal(await linkBook.readSupplierPhoto(entry.photoBlob), null);
 });
 
 test("saveProducts refuses a row before the department code is approved", async () => {

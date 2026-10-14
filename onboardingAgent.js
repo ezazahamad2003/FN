@@ -38,6 +38,7 @@ const LOADERS = {
   shopify: () => require("./shopifyOnboarding"),
   shopifyCore: () => require("./shopify"),
   catalog: () => require("./catalog"),
+  supplierPhotos: () => require("./supplierPhotos"),
   locksmith: () => require("./locksmith"),
   helium: () => require("./helium"),
   mockups: () => require("./onboardingMockups"),
@@ -80,6 +81,7 @@ const store = () => dep("store");
 const shop = () => dep("shopify");
 const shopCore = () => dep("shopifyCore");
 const catalog = () => dep("catalog");
+const supplierPhotos = () => dep("supplierPhotos");
 const locksmith = () => dep("locksmith");
 const helium = () => dep("helium");
 const mockups = () => dep("mockups");
@@ -436,9 +438,10 @@ async function addFiles(id, { files = [], kind = "other", productId = "", color 
   if (!list.length) throw badRequest("No files were uploaded.");
   const wanted = clean(kind).toLowerCase() || "other";
 
+  let existing = null;
   if (wanted === "blank" || wanted === "proof") {
-    const record = await store().getOnboarding(id);
-    if (!productById(record, productId)) throw badRequest(`Product "${productId}" is not on this onboarding.`);
+    existing = await store().getOnboarding(id);
+    if (!productById(existing, productId)) throw badRequest(`Product "${productId}" is not on this onboarding.`);
     if (wanted === "blank" && !clean(color)) throw badRequest("A colour is required for a blank photo.");
     if (wanted === "proof" && !clean(decorationCode)) throw badRequest("A decoration code is required for an embroidery proof.");
     /* One slot, one file. Storing several and keeping the last wrote the rest
@@ -455,6 +458,24 @@ async function addFiles(id, { files = [], kind = "other", productId = "", color 
   }
 
   const stored = await storePacketFiles(id, list, { kind: wanted });
+  /* A blank photo goes into the link book as well, so the next department
+     that orders this garment and colour gets the real blank instead of a
+     search that may find nothing and an invented garment: Foresthill's Delta
+     FF180 was uploaded, then drawn again for SCC the same day. The upload
+     stands whether or not the book could keep it; the event says which. */
+  let kept = null;
+  if (wanted === "blank") {
+    kept = await supplierPhotos()
+      .bookBlankPhoto({
+        product: productById(existing, productId),
+        color: clean(color),
+        face: clean(face).toLowerCase() === "back" ? "back" : "front",
+        file: list[0],
+        origin: { onboardingId: id, assetId: stored[stored.length - 1].assetId, department: existing.department?.name || "" },
+        by
+      })
+      .catch((error) => ({ booked: false, reason: error.message }));
+  }
   return store().updateOnboarding(id, (record) => {
     if (wanted === "blank") {
       const product = productById(record, productId);
@@ -462,7 +483,15 @@ async function addFiles(id, { files = [], kind = "other", productId = "", color 
       const colorKey = clean(color);
       if (!product.blankPhotos[colorKey]) product.blankPhotos[colorKey] = {};
       product.blankPhotos[colorKey][faceKey] = stored[stored.length - 1].assetId;
-      note(record, { type: "files", message: `Blank photo added for ${product.styleNumber || product.id} ${colorKey} ${faceKey}`, by });
+      note(record, {
+        type: "files",
+        message:
+          `Blank photo added for ${product.styleNumber || product.id} ${colorKey} ${faceKey}` +
+          (kept?.booked
+            ? " — kept for every department that orders this garment and colour"
+            : ` (not kept for other departments: ${kept?.reason || "unknown"})`),
+        by
+      });
       return record;
     }
     if (wanted === "proof") {
@@ -483,8 +512,9 @@ async function addFiles(id, { files = [], kind = "other", productId = "", color 
 
 /** Remove one asset and every reference to it. Drive copies are left alone. */
 async function removeFile(id, assetId, { by = "" } = {}) {
+  const existing = await store().getOnboarding(id);
   await store().deleteAsset(id, assetId);
-  return store().updateOnboarding(id, (record) => {
+  const updated = await store().updateOnboarding(id, (record) => {
     const removed = record.packet.files.filter((f) => f.assetId === assetId).map((f) => f.name);
     record.packet.files = record.packet.files.filter((f) => f.assetId !== assetId);
     for (const product of record.products) {
@@ -503,6 +533,18 @@ async function removeFile(id, assetId, { by = "" } = {}) {
     note(record, { type: "files", message: `Removed ${removed[0] || assetId}`, by });
     return record;
   });
+  // A blank photo the link book learned from this row goes with it.
+  for (const product of existing.products || []) {
+    for (const [color, faces] of Object.entries(product.blankPhotos || {})) {
+      for (const [face, value] of Object.entries(faces || {})) {
+        if (value !== assetId) continue;
+        await supplierPhotos()
+          .unbookBlankPhoto({ product, color, face, assetId })
+          .catch(() => {});
+      }
+    }
+  }
+  return updated;
 }
 
 /* ---------------------------------------------------------------------------
