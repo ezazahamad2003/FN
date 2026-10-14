@@ -21,13 +21,20 @@
                                                 back (nothing is written)
      node tools/megamenu.js restore <source> --apply
                                                 put it back - one menuUpdate
+     node tools/megamenu.js restore <source> --only "A|B" [--apply]
+                                                put back only the named links
+                                                (titles as "diff" prints them,
+                                                separated by |) and leave the
+                                                rest of what is missing alone
      node tools/megamenu.js accept [--by name]  "the menu is right as it is
                                                 now": the live menu becomes the
                                                 last good copy
 
    <source> is "baseline" (the last good copy), a history name as "history"
-   prints it, or - for diff - a path to a menu JSON file such as
-   test/fixtures/megamenu-live.json.
+   prints it, or a path to a menu JSON file such as
+   test/fixtures/megamenu-live.json. An old file is how links lost before the
+   agent kept any copy come back - and why --only exists: an old copy also
+   holds links Dan removed on purpose since, and those must stay gone.
    -------------------------------------------------------------------------- */
 
 require("dotenv").config();
@@ -65,6 +72,22 @@ async function loadSource(source, { allowFile = false } = {}) {
   const doc = await guard.loadSnapshot(source);
   if (!doc) throw new Error(`there is no copy named "${source}". Run "history" to list them.`);
   return { label: `${source} (${guard.formatWhen(doc.at)})`, menu: doc.menu };
+}
+
+/* Keep every link the live menu still has (the restore places the missing ones
+   next to them) and only the missing links named in --only. A name that is not
+   among the missing ones is an error rather than a silent no-op, so a typo
+   never reads as "restored". */
+function keepOnly(sourceMenu, live, names) {
+  const norm = (value) => String(value == null ? "" : value).trim().replace(/\s+/g, " ").toLowerCase();
+  const want = new Set(names.map(norm).filter(Boolean));
+  const { baseline, pairs } = guard.matchMenus(sourceMenu, live);
+  const missing = baseline.filter((item) => !pairs.has(item));
+  const unknown = names.filter((name) => norm(name) && !missing.some((item) => norm(item.title) === norm(name)));
+  if (unknown.length) throw new Error(`not missing from the live menu (check the spelling against "diff"): ${unknown.join(", ")}`);
+  const drop = new Set(missing.filter((item) => !want.has(norm(item.title))).map((item) => item.node));
+  const prune = (items) => (items || []).filter((node) => !drop.has(node)).map((node) => ({ ...node, items: prune(node.items) }));
+  return { ...sourceMenu, items: (sourceMenu.items || []).map((top) => ({ ...top, items: prune(top.items) })) };
 }
 
 function printItems(items, { indent = "  " } = {}) {
@@ -116,9 +139,16 @@ async function main() {
   }
 
   if (command === "restore") {
-    const source = await loadSource(args[0]);
+    const source = await loadSource(args[0], { allowFile: true });
     const apply = args.includes("--apply");
+    const only = flag(args, "--only");
     const menu = await liveMenu();
+    if (only !== null) {
+      const names = only.split("|").map((name) => name.trim()).filter(Boolean);
+      if (!names.length) throw new Error('--only needs the link titles, e.g. --only "FN Simple Merch|Heavy Equipment Store".');
+      source.menu = keepOnly(source.menu, menu, names);
+      source.label = `${source.label} (only ${names.length} named link${names.length === 1 ? "" : "s"})`;
+    }
     if (!apply) {
       const plan = shop.planMenuRestore(menu, source.menu);
       console.log(`Restoring from ${source.label} would put back ${plan.restored.length} item(s):`);

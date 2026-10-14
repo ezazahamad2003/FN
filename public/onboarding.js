@@ -710,6 +710,11 @@
     const busy = state.menuBusy;
     const baseline = health.baseline || null;
     const storeCount = Number(health.storeCount) || 0;
+    /* The server refuses to take an empty Store list as the right menu (that
+       is the wipe itself), so offering "keep it as it is" then would be a
+       button that can only fail. With no saved copy there is nothing to put
+       back either, and the banner says what Dan does instead. */
+    const canAccept = storeCount > 0;
     /* The server's message is "The Mega Menu looks wiped: " + its first
        reason, lower-cased. The heading already says the first half, and the
        reason it quotes would otherwise be listed a second time below it. */
@@ -749,12 +754,18 @@
                     busy === "restore" ? `<span class="spinner" aria-hidden="true"></span>Putting them back…` : `Put the ${count} missing ${plural(count, "item", "items")} back`
                   }</button>`
                 : ""}
-              <button class="btn btn-secondary btn-sm ob-btn-wrap" type="button" data-ob="menu-accept" ${busy ? "disabled" : ""}>${
-                busy === "accept" ? `<span class="spinner" aria-hidden="true"></span>Saving…` : "It's intentional — keep the menu as it is"
-              }</button>
+              ${canAccept
+                ? `<button class="btn btn-secondary btn-sm ob-btn-wrap" type="button" data-ob="menu-accept" ${busy ? "disabled" : ""}>${
+                    busy === "accept" ? `<span class="spinner" aria-hidden="true"></span>Saving…` : "It's intentional — keep the menu as it is"
+                  }</button>`
+                : ""}
             </div>
           </div>
-          <p class="ob-menu-hint">${count ? "<b>Put back</b> writes the missing links into the live menu from the agent's saved copy. " : ""}<b>Keep the menu as it is</b> changes nothing in Shopify: the agent takes today's menu as the right one and checks against it from now on.</p>
+          ${count || canAccept
+            ? `<p class="ob-menu-hint">${count ? "<b>Put back</b> writes the missing links into the live menu from the agent's saved copy. " : ""}${
+                canAccept ? "<b>Keep the menu as it is</b> changes nothing in Shopify: the agent takes today's menu as the right one and checks against it from now on." : ""
+              }</p>`
+            : `<p class="ob-menu-hint">The agent has no saved copy that lists the missing links, so it cannot put them back from here. Rebuild the Store list in Shopify (Content › Menus › MegaMenu); this banner clears by itself once the menu reads as healthy again.</p>`}
           ${state.menuError ? `<p class="ob-menu-error">${esc(state.menuError)}</p>` : ""}
         </div>
       </section>`;
