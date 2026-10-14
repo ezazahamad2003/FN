@@ -1864,7 +1864,10 @@ test("the menu-health routes answer the contract's shapes, and a Helium refusal 
     agent.setDeps({ helium: heliumWithForms([{ label: "Registration", public: true, present: false, exactCase: false }]) });
     const helium = await fetch(`${base}/api/onboardings/${id}/shared-settings/helium/approve`, JSON_POST({ by: "Dan" }));
     assert.equal(helium.status, 409);
-    assert.match((await helium.json()).error, /^Helium's Registration form does not have "Vacaville Fire Department" yet/);
+    const heliumBody = await helium.json();
+    assert.match(heliumBody.error, /^Helium's Registration form does not have "Vacaville Fire Department" yet/);
+    // The console tells this refusal from any other 409 by its code.
+    assert.equal(heliumBody.code, "HELIUM_TAG_MISSING");
   });
 });
 
