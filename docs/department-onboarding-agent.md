@@ -63,7 +63,9 @@ only for reading messy policies, drafting the rep email, and rendering mockups.
 | `platformBlob.js` | Generic JSON/binary blob helpers on `AZURE_STORAGE_CONNECTION_STRING`. |
 | `referenceTables.js` | Source-of-truth tables in container `platform-config`: department-codes, color-codes, blank-library, standard-text; proposals + approval. |
 | `onboardingStore.js` | Onboarding records + binary assets in container `department-onboardings`. |
-| `shopifyOnboarding.js` | Shopify Admin GraphQL for the agent: source product lookup, duplicate, productSet with SKUs/options/variants, media attach per variant, collection with banner + description, tags in use, menu read/update, verification reads. |
+| `shopifyOnboarding.js` | Shopify Admin GraphQL for the agent: source product lookup, duplicate, productSet with SKUs/options/variants, media attach per variant, collection with banner + description, tags in use, menu read/update (refused on a menu that looks wiped), menu restore from the last good copy, verification reads. |
+| `megaMenuGuard.js` | Is the Mega Menu fit to write to? Judges every read against the last good copy and keeps that copy plus a rolling history in `platform-config/megamenu/` (see "7. The Mega Menu guard" below). |
+| `tools/megamenu.js` | CLI: `status`, `history`, `diff`, `restore [--apply]`, `accept` for the Mega Menu. |
 | `locksmith.js` | Locksmith Admin API client: list locks, learn key template, create collection lock, verify. |
 | `helium.js` | Public Helium form reader + checker. |
 | `onboardingMockups.js` | 2000×2000 front/back mockups per colour × style from blank photos + artwork; 3584×2048 banner. |
@@ -146,10 +148,12 @@ Container `department-onboardings`, blob `<id>` where
             "tagKey": "", "settings": { "enabled": true, "protectProducts": true, "hideFromNavigation": true, "hideFromLists": true },
             "checklist": [""], "error": "", "verifiedAt": "" },
   "sharedSettings": {
-    "megaMenu": { "status": "pending"|"proposed"|"approved"|"applied"|"manual"|"verified"|"error", "proposal": { "insertAfter": "", "insertBefore": "", "index": 0, "title": "", "url": "",
+    "megaMenu": { "status": "pending"|"proposed"|"approved"|"applied"|"manual"|"verified"|"blocked"|"error", "proposal": { "insertAfter": "", "insertBefore": "", "index": 0, "title": "", "url": "",
                                 "newItem": { "title": "", "type": "COLLECTION", "url": "/collections/<handle>", "resourceId": "" },
                                 "collectionHandle": "", "collectionGid": "" }  // newItem is required by applyMegaMenuInsert,
-                  "checklist": [""], "approvedAt": "", "approvedBy": "", "appliedAt": "", "verifiedAt": "", "error": "" },
+                  "checklist": [""], "approvedAt": "", "approvedBy": "", "appliedAt": "", "verifiedAt": "", "error": "",
+                  // only while "blocked" (the agent refused to touch a menu that looks wiped); null otherwise
+                  "health": { "storeCount": 0, "baselineCount": 112, "baselineAt": "", "missing": ["<title>", "… at most 50"] } },
     "flow": { "status": "pending"|"proposed"|"confirmed", "checklist": [""], "confirmedAt": "", "confirmedBy": "" },
     "helium": { "status": "pending"|"proposed"|"verified"|"partial", "forms": [{ "id": "K7tlqn", "label": "Registration", "public": true,
                  "present": false, "insertAfter": "", "insertBefore": "", "index": 0, "total": 0, "checkedAt": "", "confirmedAt": "", "error": "" }] }
@@ -191,10 +195,13 @@ Container `department-onboardings`, blob `<id>` where
 5. **Shared settings** (`POST …/shared-settings/propose`, `…/approve`,
    `…/verify`): Mega Menu (applied through the API after approval — the scope
    is granted; the checklist survives only as the fallback for a failed or
-   unreadable menu), Flow (checklist), Helium (checklist + public-form
-   verification). `approve` with `applied: true` means a human already made
-   the change and nothing is called, so the console sends it only for Flow and
-   Helium.
+   unreadable menu; `blocked` when the menu looks wiped, see "7. The Mega Menu guard"), Flow
+   (checklist), Helium (checklist + public-form verification). `approve` with
+   `applied: true` means a human already made the change and nothing is
+   called, so the console sends it only for Flow and Helium. A Helium approve
+   is refused with `409` (`HELIUM_TAG_MISSING`) when a form the agent CAN read
+   does not carry the tag exactly; only forms it cannot read rest on Dan's
+   word.
 6. **Report** (`GET …/report`): four sections; never "complete" while anything
    is unresolved.
 
@@ -227,6 +234,12 @@ Container `department-onboardings`, blob `<id>` where
 | POST | `/api/reference/:table/proposals/:proposalId` | `{ approve: boolean, by, edits? }` |
 | POST | `/api/reference/department-codes/sync` | re-import the Drive doc → `{ imported }` |
 | GET | `/api/onboardings/capabilities` | `{ locksmith: {configured}, helium: {forms}, megaMenu: {readable, writable}, drive, shopify, imageModel }` |
+| GET | `/api/onboardings/menu-health[?fresh=1]` | `MenuHealth` (below); answered from the last read in the past minute unless `fresh` |
+| POST | `/api/onboardings/menu-health/accept` | `{ by }` — "the menu is right as it is now": the live menu becomes the baseline → `MenuHealth`; `400` for a menu with no Store item or an empty one |
+| POST | `/api/onboardings/menu-health/restore` | `{ by }` — put back what the baseline has and the live menu lost → `{ restored: [title], skipped: [{ title, reason }], health: MenuHealth }`; `400` when there is no baseline |
+
+`MenuHealth = { checkedAt, available, healthy, storeCount, baseline: { at, by, reason, storeCount } | null, missing: [{ title, url, parentTitle }], nestedMissing, reasons: [""], message: "" }`.
+`available: false` (menu unreadable) always comes with `healthy: true` — unknown is not an alarm. `nestedMissing` counts the missing items two levels down (a station under "Station Stores").
 
 Errors: `{ error }` with 400/401/404/409/500 like the rest of the app.
 
@@ -252,3 +265,49 @@ ONBOARDING_MOCKUP_VERIFY=on
 - Shared settings are never written without an approval record; if the API cannot write (scope missing), the item becomes a checklist and Dan confirms.
 - The report is `complete` only when: code approved, both folders exist, collection ok, lock verified or confirmed, menu/flow/helium confirmed, every product created with unique SKUs and images, and no missing information.
 - The final check reads the Mega Menu back and believes the live menu over the record: a stored `applied` passes only when the menu itself cannot be read.
+- The agent never writes to a Mega Menu that looks wiped, and a record never completes while it does (see "7. The Mega Menu guard").
+- Shopify Flow is reported as "confirmed by <who>", never as something the agent read back: Flow has no API.
+
+## 7. The Mega Menu guard (13 Oct 2026)
+
+Shopify's `menuUpdate` replaces the whole menu tree: every item not sent is
+deleted. On 13 Oct 2026 something outside the agent rewrote the MegaMenu
+keeping only its top-level items (~112 stores under "Store", Contact's three
+sub-items and the twenty "Station Stores" went). Two hours later the agent read
+the empty Store list, proposed "index 0, nothing above, nothing below", and the
+finish wrote `Store = [the new store]`, recorded it saved and completed the
+record. The agent's read was right; nothing stopped it writing into a menu
+that was obviously wrong, and there was no copy to restore from.
+
+- **Healthy or not** (`megaMenuGuard.assessMenu`). Unhealthy when there is no
+  Store item, when the Store list is empty, or — against the baseline — when
+  the Store list or the items two levels down lost `max(3, 10%)` of what the
+  baseline had. Items are matched across reads by linked resource, else url,
+  else title; never by menu item id, which a rebuild by hand changes. Smaller
+  losses are listed but do not raise the alarm.
+- **Baseline and history** in blob container `platform-config`:
+  `megamenu/baseline.json` (`{ at, by, reason, menu }`, the last good read) and
+  `megamenu/history/<iso>-<reason>.json` (newest 60 kept). Every successful
+  read the agent makes goes through `observe`: a healthy read becomes the
+  baseline (written only when the tree changed); an unhealthy one never does,
+  and is kept once per distinct tree as `suspect-<hash>`. A snapshot is taken
+  either side of every agent write (`before-insert`/`after-insert`,
+  `before-restore`/`after-restore`). Without blob storage the copies live in
+  memory.
+- **What a wiped menu stops.** `applyMegaMenuInsert` and
+  `removeMegaMenuItemsFor` judge their own fresh read and refuse
+  (`MENU_SUSPECT` / `suspect: true`) before any `menuUpdate`; an empty Store
+  list is refused even with no baseline. The record's `megaMenu.status` becomes
+  `blocked` with `health`, nothing is proposed from the wiped read, deleting a
+  store leaves the menu alone (a manual step says so), and the final check adds
+  "The Mega Menu's Store list is not confirmed healthy: …" so the record cannot
+  complete.
+- **The way out.** Restore (`POST …/menu-health/restore`, or `node
+  tools/megamenu.js restore baseline --apply`) re-adds every item the baseline
+  has and the live menu lost, each under its own parent right after the item
+  that preceded it, in one `menuUpdate` that only adds: every live item keeps
+  its id, place and children. Collections deleted since are skipped. The menu
+  is read back and every item that was live before must still be there
+  (`RESTORE_LOST_ITEMS` otherwise). Or accept (`POST …/menu-health/accept`):
+  the live menu becomes the baseline and the old one goes to history; a menu
+  with no Store list, or an empty one, cannot be accepted.
