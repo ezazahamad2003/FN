@@ -223,8 +223,17 @@ function wipedReason(seen) {
   return text ? text.charAt(0).toLowerCase() + text.slice(1) : "the menu could not be judged.";
 }
 
+const RESTORE_FIRST = "Restore the Mega Menu first.";
+
 function restoreMenuFirstStep(seen) {
-  return `Restore the Mega Menu first. ${seen.message} Put the missing items back from the agent's saved copy (or by hand in Shopify admin), or accept the menu as it is if the change was on purpose. The agent will not change the menu until then.`;
+  return `${RESTORE_FIRST} ${seen.message} Put the missing items back from the agent's saved copy (or by hand in Shopify admin), or accept the menu as it is if the change was on purpose. The agent will not change the menu until then.`;
+}
+
+// Once the record is out of "blocked", the step telling Dan to restore the
+// menu first is history; left in, a verified card still says "the agent will
+// not change the menu until then".
+function withoutRestoreStep(checklist) {
+  return (checklist || []).filter((step) => !String(step).startsWith(RESTORE_FIRST));
 }
 
 function menuSuspectError(seen) {
@@ -2480,6 +2489,8 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
   // The guard's verdict when it refused the write, and anything a write lost.
   let suspect = null;
   let lostItems = [];
+  // Where the item went, when the record held no real position to approve.
+  let writtenAt = null;
   if (applied) {
     patch.status = "applied";
     patch.appliedAt = nowIso();
@@ -2532,6 +2543,17 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
         patch.appliedAt = nowIso();
         patch.error = "";
         patch.menuItemId = result.menuItemId || "";
+        /* A placeholder (proposed while the menu was blocked or unreadable)
+           names no position, so the record keeps the one the write used —
+           otherwise the card goes on saying "at the end (position 1)". */
+        if (!approved) {
+          writtenAt = {
+            index: result.index ?? proposal.index,
+            insertAfter: result.insertAfter || "",
+            insertBefore: result.insertBefore || "",
+            newItem: proposal.newItem || null
+          };
+        }
         lostItems = result.lostItems || [];
         if (lostItems.length) {
           patch.error = `The write removed ${lostItems.length} item(s) that were in the menu before it: ${lostItems.map((item) => `"${item.title}"`).join(", ")}. Put them back from the saved copy.`;
@@ -2566,6 +2588,10 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
     // A position read off a wiped menu is no position: restoring comes first.
     if (suspect) patch.checklist = [restoreMenuFirstStep(suspect), ...megaMenuChecklist({ menuTitle, collectionTitle: record.collection.title })];
     patch.proposal = { ...(menu.proposal || {}), title: menuTitle };
+  } else {
+    // Applied — through the API, or by Dan's hand after a blocked read.
+    patch.checklist = withoutRestoreStep(menu.checklist);
+    if (writtenAt) patch.proposal = { ...(menu.proposal || {}), ...writtenAt, title: menuTitle };
   }
 
   return store().updateOnboarding(id, (r) => {
@@ -2610,7 +2636,7 @@ async function verifySharedSettings(id, { by = "" } = {}) {
     if (wiped) {
       r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, error: seen.message };
     } else if (menu.available && menu.present) {
-      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "", health: null };
+      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "", health: null, checklist: withoutRestoreStep(r.sharedSettings.megaMenu.checklist) };
     } else if (!menu.available) {
       r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, error: menu.reason || "The Mega Menu could not be read." };
     }
@@ -3121,7 +3147,7 @@ async function finalCheck(id, { by = "", build = null } = {}) {
     // The read-back above is the same proof verifySharedSettings records, so
     // the console shows "verified" rather than the operator's "applied".
     if (menuCheck.available && menuCheck.present && !menuWiped && r.sharedSettings.megaMenu.status !== "verified") {
-      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "", health: null };
+      r.sharedSettings.megaMenu = { ...r.sharedSettings.megaMenu, status: "verified", verifiedAt: nowIso(), error: "", health: null, checklist: withoutRestoreStep(r.sharedSettings.megaMenu.checklist) };
     }
     // §12 "Never report an onboarding as complete while anything is unresolved."
     if (complete) {

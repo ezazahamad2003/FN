@@ -1419,8 +1419,37 @@ test("THE INCIDENT: a menu wiped from outside is never written to, never complet
   assert.equal(after.sharedSettings.megaMenu.status, "applied", after.sharedSettings.megaMenu.error);
   assert.equal(after.sharedSettings.megaMenu.health, null, "a healthy write clears the blocked state");
   assert.equal(deps.shopify.storeItemTitles()[full.indexOf("FN Simple Merch")], MENU_ITEM_TITLE);
+  // The card no longer says "restore first", and names where the item went
+  // rather than the placeholder proposed off the wiped menu.
+  assert.equal(after.sharedSettings.megaMenu.checklist.some((step) => /^Restore the Mega Menu first/.test(step)), false, after.sharedSettings.megaMenu.checklist[0]);
+  assert.equal(after.sharedSettings.megaMenu.proposal.insertBefore, "FN Simple Merch");
+  assert.equal(after.sharedSettings.megaMenu.proposal.index, full.indexOf("FN Simple Merch"));
+  assert.equal(after.sharedSettings.megaMenu.proposal.newItem.title, MENU_ITEM_TITLE);
   const done = await agent.finalCheck(id, { by: "dan" });
   assert.equal(done.status, "complete", JSON.stringify(done.report.missingInformation));
+});
+
+test("a blocked record that turns verified drops the restore-first step", async (t) => {
+  t.after(resetRealMegaMenu);
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  const full = JSON.parse(JSON.stringify(require("./fixtures/megamenu-live.json")));
+  deps.shopify.changeMenuOutsideTheAgent(wipeMenu);
+  const blocked = (await agent.proposeSharedSettings(id, { by: "dan" })).sharedSettings.megaMenu;
+  assert.match(blocked.checklist[0], /^Restore the Mega Menu first/);
+
+  // Dan rebuilds the stores by hand, the new one included, and verifies.
+  deps.shopify.changeMenuOutsideTheAgent((menu) => {
+    const stores = full.items.find((i) => i.title === "Store").items.filter((i) => i.title !== DEPARTMENT);
+    const at = stores.findIndex((i) => i.title === "FN Simple Merch");
+    stores.splice(at, 0, { id: "gid://shopify/MenuItem/990777", title: MENU_ITEM_TITLE, type: "COLLECTION", url: "/collections/1-vacaville-fire-department", resourceId: COLLECTION_GID, tags: [], items: [] });
+    menu.items.find((i) => i.title === "Store").items = stores;
+    return menu;
+  });
+  const verified = (await agent.verifySharedSettings(id, { by: "dan" })).sharedSettings.megaMenu;
+  assert.equal(verified.status, "verified");
+  assert.equal(verified.health, null);
+  assert.equal(verified.checklist.some((step) => /^Restore the Mega Menu first/.test(step)), false);
+  assert.ok(verified.checklist.length > 0, "the hand checklist itself stays");
 });
 
 test("a healthy read clears a blocked proposal", async (t) => {
