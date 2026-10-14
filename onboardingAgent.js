@@ -3039,8 +3039,13 @@ async function finalCheck(id, { by = "", build = null } = {}) {
   } else {
     unresolved.push(`The Mega Menu item for "${record.collection.title}" is not confirmed (${menuStatus}).`);
   }
-  if (record.sharedSettings.flow.status === "confirmed") report.completed.push(`Shopify Flow condition carries "${record.department.tag}".`);
-  else unresolved.push(`The Shopify Flow condition for "${record.department.tag}" is not confirmed (${record.sharedSettings.flow.status}).`);
+  /* Flow has no API: "confirmed" is the operator's word, so the report says
+     whose word it is instead of claiming the condition carries the tag. */
+  if (record.sharedSettings.flow.status === "confirmed") {
+    report.completed.push(
+      `Shopify Flow confirmed by ${clean(record.sharedSettings.flow.confirmedBy) || "the operator"} for "${record.department.tag}" — Flow has no API, so the agent cannot read it back.`
+    );
+  } else unresolved.push(`The Shopify Flow condition for "${record.department.tag}" is not confirmed (${record.sharedSettings.flow.status}).`);
   const heliumStatus = record.sharedSettings.helium.status;
   if (heliumStatus === "verified") report.completed.push(`All Helium forms carry "${record.department.tag}" (read back and checked).`);
   else if (heliumStatus === "confirmed")

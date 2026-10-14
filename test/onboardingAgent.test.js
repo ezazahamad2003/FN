@@ -1495,6 +1495,19 @@ test("a write that dropped items is saved but flagged, naming them", async () =>
   assert.ok(history.some((name) => /-after-insert\.json$/.test(name)), "and one from after it");
 });
 
+test("the report says whose word Flow rests on, never that the agent saw the condition", async () => {
+  const { deps, id } = await builtOnboarding({ liveProducts: 1 });
+  await settleAllButTheMenu(deps, id);
+  deps.shopify.addMenuTitleByHand(MENU_ITEM_TITLE);
+  await agent.approveSharedSetting(id, "megaMenu", { by: "dan", applied: true });
+
+  const checked = await agent.finalCheck(id, { by: "dan" });
+  assert.ok(
+    checked.report.completed.includes(`Shopify Flow confirmed by dan for "${DEPARTMENT}" — Flow has no API, so the agent cannot read it back.`),
+    JSON.stringify(checked.report.completed)
+  );
+  assert.equal(checked.report.completed.some((c) => /Flow condition carries/.test(c)), false);
+});
 
 
 const SECRET_LINK = "https://fnsimple.com/collections/1-vacaville-fire-department?ls=abc123";
