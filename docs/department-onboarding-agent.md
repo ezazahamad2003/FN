@@ -241,7 +241,9 @@ Container `department-onboardings`, blob `<id>` where
 `MenuHealth = { checkedAt, available, healthy, storeCount, baseline: { at, by, reason, storeCount } | null, missing: [{ title, url, parentTitle }], nestedMissing, reasons: [""], message: "" }`.
 `available: false` (menu unreadable) always comes with `healthy: true` — unknown is not an alarm. `nestedMissing` counts the missing items two levels down (a station under "Station Stores").
 
-Errors: `{ error }` with 400/401/404/409/500 like the rest of the app.
+Errors: `{ error }` with 400/401/404/409/500 like the rest of the app. The Helium refusal also carries `code: "HELIUM_TAG_MISSING"`, so the console can tell it from any other 409.
+
+Each list `summary` carries `sharedSettings: { megaMenu: { status }, flow: { status }, helium: { status } }` for the queue's "Flow & Helium to do" chip.
 
 ## 5. Environment
 
