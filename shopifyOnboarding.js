@@ -1547,7 +1547,7 @@ async function removeMegaMenuItemsFor(gidOrId, { baseline = null } = {}) {
   const read = await readMegaMenu();
   if (!read.available) return { removed: 0, available: false, reason: read.reason };
   const assessment = menuGuard.assessMenu(read.menu, baseline);
-  if (!assessment.healthy) return { removed: 0, available: true, suspect: true, reason: assessment.message };
+  if (!assessment.healthy) return { removed: 0, available: true, suspect: true, reason: assessment.reasons.join(" ") };
   let removed = 0;
   const prune = (items) =>
     (items || [])

@@ -196,6 +196,32 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
     }
   });
 
+  /* The Mega Menu as a whole (also before "/onboardings/:id"): is it healthy,
+     "it is right as it is now", and "put back what the last good copy had". */
+  router.get("/onboardings/menu-health", gate, async (req, res) => {
+    try {
+      res.json(await agent.menuHealth({ fresh: ["1", "true"].includes(String(req.query?.fresh || "")) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.post("/onboardings/menu-health/accept", gate, async (req, res) => {
+    try {
+      res.json(await agent.acceptMenuBaseline({ by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.post("/onboardings/menu-health/restore", gate, async (req, res) => {
+    try {
+      res.json(await agent.restoreMegaMenu({ by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.post("/onboardings", gate, packetUpload, async (req, res) => {
     try {
       const payload = readPayload(req);

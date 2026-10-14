@@ -1329,7 +1329,7 @@ test("removeMegaMenuItemsFor leaves a wiped menu alone and says why", async (t) 
   assert.equal(result.removed, 0);
   assert.equal(result.available, true);
   assert.equal(result.suspect, true);
-  assert.match(result.reason, /looks wiped: the Store list has 0 stores/);
+  assert.match(result.reason, /^The Store list has 0 stores; the last good read \(13 Oct 2026, 15:17 UTC\) had 112\.$/);
   assert.equal(callsNamed(calls, "menuUpdate").length, 0);
 });
 

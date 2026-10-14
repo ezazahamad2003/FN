@@ -87,6 +87,7 @@ test("the incident: an empty Store list is unhealthy, and says what the last goo
   assert.deepEqual(verdict.missing[0], { title: "Blank Uniforms", url: "/collections/fn-simple-blank-uniforms", parentTitle: "Store" });
   assert.ok(verdict.missing.some((m) => m.title === "Returns & Exchanges" && m.parentTitle === "Contact"));
   assert.equal(verdict.nestedMissing, 27, "the 20 stations, and the 2 + 3 + 2 under Sonoma Valley, Manteca and Santa Clara");
+  assert.equal(verdict.reasons.length, 1, "items that went with their own store are not a second alarm");
 });
 
 test("an empty Store list is refused even with no copy to compare against", () => {

@@ -208,7 +208,11 @@ function assessMenu(menu, baseline) {
     }
   }
   const nestedLost = missingEntries.filter((entry) => entry.depth >= 2);
-  if (base && base.nestedCount && nestedLost.length >= lossThreshold(base.nestedCount)) {
+  // Stations that went with their own store are already in the sentence
+  // about the Store list; saying so twice is noise, not a second alarm.
+  const missingNodes = new Set(missingEntries.map((entry) => entry.node));
+  const implied = reasons.length > 0 && nestedLost.every((entry) => missingNodes.has(entry.parent));
+  if (base && base.nestedCount && nestedLost.length >= lossThreshold(base.nestedCount) && !implied) {
     reasons.push(
       `${plural(nestedLost.length, "item", "items")} inside other menu items (for example under "${nestedLost[0].parentTitle}") ${nestedLost.length === 1 ? "is" : "are"} gone since ${lastGood}.`
     );
