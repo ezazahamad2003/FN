@@ -271,6 +271,8 @@ test("summarize: the list-view shape with counts", () => {
     steps: [{ state: "complete" }, { state: "complete" }, { state: "failed" }]
   };
   record.report.generatedAt = "2026-09-21T00:31:00.000Z";
+  record.sharedSettings.megaMenu.status = "blocked";
+  record.sharedSettings.flow.status = "confirmed";
   assert.deepEqual(store.summarize(record), {
     id: record.id,
     requestId: "req",
@@ -291,9 +293,12 @@ test("summarize: the list-view shape with counts", () => {
       stepsDone: 2,
       stepsTotal: 3
     },
-    report: { generatedAt: "2026-09-21T00:31:00.000Z" }
+    report: { generatedAt: "2026-09-21T00:31:00.000Z" },
+    // Statuses only, for the queue's "Flow & Helium to do" chip.
+    sharedSettings: { megaMenu: { status: "blocked" }, flow: { status: "confirmed" }, helium: { status: "pending" } }
   });
   assert.deepEqual(store.summarize(null).counts, { products: 0, mockups: 0, packetFiles: 0 });
+  assert.deepEqual(store.summarize(null).sharedSettings, { megaMenu: { status: "pending" }, flow: { status: "pending" }, helium: { status: "pending" } });
 });
 
 test("cleanMetadata: ASCII only, 256 max, empties dropped", () => {
@@ -372,7 +377,7 @@ test("listOnboardings: summaries newest first, assets ignored, corrupt blobs rep
   assert.equal(list[0].department.name, NAME);
   assert.equal(list[0].department.tag, NAME);
   assert.deepEqual(list[0].counts, { products: 0, mockups: 0, packetFiles: 0 });
-  assert.deepEqual(Object.keys(list[0]), ["id", "requestId", "createdAt", "updatedAt", "status", "phase", "department", "counts", "collection", "build", "report"]);
+  assert.deepEqual(Object.keys(list[0]), ["id", "requestId", "createdAt", "updatedAt", "status", "phase", "department", "counts", "collection", "build", "report", "sharedSettings"]);
   assert.equal(list[2].status, "error");
   assert.match(list[2].error, /JSON/);
 }));

@@ -1177,10 +1177,10 @@
      built store with either still open says so in the queue, in red, so a
      green "built" chip cannot pass for finished.
 
-     The list payload is a summary without the shared settings, so a built
-     record's own page is read for it — only built ones, three at a time,
-     and not again until the record changes. A summary that does carry
-     sharedSettings is used as it is. */
+     The list summary carries each shared setting's status, and that is used
+     as it is. Only a summary without it (a server from before it did) makes
+     the queue read a built record's own page — only built ones, three at a
+     time, and not again until the record changes. */
   const BUILT_STATUSES = ["built", "built-partial"];
 
   function flowHeliumTodo(sharedSettings) {

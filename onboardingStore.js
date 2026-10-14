@@ -541,6 +541,8 @@ function summarize(record) {
   const collection = isPlainObject(r.collection) ? r.collection : {};
   const build = isPlainObject(r.build) ? r.build : {};
   const report = isPlainObject(r.report) ? r.report : {};
+  const shared = isPlainObject(r.sharedSettings) ? r.sharedSettings : {};
+  const sharedStatus = (key) => ({ status: clean(isPlainObject(shared[key]) ? shared[key].status : "") || "pending" });
   const name = clean(department.name);
   return {
     id: r.id || null,
@@ -570,7 +572,10 @@ function summarize(record) {
       stepsDone: (build.steps || []).filter((step) => step && step.state === "complete").length,
       stepsTotal: (build.steps || []).length
     },
-    report: { generatedAt: report.generatedAt || "" }
+    report: { generatedAt: report.generatedAt || "" },
+    // Statuses only: the queue's "Flow & Helium to do" chip reads them, and
+    // without them it fetched every built record to find out.
+    sharedSettings: { megaMenu: sharedStatus("megaMenu"), flow: sharedStatus("flow"), helium: sharedStatus("helium") }
   };
 }
 
