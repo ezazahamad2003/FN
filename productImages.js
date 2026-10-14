@@ -63,6 +63,19 @@ function tierPhrase(tier, label = "") {
   return small;
 }
 
+// Where on its face a mark sits, for spots whose name alone leaves the model
+// to choose. Given only a size, "center back" came out low on the back, its
+// top ~6.5 inches under the collar (~22% of a tee's length); the store wants
+// it about 4 inches down. Measured on Ripon's and Foresthill's tees at 2000px:
+// "a hand's width" put the top at 3.9-4.4 inches over five renders, "about
+// 4 inches" at 4.1-5.1, and neither moved the signed-off width. On a hoodie it
+// lifts the graphic to just under the hood rather than behind it.
+const BACK_POSITION = "high on the upper back, its top edge about a hand's width below the collar";
+
+function positionPhrase(label) {
+  return /\bcent(er|re) back\b/i.test(String(label)) ? BACK_POSITION : "";
+}
+
 function finishPhrase(method) {
   if (/embroider/i.test(method)) return "embroidered";
   if (/patch/i.test(method)) return "a sewn-on patch";
@@ -246,8 +259,10 @@ async function renderFaceImage({
          follows the decoration method: a patch and embroidery ARE badges, a
          print and a transfer are not. */
       const asBadge = /embroider|patch/i.test(method) ? " as a badge," : "";
+      const position = positionPhrase(decoration.label);
       return (
         "Put the logo in image " + index + " on the " + String(decoration.label || "front left chest").toLowerCase() +
+        (position ? ", " + position + "," : "") +
         asBadge + " " + tierPhrase(decoration.tier, decoration.label) + "."
       );
     })
