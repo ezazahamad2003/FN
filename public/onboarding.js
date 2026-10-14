@@ -710,10 +710,15 @@
     const busy = state.menuBusy;
     const baseline = health.baseline || null;
     const storeCount = Number(health.storeCount) || 0;
-    const reasons = list(health.reasons).filter((reason) => reason && reason !== health.message);
+    /* The server's message is "The Mega Menu looks wiped: " + its first
+       reason, lower-cased. The heading already says the first half, and the
+       reason it quotes would otherwise be listed a second time below it. */
+    const message = String(health.message || "");
+    const said = capitalize(message.replace(/^The Mega Menu looks wiped:\s*/i, ""));
+    const reasons = list(health.reasons).filter((reason) => reason && !message.toLowerCase().includes(String(reason).toLowerCase()));
     const meta = [
       // The server's message usually says this already.
-      health.message ? "" : `Store has ${storeCount} ${plural(storeCount, "store", "stores")} in the live menu now`,
+      message ? "" : `Store has ${storeCount} ${plural(storeCount, "store", "stores")} in the live menu now`,
       baseline?.at ? `the agent's saved copy is from ${when(baseline.at)}${baseline.by ? `, kept by ${baseline.by}` : ""}` : "",
       health.checkedAt ? `checked ${when(health.checkedAt)}` : ""
     ].filter(Boolean);
@@ -722,7 +727,7 @@
         <span class="ob-menu-glyph" aria-hidden="true">${ICON_ALERT}</span>
         <div class="ob-menu-body">
           <h2 id="obMenuAlertTitle">The Mega Menu looks wiped — the agent won't touch it until it's fixed.</h2>
-          ${health.message ? `<p class="ob-menu-message">${esc(health.message)}</p>` : ""}
+          ${said ? `<p class="ob-menu-message">${esc(said)}</p>` : ""}
           ${reasons.length ? `<ul class="ob-menu-reasons">${reasons.map((reason) => `<li>${esc(reason)}</li>`).join("")}</ul>` : ""}
           ${count
             ? `<p><b>Missing:</b> ${esc(titleRun(missing.map(menuItemLabel)))}</p>
