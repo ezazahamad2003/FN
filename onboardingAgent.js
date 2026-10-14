@@ -2359,6 +2359,21 @@ async function proposeSharedSettings(id, { by = "" } = {}) {
 
 const SHARED_KINDS = { megaMenu: "menu", flow: "flow", helium: "helium" };
 
+// The refusal Dan reads when a Helium form the agent just read lacks the tag:
+// which form, what to type where, and why a save a moment ago may not show.
+function heliumTagMissing(tag, lacking) {
+  const parts = lacking.map((form) => {
+    const label = clean(form.label) || form.id;
+    const what = form.present ? `does not have "${tag}" spelled exactly that way yet` : `does not have "${tag}" yet`;
+    return `Helium's ${label} form ${what} — the agent just read it. ${helium().insertionSentence(tag, form)}`.trim();
+  });
+  const error = new Error(
+    `${parts.join(" ")} Save it in Helium, then confirm again. If you saved it within the last minute, wait a moment: Helium can take a minute to publish.`
+  );
+  error.code = "HELIUM_TAG_MISSING";
+  return error;
+}
+
 /**
  * §8: Dan approves one shared setting. `applied: true` means he made the
  * change by hand; otherwise the Mega Menu is applied through the API when the
@@ -2393,6 +2408,22 @@ async function approveSharedSetting(id, kind, { by = "", applied = false } = {})
       forms = await helium().checkAllForms(record.department.tag);
     } catch (error) {
       readError = errorText(error);
+    }
+    /* Dan's word stands in for a form the agent CANNOT read — never against
+       one it just read. On 13 Oct 2026 the Registration form was read, the
+       tag was not on it, and this recorded "confirmed" anyway because the box
+       had been ticked "to do later". A read that proves the tag is missing (or
+       spelled differently) refuses the confirmation and says exactly what to
+       type; nothing on the record changes but one warning note. */
+    const tag = record.department.tag;
+    const lacking = (forms || []).filter((f) => f.public !== false && !f.error && !(f.present && f.exactCase));
+    if (lacking.length) {
+      const labels = lacking.map((f) => clean(f.label) || f.id);
+      await store().updateOnboarding(id, (r) => {
+        note(r, { type: "warning", message: `Helium confirmation refused: ${labels.join(", ")} ${labels.length === 1 ? "does" : "do"} not carry "${tag}".`, by });
+        return r;
+      });
+      throw heliumTagMissing(tag, lacking);
     }
     return store().updateOnboarding(id, (r) => {
       const stamped = (forms || r.sharedSettings.helium.forms || []).map((f) => ({ ...f, confirmedAt: nowIso() }));

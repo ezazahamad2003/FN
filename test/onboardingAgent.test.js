@@ -1580,12 +1580,32 @@ test("a lock proven to work is reported with the evidence, not just the link", a
   assert.ok(checked.lock.access.checkedAt);
 });
 
+/* The live set-up: Registration is the one form whose JSON the agent can
+   read; the other two are not configured, so they cannot be read at all. */
+function heliumWithForms(forms) {
+  return {
+    ...realHelium,
+    async checkAllForms(tag) {
+      return forms.map((form, i) => ({ id: `form${i}`, index: 3, insertAfter: "Suisun City Fire Department", insertBefore: "Vallejo Fire Department", total: 12, similar: [], checkedAt: new Date().toISOString(), tag, ...form }));
+    }
+  };
+}
+
+const UNREADABLE = { public: false, error: "Helium form is not configured" };
+
 test("Dan can confirm Helium by hand, exactly as he confirms Flow", async () => {
   /* Helium has no write API and only one of its three form ids is known, so
      "verified" — every form read back carrying the tag — can never be reached.
      Requiring it meant no onboarding could ever finish. Flow, equally
-     unautomatable, has always been satisfied by Dan saying he did it. */
-  const { id } = await builtOnboarding({ liveProducts: 1, helium: fakeHelium({ present: false }) });
+     unautomatable, has always been satisfied by Dan saying he did it.
+     Since 13 Oct 2026 his word covers only the forms the agent CANNOT read:
+     the one it can read has to carry the tag (refused below otherwise). */
+  const helium = heliumWithForms([
+    { label: "Edit Account", ...UNREADABLE },
+    { label: "Registration", public: true, present: true, exactCase: true },
+    { label: "Registration backup copy", ...UNREADABLE }
+  ]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
 
   const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
   assert.equal(after.sharedSettings.helium.status, "confirmed");
@@ -1610,6 +1630,60 @@ test("a Helium read that finds every form still reports the stronger verdict", a
   const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
   assert.equal(after.sharedSettings.helium.status, "verified", "read-back beats attestation");
   assert.equal(after.sharedSettings.helium.confirmedBy, "");
+});
+
+/* 13 Oct 2026: the Registration form was read at the finish, the tag was not
+   on it, and the confirmation went through anyway — the box had been ticked
+   "to do it later". A read that proves the tag missing now refuses it. */
+test("a Helium form the agent just read without the tag refuses the confirmation and says what to type", async () => {
+  const helium = heliumWithForms([
+    { label: "Edit Account", ...UNREADABLE },
+    { label: "Registration", public: true, present: false, exactCase: false },
+    { label: "Registration backup copy", ...UNREADABLE }
+  ]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
+  const before = await store.getOnboarding(id);
+
+  await assert.rejects(() => agent.approveSharedSetting(id, "helium", { by: "Dan" }), (error) => {
+    assert.equal(error.code, "HELIUM_TAG_MISSING");
+    assert.equal(
+      error.message,
+      `Helium's Registration form does not have "${DEPARTMENT}" yet — the agent just read it. Insert exactly '${DEPARTMENT}' between 'Suisun City Fire Department' and 'Vallejo Fire Department' (position 4 of 13). Save it in Helium, then confirm again. If you saved it within the last minute, wait a moment: Helium can take a minute to publish.`
+    );
+    return true;
+  });
+
+  const after = await store.getOnboarding(id);
+  assert.deepEqual(after.sharedSettings.helium, before.sharedSettings.helium, "the Helium status is unchanged");
+  assert.deepEqual(after.approvals, before.approvals, "no approval is recorded");
+  const last = after.events[after.events.length - 1];
+  assert.equal(last.type, "warning");
+  assert.equal(last.message, `Helium confirmation refused: Registration does not carry "${DEPARTMENT}".`);
+  assert.equal(after.events.filter((e) => /Helium confirmation refused/.test(e.message)).length, 1, "one note, nothing else");
+
+  const checked = await agent.finalCheck(id, { by: "Dan" });
+  assert.notEqual(checked.status, "complete");
+  assert.ok(checked.report.missingInformation.some((m) => /Helium forms .* are not confirmed/.test(m)));
+});
+
+test("a tag spelled with different capitals is refused too, with the spelling to fix", async () => {
+  const helium = heliumWithForms([
+    { label: "Registration", public: true, present: true, exactCase: false, matched: { label: "Vacaville fire department", value: "Vacaville fire department" } }
+  ]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
+  await assert.rejects(() => agent.approveSharedSetting(id, "helium", { by: "Dan" }), (error) => {
+    assert.equal(error.code, "HELIUM_TAG_MISSING");
+    assert.match(error.message, new RegExp(`^Helium's Registration form does not have "${DEPARTMENT}" spelled exactly that way yet`));
+    assert.match(error.message, new RegExp(`Present as "Vacaville fire department" .* correct it to exactly "${DEPARTMENT}"`));
+    return true;
+  });
+});
+
+test("a form that answered without a Department field is not proof either way, so Dan's word stands", async () => {
+  const helium = heliumWithForms([{ label: "Registration", public: true, present: false, exactCase: false, error: "The form has no Department field" }]);
+  const { id } = await builtOnboarding({ liveProducts: 1, helium });
+  const after = await agent.approveSharedSetting(id, "helium", { by: "Dan" });
+  assert.equal(after.sharedSettings.helium.status, "confirmed");
 });
 
 test("final check catches a product Shopify says is ACTIVE or carries another department's tag", async () => {
@@ -1726,9 +1800,9 @@ test("the router creates, reads and 404s an onboarding over HTTP", async () => {
 const JSON_POST = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const MENU_HEALTH_KEYS = ["available", "baseline", "checkedAt", "healthy", "message", "missing", "nestedMissing", "reasons", "storeCount"];
 
-test("the menu-health routes answer the contract's shapes", async (t) => {
+test("the menu-health routes answer the contract's shapes, and a Helium refusal is a 409", async (t) => {
   t.after(resetRealMegaMenu);
-  const { deps } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
+  const { deps, id } = await builtOnboarding({ liveProducts: 1, shopifyOptions: { realMenu: true } });
   await withServer(async (base) => {
     const healthy = await fetch(`${base}/api/onboardings/menu-health`);
     assert.equal(healthy.status, 200);
@@ -1773,6 +1847,11 @@ test("the menu-health routes answer the contract's shapes", async (t) => {
     assert.deepEqual(Object.keys(accepted).sort(), MENU_HEALTH_KEYS);
     assert.equal(accepted.baseline.by, "Dan");
     assert.equal(accepted.baseline.reason, "accepted");
+
+    agent.setDeps({ helium: heliumWithForms([{ label: "Registration", public: true, present: false, exactCase: false }]) });
+    const helium = await fetch(`${base}/api/onboardings/${id}/shared-settings/helium/approve`, JSON_POST({ by: "Dan" }));
+    assert.equal(helium.status, 409);
+    assert.match((await helium.json()).error, /^Helium's Registration form does not have "Vacaville Fire Department" yet/);
   });
 });
 

@@ -68,6 +68,9 @@ function fail(res, error) {
     case "STORAGE_UNCONFIGURED":
       return res.status(503).json({ error: message });
     case "BUILD_RUNNING":
+    // A Helium form the agent just read does not carry the tag: confirming
+    // it anyway would record something the agent knows to be untrue.
+    case "HELIUM_TAG_MISSING":
       return res.status(409).json({ error: message });
     default:
       return res.status(500).json({ error: message });
