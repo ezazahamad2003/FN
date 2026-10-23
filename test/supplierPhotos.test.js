@@ -138,3 +138,80 @@ test("supplierPhotoName is a safe blob name that keeps two uploads of one garmen
   assert.notEqual(a, b);
   assert.equal(linkBook.supplierPhotoName("port & company|pc61|navy|shirt", "back", "x", "png"), "supplier-photos/port-company-pc61-navy-shirt-back-x.png");
 });
+
+/* Cochiti, 2026-10-22: Dan uploaded blank photos for "Zapped" BLKHWK and "YP
+   Classics (Yupoong)" 6006. Truckee Meadows ordered the same hats the next day
+   as "Zapped Headwear" and "YP Classics"; both missed the book, and the 6006
+   was drawn by the image model again. The maker's spelling is not the identity. */
+test("a photo uploaded under one spelling of the maker is the blank under another", async () => {
+  const upload = await photo();
+  const booked = await bookBlankPhoto({
+    product: { id: "p10", brand: "Zapped", styleNumber: "BLKHWK", type: "Hat", title: "Blackhawk Snapback" },
+    color: "Navy",
+    face: "front",
+    file: { buffer: upload, mimetype: "image/png" },
+    origin: { ...FORESTHILL, department: "Cochiti Fire Department" },
+    by: "dan"
+  });
+  assert.equal(booked.booked, true, booked.reason);
+  assert.equal(booked.key, "zapped|blkhwk|navy|hat");
+  // A web photo is already booked under the other spelling; Dan's photo still wins.
+  await linkBook.saveSupplierLink("zapped headwear|blkhwk|navy|hat", { status: "verified", imageUrl: "https://cdn.test/blkhwk-navy.png" });
+
+  const log = [];
+  const found = await blanks.findSupplierBlank({ vendor: "Zapped Headwear", brandStyle: "BLKHWK", garmentColor: "Navy", productType: "Hat" }, { onLog: (m) => log.push(m) });
+  assert.ok(found.imageBuffer, log.join("\n"));
+  assert.equal(found.photoBlob, booked.photoBlob);
+  assert.match(found.note, /uploaded for Cochiti Fire Department/);
+  assert.ok(log.some((m) => /booked as "zapped\|blkhwk\|navy\|hat".*another spelling of the maker/.test(m)), log.join("\n"));
+
+  // Another colour never borrows it, and neither does a maker that shares no word with the one booked.
+  const black = await blanks.findSupplierBlank({ vendor: "Zapped Headwear", brandStyle: "BLKHWK", garmentColor: "Black", productType: "Hat" });
+  assert.equal(black.imageBuffer, null);
+  const other = await blanks.findSupplierBlank({ vendor: "Richardson", brandStyle: "BLKHWK", garmentColor: "Navy", productType: "Hat" });
+  assert.equal(other.imageBuffer, null);
+
+  // The 6006 case: a failed search is booked under the new spelling, the photo under the old.
+  await linkBook.saveSupplierLink("yp classics|6006|navy|hat", { status: "failed", failReason: "No usable supplier photo for 6006." });
+  const trucker = await bookBlankPhoto({
+    product: { id: "p13", brand: "YP Classics (Yupoong)", styleNumber: "6006", type: "Hat" },
+    color: "Navy",
+    face: "front",
+    file: { buffer: upload, mimetype: "image/png" },
+    origin: { ...FORESTHILL, department: "Cochiti Fire Department" },
+    by: "dan"
+  });
+  const truckee = await blanks.findSupplierBlank({ vendor: "YP Classics", brandStyle: "6006", garmentColor: "Navy", productType: "Hat" });
+  assert.equal(truckee.photoBlob, trucker.photoBlob);
+});
+
+/* Cochiti's PC61 photo was 483x724: the row rendered it, the book refused it
+   as "too small to reuse", and Truckee Meadows was drawn an invented tee. */
+test("a blank photo the row itself renders is kept for other departments even below the web-photo bar", async () => {
+  const upload = await sharp({ create: { width: 483, height: 724, channels: 3, background: "#1f2a44" } }).png().toBuffer();
+  const booked = await bookBlankPhoto({
+    product: { id: "p3", brand: "Port & Company", styleNumber: "PC61", type: "T-shirt" },
+    color: "Deep Navy",
+    face: "front",
+    file: { buffer: upload, mimetype: "image/png" },
+    origin: FORESTHILL,
+    by: "dan"
+  });
+  assert.equal(booked.booked, true, booked.reason);
+  const found = await blanks.findSupplierBlank({ vendor: "Port & Company", brandStyle: "PC61", garmentColor: "Deep Navy", productType: "T-shirt" });
+  assert.ok(found.imageBuffer);
+  assert.equal(found.photoBlob, booked.photoBlob);
+
+  // A thumbnail that could never pass as a product image is still refused.
+  const tiny = await sharp({ create: { width: 200, height: 200, channels: 3, background: "#1f2a44" } }).png().toBuffer();
+  const refused = await bookBlankPhoto({
+    product: { id: "p4", brand: "Port & Company", styleNumber: "PC61T", type: "T-shirt" },
+    color: "Deep Navy",
+    face: "front",
+    file: { buffer: tiny, mimetype: "image/png" },
+    origin: FORESTHILL,
+    by: "dan"
+  });
+  assert.equal(refused.booked, false);
+  assert.match(refused.reason, /too small/);
+});

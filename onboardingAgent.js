@@ -1530,29 +1530,35 @@ function buildLogger(build) {
  * the resume watchdog).
  */
 /*
- * "Redo images" for one product: new artwork, a real blank photo, or a
- * better supplier photo arrived after it was built. A re-run used to reuse
- * the old mockups and skip the existing Shopify product, so nothing changed.
- * This clears the row's mockups and marks it, then runs the normal build:
- * the mockup step renders it again and the product step swaps the images on
- * the existing draft instead of skipping it.
+ * "Redo images" for one product or several: new artwork, a real blank photo,
+ * or a better supplier photo arrived after they were built. A re-run used to
+ * reuse the old mockups and skip the existing Shopify product, so nothing
+ * changed. This clears each row's mockups and marks it, then runs a build
+ * scoped to those rows alone: their mockups are rendered again and the images
+ * on their existing drafts are swapped. Nothing else in the store is walked —
+ * one hat's pictures no longer cost a pass over 27 products.
  */
-async function redoProductImages(id, productId, { by = "", wait = false } = {}) {
+async function redoProductImages(id, productIds, { by = "", wait = false } = {}) {
   if (activeBuilds.has(id)) return { started: false, reason: "A build for this onboarding is already running.", build: null };
+  const ids = [...new Set((Array.isArray(productIds) ? productIds : [productIds]).map(clean).filter(Boolean))];
+  if (!ids.length) throw badRequest("Pick at least one product whose images should be made again.");
   const record = await store().getOnboarding(id);
-  const product = productById(record, productId);
-  if (!product) throw badRequest(`No product row "${productId}" on this onboarding.`);
+  for (const productId of ids) {
+    if (!productById(record, productId)) throw badRequest(`No product row "${productId}" on this onboarding.`);
+  }
   await store().updateOnboarding(id, (r) => {
-    const target = productById(r, productId);
-    target.mockups = [];
-    if (target.shopify?.gid) target.replaceImages = true;
-    note(r, { type: "build", message: `${target.title || target.styleNumber || productId}: images will be made again${target.shopify?.gid ? " and replaced on the Shopify draft" : ""}.`, by });
+    for (const productId of ids) {
+      const target = productById(r, productId);
+      target.mockups = [];
+      if (target.shopify?.gid) target.replaceImages = true;
+      note(r, { type: "build", message: `${target.title || target.styleNumber || productId}: images will be made again${target.shopify?.gid ? " and replaced on the Shopify draft" : ""}.`, by });
+    }
     return r;
   });
-  return startBuild(id, { force: true, by, wait });
+  return startBuild(id, { force: true, by, wait, only: ids });
 }
 
-async function startBuild(id, { force = false, by = "", wait = false } = {}) {
+async function startBuild(id, { force = false, by = "", wait = false, only = null } = {}) {
   // Reserve the slot BEFORE any await: two concurrent starts must not both
   // pass the check.
   if (activeBuilds.has(id)) return { started: false, reason: "A build for this onboarding is already running.", build: null };
@@ -1573,6 +1579,10 @@ async function startBuild(id, { force = false, by = "", wait = false } = {}) {
   if (activeBuilds.get(id) !== placeholder) return { started: false, reason: "A build for this onboarding is already running.", build: null };
 
   const build = newBuildState();
+  // Which products this run is for — "Redo images" for some of them. A full
+  // build has no scope.
+  const scopedIds = Array.isArray(only) ? [...new Set(only.map(clean).filter(Boolean))] : [];
+  if (scopedIds.length) build.scope = { kind: "images", productIds: scopedIds };
   activeBuilds.set(id, build);
   // Step flushes are the normal heartbeat, but one image call can run for
   // minutes without one; this timer keeps the record fresh.
@@ -1581,7 +1591,7 @@ async function startBuild(id, { force = false, by = "", wait = false } = {}) {
   }, HEARTBEAT_EVERY_MS);
   if (typeof heartbeat.unref === "function") heartbeat.unref();
 
-  const task = runBuild(id, build, { by })
+  const task = runBuild(id, build, { by, only: scopedIds.length ? scopedIds : null })
     .catch(async (error) => {
       build.state = "failed";
       build.error = errorText(error);
@@ -1606,11 +1616,12 @@ function isBuildActive(id) {
   return activeBuilds.has(id);
 }
 
-function preflight(record) {
+// `rows` is the part of the product list this run is for (all of it for a build).
+function preflight(record, rows = record.products) {
   const problems = [];
   if (!record.department.code.approved || !departmentCode(record)) problems.push("The department code is not approved yet.");
-  if (!record.products.length) problems.push("No product rows have been saved.");
-  for (const product of record.products) {
+  if (!rows.length) problems.push("No product rows have been saved.");
+  for (const product of rows) {
     if (product.validation?.ok !== true) {
       problems.push(`"${product.title || product.styleNumber || product.id}" has not passed validation: ${(product.validation?.errors || ["not validated"]).join("; ")}`);
     }
@@ -1619,28 +1630,39 @@ function preflight(record) {
   if (problems.length) throw badRequest(problems.join(" "));
 }
 
-async function runBuild(id, build, { by = "" } = {}) {
+async function runBuild(id, build, { by = "", only = null } = {}) {
   const log = buildLogger(build);
   let record = await store().getOnboarding(id);
   const failures = [];
+  /* "Redo images" for some products runs only their steps: their mockups are
+     made again and their Shopify drafts get the new pictures. The collection,
+     the lock, every other product, the shared-settings proposals and the
+     record's status are left exactly as they are. Redoing one hat used to walk
+     every step of the store again (minutes, for one picture) and left a
+     finished record reading "built" instead of "complete". */
+  const scoped = Array.isArray(only) && only.length ? new Set(only) : null;
+  const imagesOnly = Boolean(scoped);
+  const rowsOf = (r) => (scoped ? r.products.filter((p) => scoped.has(p.id)) : r.products);
 
   let step = stepStart(build, "preflight", "Preflight");
   try {
-    preflight(record);
-    log(`Preflight passed: ${record.products.length} product row(s), department ${departmentCode(record)}.`);
-    stepDone(step, `${record.products.length} product row(s) ready`);
+    preflight(record, rowsOf(record));
+    log(`Preflight passed: ${rowsOf(record).length} product row(s), department ${departmentCode(record)}.`);
+    stepDone(step, `${rowsOf(record).length} product row(s) ready`);
   } catch (error) {
     stepFail(step, error);
     throw error;
   }
   record = await saveBuild(id, build, (r) => {
-    r.status = "building";
-    r.phase = "build";
-    note(r, { type: "build", message: "Build started.", by }, build);
+    if (!imagesOnly) {
+      r.status = "building";
+      r.phase = "build";
+    }
+    note(r, { type: "build", message: imagesOnly ? `Images started for ${rowsOf(r).length} product(s); the rest of the store is left as it is.` : "Build started.", by }, build);
   });
 
   // §5 mockups — before the products, because the product images are these.
-  for (const row of record.products) {
+  for (const row of rowsOf(record)) {
     const product = productById(record, row.id);
     step = stepStart(build, `mockups:${product.id}`, `Mockups — ${product.title || product.styleNumber || product.id}`);
     try {
@@ -1678,41 +1700,45 @@ async function runBuild(id, build, { by = "" } = {}) {
     }
   }
 
-  // §6 collection — created BEFORE any product.
-  step = stepStart(build, "collection", "Collection");
-  try {
-    const collection = await buildCollection(id, record, log);
-    record = await saveBuild(id, build, (r) => {
-      r.collection = { ...r.collection, ...collection.collection };
-      for (const w of collection.warnings) note(r, { type: "warning", message: w, by }, build);
-      note(r, { type: "build", message: `Collection "${collection.collection.title}" ready.`, by }, build);
-    });
-    stepDone(step, collection.collection.title);
-  } catch (error) {
-    stepFail(step, error);
-    await saveBuild(id, build);
-    throw error; // No collection means no products to put in it.
+  // §6 collection — created BEFORE any product. An images-only run has one.
+  if (!imagesOnly) {
+    step = stepStart(build, "collection", "Collection");
+    try {
+      const collection = await buildCollection(id, record, log);
+      record = await saveBuild(id, build, (r) => {
+        r.collection = { ...r.collection, ...collection.collection };
+        for (const w of collection.warnings) note(r, { type: "warning", message: w, by }, build);
+        note(r, { type: "build", message: `Collection "${collection.collection.title}" ready.`, by }, build);
+      });
+      stepDone(step, collection.collection.title);
+    } catch (error) {
+      stepFail(step, error);
+      await saveBuild(id, build);
+      throw error; // No collection means no products to put in it.
+    }
   }
 
   // §7 lock
-  step = stepStart(build, "lock", "Locksmith lock");
-  try {
-    const lock = await buildLock(record, log);
-    record = await saveBuild(id, build, (r) => {
-      r.lock = { ...r.lock, ...lock };
-      note(r, { type: "lock", message: lock.status === "created" ? "Locksmith lock created." : "Locksmith is not configured — the lock is a checklist for Dan.", by }, build);
-    });
-    stepDone(step, lock.status);
-  } catch (error) {
-    stepFail(step, error);
-    failures.push(`Lock: ${errorText(error)}`);
-    record = await saveBuild(id, build, (r) => {
-      r.lock = { ...r.lock, status: "error", error: errorText(error), checklist: locksmith().manualChecklist({ collectionTitle: r.collection.title, departmentTag: r.department.tag }) };
-    });
+  if (!imagesOnly) {
+    step = stepStart(build, "lock", "Locksmith lock");
+    try {
+      const lock = await buildLock(record, log);
+      record = await saveBuild(id, build, (r) => {
+        r.lock = { ...r.lock, ...lock };
+        note(r, { type: "lock", message: lock.status === "created" ? "Locksmith lock created." : "Locksmith is not configured — the lock is a checklist for Dan.", by }, build);
+      });
+      stepDone(step, lock.status);
+    } catch (error) {
+      stepFail(step, error);
+      failures.push(`Lock: ${errorText(error)}`);
+      record = await saveBuild(id, build, (r) => {
+        r.lock = { ...r.lock, status: "error", error: errorText(error), checklist: locksmith().manualChecklist({ collectionTitle: r.collection.title, departmentTag: r.department.tag }) };
+      });
+    }
   }
 
   // §9 products
-  for (const row of record.products) {
+  for (const row of rowsOf(record)) {
     const product = productById(record, row.id);
     step = stepStart(build, `products:${product.id}`, `Product — ${product.title || product.styleNumber || product.id}`);
     try {
@@ -1774,6 +1800,14 @@ async function runBuild(id, build, { by = "" } = {}) {
         });
         continue;
       }
+      if (imagesOnly) {
+        /* Not in Shopify yet (its first build failed, or it was added since):
+           its new images are kept on the row and the next full build creates
+           it with them. A product is never created outside a full build. */
+        stepSkip(step, "not in Shopify yet — the next build creates it with these images");
+        log(`${product.title || product.id} is not in Shopify yet; its new images wait for the next build.`);
+        continue;
+      }
       const built = await buildProduct(id, record, product, log, {
         onCreated: (shopify) =>
           saveBuild(id, build, (r) => {
@@ -1818,20 +1852,23 @@ async function runBuild(id, build, { by = "" } = {}) {
   }
 
   // §8 shared settings — proposals only; applying needs a separate approval.
-  step = stepStart(build, "shared-settings", "Shared settings");
-  try {
-    record = await proposeSharedSettings(id, { by });
-    // The build log says what happened: a wiped menu got no proposal.
-    if (record.sharedSettings.megaMenu.status === "blocked") {
-      stepDone(step, "Flow and Helium proposed; the Mega Menu looks wiped, so nothing was proposed for it");
-      log(`Flow and Helium changes proposed — none saved without approval. ${record.sharedSettings.megaMenu.error} The agent will not change the menu until it is restored, or accepted as it is.`);
-    } else {
-      stepDone(step, "proposed; waiting for approval");
-      log("Mega Menu, Flow and Helium changes proposed — none saved without approval.");
+  // An images-only run proposes nothing: the store's settings did not change.
+  if (!imagesOnly) {
+    step = stepStart(build, "shared-settings", "Shared settings");
+    try {
+      record = await proposeSharedSettings(id, { by });
+      // The build log says what happened: a wiped menu got no proposal.
+      if (record.sharedSettings.megaMenu.status === "blocked") {
+        stepDone(step, "Flow and Helium proposed; the Mega Menu looks wiped, so nothing was proposed for it");
+        log(`Flow and Helium changes proposed — none saved without approval. ${record.sharedSettings.megaMenu.error} The agent will not change the menu until it is restored, or accepted as it is.`);
+      } else {
+        stepDone(step, "proposed; waiting for approval");
+        log("Mega Menu, Flow and Helium changes proposed — none saved without approval.");
+      }
+    } catch (error) {
+      stepFail(step, error);
+      failures.push(`Shared settings: ${errorText(error)}`);
     }
-  } catch (error) {
-    stepFail(step, error);
-    failures.push(`Shared settings: ${errorText(error)}`);
   }
   record = await saveBuild(id, build);
 
@@ -1850,9 +1887,14 @@ async function runBuild(id, build, { by = "" } = {}) {
   build.error = failures.length ? failures.join(" | ") : null;
   build.finishedAt = nowIso();
   await saveBuild(id, build, (r) => {
-    if (r.status !== "complete") r.status = failures.length ? (created ? "built-partial" : "build-error") : "built";
-    r.phase = "report";
-    note(r, { type: "build", message: `Build ${build.state}: ${created} product(s) created.`, by }, build);
+    if (!imagesOnly) {
+      if (r.status !== "complete") r.status = failures.length ? (created ? "built-partial" : "build-error") : "built";
+      r.phase = "report";
+    }
+    const message = imagesOnly
+      ? `Images ${build.state}: ${rowsOf(r).length} product(s) made again${failures.length ? `; ${failures.length} failed` : ""}.`
+      : `Build ${build.state}: ${created} product(s) created.`;
+    note(r, { type: "build", message, by }, build);
   });
   return { state: build.state, created, failures };
 }
@@ -3347,7 +3389,9 @@ async function resumeInterruptedBuilds({ onLog = () => {} } = {}) {
 
     onLog(`resuming ${record.department.name || summary.id}: build was ${interrupted ? "interrupted by a shutdown" : "running with no heartbeat"}`);
     try {
-      const result = await startBuild(summary.id, { force: true, by: "resume" });
+      // An images-only run (Redo images) resumes as one; the rest of the store is not walked again.
+      const only = record.build?.scope?.kind === "images" ? record.build.scope.productIds : null;
+      const result = await startBuild(summary.id, { force: true, by: "resume", only });
       if (result.started) resumed++;
       else onLog(`resume of ${summary.id} not started: ${result.reason}`);
     } catch (error) {

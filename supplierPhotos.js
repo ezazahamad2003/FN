@@ -18,12 +18,15 @@
 
 const sharp = require("sharp");
 const linkBook = require("./linkBook");
-const { blankCacheKey, familyKeys, clearCachedBlank, clearCachedBack } = require("./blanks");
+const { blankCacheKey, familyKeys, clearCachedBlank, clearCachedBlanksForStyle, clearCachedBack, MIN_UPLOAD_EDGE } = require("./blanks");
 const { supplierQuery } = require("./onboardingMockups");
 
-// What blanks.js accepts from a supplier (MIN_IMAGE_EDGE): a smaller upload
-// would be refused at build time anyway, so it is refused here, with a reason.
-const MIN_EDGE = 500;
+/* The bar an uploaded photo has to clear to be kept for other departments
+   (blanks.MIN_UPLOAD_EDGE). It used to be the web thumbnail bar (500px), which
+   refused photos the row itself rendered fine: Cochiti's PC61 and PC61LS
+   uploads were "too small to reuse" and Truckee Meadows was drawn invented
+   tees for the same garments the next day. */
+const MIN_EDGE = MIN_UPLOAD_EDGE;
 
 /* The book is keyed the way a build looks the garment up, so the row goes
    through the same mapping the build uses (onboardingMockups.supplierQuery). */
@@ -89,8 +92,11 @@ async function bookBlankPhoto({ product, color, face = "front", file, origin = {
   if (replaced && replaced !== name) await linkBook.removeSupplierPhoto(replaced).catch(() => {});
 
   // A build in this process may have cached the search that found nothing —
-  // or, for a back, the verdict that this front has no back photo.
+  // or, for a back, the verdict that this front has no back photo. Another
+  // department may have looked the garment up under another spelling of the
+  // maker; that verdict goes too.
   for (const cached of new Set([key, ...family])) clearCachedBlank(cached);
+  clearCachedBlanksForStyle(query);
   if (side === "back") clearCachedBack(previous.photoBlob || previous.imageUrl);
   return { booked: true, key, photoBlob: name };
 }
@@ -130,6 +136,7 @@ async function unbookBlankPhoto({ product, color, face = "front", assetId }) {
   }
   await linkBook.saveSupplierLink(key, next);
   for (const cached of new Set([key, ...family])) clearCachedBlank(cached);
+  clearCachedBlanksForStyle(keysFor(product, color).query);
   if (side === "back") clearCachedBack(entry.photoBlob || entry.imageUrl);
   return { forgotten: true, key };
 }

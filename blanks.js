@@ -3,7 +3,7 @@ const fetch = require("node-fetch");
 const sharp = require("sharp");
 const { frameGarment } = require("./garmentFrame");
 const { extractSupplierFacts } = require("./ai");
-const { lookupSupplierLink, saveSupplierLink, readSupplierPhoto } = require("./linkBook");
+const { lookupSupplierLink, saveSupplierLink, readSupplierPhoto, cachedSupplierLinks } = require("./linkBook");
 
 /*
  * Source the BLANK garment photo from the supplier instead of generating it.
@@ -35,6 +35,13 @@ const PAGE_TIMEOUT_MS = 20000;
 const MAX_HTML_BYTES = 6_000_000;
 const MAX_IMAGE_BYTES = 12_000_000;
 const MIN_IMAGE_EDGE = 500;
+/* A blank photo an operator uploads is judged by a looser bar than a web
+   thumbnail: the row it was uploaded on renders it whatever its size, so a
+   photo good enough for that row is good enough to keep for the next
+   department. Cochiti's PC61 photo (483x724) was refused at 500 and Truckee
+   Meadows was drawn an invented tee the next day. Only a thumbnail that could
+   never pass as a product image is refused. */
+const MIN_UPLOAD_EDGE = 300;
 const CANVAS = 1024;
 
 // Repeated onboarding runs and multi-colour departments hit the same styles, so
@@ -595,6 +602,95 @@ function familyKeys(product) {
   return [...new Set(keys)];
 }
 
+/*
+ * The same garment under another spelling of its maker. The book is keyed on
+ * the brand as the row typed it, and two departments rarely type it the same
+ * way: Cochiti ordered "Zapped" BLKHWK, "YP Classics (Yupoong)" 6006 and
+ * "First Tactical" 112501 and Dan uploaded a blank photo of each; Truckee
+ * Meadows ordered "Zapped Headwear", "YP Classics" and "First Tactical
+ * (Tactix)" the next day and every one missed the book - two were drawn by
+ * the image model. The style number, colour and garment family are the
+ * identity; the maker's name only has to share a real word, so a bare "112"
+ * from another maker never borrows Richardson's photo.
+ */
+const VENDOR_NOISE = new Set(["the", "and", "inc", "llc", "ltd", "co", "company", "corp", "brand", "brands", "apparel", "headwear", "clothing", "sportswear", "by"]);
+
+function vendorWords(vendor) {
+  return new Set(
+    String(vendor || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .filter((word) => word.length >= 3 && !VENDOR_NOISE.has(word))
+  );
+}
+
+function sameMaker(a, b) {
+  const x = vendorWords(a);
+  const y = vendorWords(b);
+  // A row with no brand has only its style number to go on; that is enough.
+  if (!x.size || !y.size) return true;
+  for (const word of x) if (y.has(word)) return true;
+  return false;
+}
+
+// "R112" and "112" are one style; every form it is written in, lowercase.
+function styleForms(brandStyle) {
+  const s = String(brandStyle || "").trim().toLowerCase();
+  return new Set([s, ...styleAliases(s)].filter(Boolean));
+}
+
+function sameStyle(a, b) {
+  const x = styleForms(a);
+  for (const form of styleForms(b)) if (x.has(form)) return true;
+  return false;
+}
+
+function sameGarmentType(a, b) {
+  const x = String(a || "").trim().toLowerCase();
+  const y = String(b || "").trim().toLowerCase();
+  if (x === y) return true;
+  const family = typeFamily(x);
+  return Boolean(family) && typeFamily(y) === family;
+}
+
+/**
+ * A verified entry for this style, colour and garment booked under another
+ * spelling of the maker. `photoOnly` asks for an operator's uploaded photo
+ * only (used when a web photo is already booked under the row's own key: the
+ * person who orders the garment outranks the search). Null when none.
+ */
+async function findBookedByStyle(product, { photoOnly = false } = {}) {
+  const style = String(product.brandStyle || "").trim();
+  if (!style || style.toLowerCase() === String(product.vendor || "").trim().toLowerCase()) return null;
+  const colour = String(product.garmentColor || "").trim().toLowerCase();
+  const entries = await cachedSupplierLinks();
+  let best = null;
+  for (const [key, entry] of Object.entries(entries || {})) {
+    if (!entry || entry.status !== "verified") continue;
+    if (!entry.photoBlob && (photoOnly || !entry.imageUrl)) continue;
+    const [vendor = "", brandStyle = "", garmentColor = "", productType = ""] = key.split("|");
+    if (garmentColor !== colour || !sameStyle(brandStyle, style)) continue;
+    if (!sameGarmentType(productType, product.productType) || !sameMaker(vendor, product.vendor)) continue;
+    const rank = entry.photoBlob ? 2 : 1;
+    if (!best || rank > best.rank) best = { key, entry, rank };
+  }
+  return best;
+}
+
+/** Drop every cached verdict for this style and colour, whatever the maker
+    was called, so a photo booked under one spelling reaches a build that
+    already looked the garment up under another. */
+function clearCachedBlanksForStyle(product) {
+  const style = String(product?.brandStyle || "").trim();
+  const colour = String(product?.garmentColor || "").trim().toLowerCase();
+  if (!style) return;
+  for (const key of [...cache.keys()]) {
+    const [, brandStyle = "", garmentColor = ""] = key.split("|");
+    if (garmentColor === colour && sameStyle(brandStyle, style)) cache.delete(key);
+  }
+}
+
 /** Drop one combination from the in-process cache, so a link the operator
     just booked is picked up by the next build without a restart. */
 function clearCachedBlank(cacheKey) {
@@ -655,6 +751,16 @@ async function findSupplierBlank(product, { onLog } = {}) {
         }
       }
     }
+    /* Still nothing usable, or only a web photo: the same style, colour and
+       garment may be booked under another spelling of the maker - and an
+       operator's uploaded photo of it outranks any web photo. */
+    if (!booked?.photoBlob) {
+      const byStyle = await findBookedByStyle(product, { photoOnly: booked?.status === "verified" });
+      if (byStyle) {
+        log(`link book: using the verified entry booked as "${byStyle.key}" (same style, colour and garment under another spelling of the maker)`);
+        booked = byStyle.entry;
+      }
+    }
   } catch (error) {
     log(`link book unavailable (${error.message}); using live search`);
   }
@@ -680,7 +786,7 @@ async function findSupplierBlank(product, { onLog } = {}) {
       const buffer = await readSupplierPhoto(booked.photoBlob);
       if (!buffer) throw new Error("the uploaded photo is no longer in storage");
       const meta = await sharp(buffer).metadata();
-      if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_IMAGE_EDGE) {
+      if (!meta.width || !meta.height || Math.min(meta.width, meta.height) < MIN_UPLOAD_EDGE) {
         throw new Error(`too small (${meta.width || 0}x${meta.height || 0})`);
       }
       const from = booked.photoFrom?.department || "another department";
@@ -1222,8 +1328,12 @@ module.exports = {
   familyKeys,
   typeFamily,
   clearCachedBlank,
+  clearCachedBlanksForStyle,
   clearCachedBack,
   findSupplierBlank,
+  findBookedByStyle,
+  sameMaker,
+  MIN_UPLOAD_EDGE,
   // exported for tests
   scoreImageUrl,
   isNonPhotoImageUrl,

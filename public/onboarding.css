@@ -1690,3 +1690,69 @@
 .ob-color-issues { display: grid; gap: var(--space-2); }
 .ob-color-issue { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--warn-border); border-radius: var(--radius-sm); background: var(--warn-soft); }
 .ob-color-issue-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+
+/* =============================================================================
+   Build — "Redo images for several products"
+   ========================================================================== */
+.ob-redo {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.ob-redo-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ob-redo-head .field-label { margin: 0; }
+.ob-redo-head .hint { margin: var(--space-1) 0 0; max-width: 70ch; }
+
+.ob-redo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-2);
+}
+
+.ob-redo-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+/* A product whose images show an AI-drawn blank reads as a warning, like its badge. */
+.ob-redo-list li[data-flagged="true"] {
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+}
+
+.ob-redo-list .toggle-field { margin: 0; min-width: 0; }
+.ob-redo-list .toggle-field span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-redo-list .ob-badge { flex: none; }
+
+/* Products step — rows with changes not saved yet */
+.ob-unsaved {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn-border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+}

@@ -169,6 +169,15 @@ async function listSupplierLinks() {
   return (await loadedBook({ maxAgeMs: 0 })).entries;
 }
 
+/** Every entry as this process already holds it (refreshed on the usual
+    clock) - for lookups that scan the whole book, where a blob read per
+    product would cost more than a few minutes' staleness. A write from this
+    process is visible at once. Never throws when unconfigured. */
+async function cachedSupplierLinks() {
+  if (!linkBookConfigured()) return {};
+  return (await loadedBook()).entries;
+}
+
 /** Remove one entry outright (bad seed, retired style, test data). */
 async function removeSupplierLink(key) {
   if (!linkBookConfigured()) return;
@@ -236,6 +245,7 @@ module.exports = {
   lookupSupplierLink,
   saveSupplierLink,
   listSupplierLinks,
+  cachedSupplierLinks,
   removeSupplierLink,
   // uploaded blank photos
   supplierPhotoName,

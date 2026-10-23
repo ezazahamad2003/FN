@@ -1562,18 +1562,20 @@
     return state.step;
   }
 
-  function goToStep(key) {
+  function goToStep(key, options) {
     state.step = key;
-    renderDetail();
+    renderDetail(options);
     // Instant: a smooth scroll did not move this page at all (see goto).
     window.scrollTo(0, 0);
     page()?.querySelector("[data-ob-step-title]")?.focus({ preventScroll: true });
   }
 
-  function renderDetail() {
+  function renderDetail({ keepRows = true } = {}) {
     const node = root();
     const record = state.record;
     if (!node || !record) return;
+    // Rows typed on the Products step outlive the repaint (see keepUnsavedRows).
+    if (keepRows) keepUnsavedRows();
     const key = viewedStepKey(record);
     const index = stepIndex(key);
     const step = STEPS[index];
@@ -1610,6 +1612,7 @@
     detailPage.addEventListener("change", onDetailChange);
     wirePacketDropzones(detailPage);
     hydrateAssetImages(detailPage);
+    syncRedoControls(detailPage);
     seedMenuSlots();
     /* Finish is the one step that writes the menu, so the menu is read fresh
        from Shopify every time that step comes on screen — not on every
@@ -1629,7 +1632,7 @@
       case "review":
         return setupPanel(record);
       case "products":
-        return inputsPanel(record);
+        return inputsPanel(rowsForScreen(record));
       case "build":
         return buildPanel(record);
       case "finish":
@@ -2379,6 +2382,9 @@
             <button class="btn btn-secondary btn-sm" type="button" data-ob="save-products">Save</button>
           </div>
         </div>
+        ${record.unsavedRows
+          ? `<p class="hint ob-unsaved" data-tone="warn" role="status">These rows have changes that are not saved yet. They stay on screen while you work in other steps; “Save” (or “Next”) keeps them.</p>`
+          : ""}
         ${missing.length
           ? `<div class="gap-report ob-suggestions" data-tone="ok">
               <p class="gap-title">${missing.length} product${plural(missing.length, "", "s")} suggested from the policy${products.length ? " and not in the list yet" : ""}</p>
@@ -2413,7 +2419,8 @@
   function productRowHtml(record, product, index) {
     const id = product?.id || `p${index + 1}`;
     const validation = product?.validation || {};
-    const saved = Boolean(list(record.products).find((row) => row?.id === id));
+    // A row drawn from unsaved edits is not on the server yet (rowsForScreen).
+    const saved = !product?.unsaved && Boolean(list(record.products).find((row) => row?.id === id));
     const tone = validation.ok === true ? "ok" : validation.ok === false ? "danger" : "muted";
     return `
       <fieldset class="ob-product" data-ob-product="${esc(id)}" data-tone="${esc(tone)}">
@@ -2773,6 +2780,11 @@
     const eKeys = embroideryKeys(current, oldPlacements);
     const owned = new Set(["F01", "B01", "RS01", "LS01", ...Object.keys(eKeys)]);
     const kept = current.filter((code) => !owned.has(code));
+    /* An embroidery or patch code typed by hand with no placement yet (E01
+       changed to E05, or a code typed before its placement was ticked) is the
+       code for the next placement ticked — not a reason to invent E01 beside
+       it. Dan changed a code, ticked the placement, and got "E01/E05". */
+    const spare = kept.filter((code) => /^[EP]\d{2}$/.test(code));
 
     const codes = [];
     const logoMap = {};
@@ -2783,6 +2795,13 @@
       .filter(Boolean);
     const eFor = {};
     for (const [code, key] of Object.entries(eKeys)) eFor[key] = code;
+    /* A placement unticked just now keeps its code on the node, so ticking it
+       again brings the same code back (E05 stays E05) rather than a fresh
+       E01. Lives on the node only: nothing stale is sent to the server. */
+    row.querySelectorAll("[data-ob-place]").forEach((node) => {
+      const key = node.dataset.obPlace;
+      if (!node.querySelector("[data-ob-place-on]")?.checked && eFor[key]) node.dataset.obLastCode = eFor[key];
+    });
     const nextE = () => {
       for (let n = 1; n < 100; n += 1) {
         const code = `E${String(n).padStart(2, "0")}`;
@@ -2794,7 +2813,10 @@
       const key = node.dataset.obPlace;
       let code;
       if (embroidered) {
-        code = eFor[key] && !used.has(eFor[key]) ? eFor[key] : nextE();
+        const last = node.dataset.obLastCode || "";
+        const remembered = /^[EP]\d{2}$/.test(last) && !used.has(last) && !Object.values(eFor).includes(last) ? last : "";
+        code = eFor[key] && !used.has(eFor[key]) ? eFor[key] : remembered || (spare.length ? spare.shift() : nextE());
+        delete node.dataset.obLastCode;
         eFor[key] = code;
         placements[code] = key;
       } else {
@@ -2806,11 +2828,12 @@
       if (logo) logoMap[code] = logo;
     }
     // What the placements do not own keeps its logo and placement as saved.
-    for (const code of kept) {
+    const left = kept.filter((code) => !codes.includes(code));
+    for (const code of left) {
       if (oldLogos[code]) logoMap[code] = oldLogos[code];
       if (oldPlacements[code]) placements[code] = oldPlacements[code];
     }
-    if (codesInput) codesInput.value = [...codes, ...kept].join("/");
+    if (codesInput) codesInput.value = [...codes, ...left].join("/");
     if (mapInput) mapInput.value = JSON.stringify(logoMap);
     if (placeInput) placeInput.value = JSON.stringify(placements);
   }
@@ -2842,7 +2865,10 @@
     row.querySelector(".ob-master-missing")?.remove();
   }
 
-  // The ticks follow the codes field after a hand edit.
+  /* The ticks follow the codes field after a hand edit — and an embroidery or
+     patch code retyped in place (E01 → E05) keeps its placement and its logo.
+     Before this the retyped code had no placement, its tick went off, and
+     ticking it again invented E01 beside the typed code ("E01/E05"). */
   function retickPlacements(row) {
     if (!row.querySelector("[data-ob-place]")) return;
     const read = (name) => {
@@ -2853,10 +2879,35 @@
         return {};
       }
     };
+    const codes = codeList(row.querySelector("[data-ob-field='decorationCodes']")?.value || "");
+    const placements = read("placements");
+    const logoMap = read("logoMap");
+    const applied = (code) => /^[EP]\d{2}$/.test(code);
+    // The map as it stood: the saved one, or E01 on the front for a row that had none.
+    const before = Object.keys(placements).length ? placements : codes.includes("E01") ? {} : { E01: "F" };
+    // Mapped codes no longer in the field take their placement to the typed
+    // codes that have none yet, in order; the rest are forgotten.
+    const gone = Object.keys(before).filter((code) => applied(code) && !codes.includes(code));
+    const fresh = codes.filter((code) => applied(code) && !placements[code]);
+    if (gone.length) {
+      gone.forEach((old, i) => {
+        const next = fresh[i];
+        if (next) {
+          placements[next] = before[old] || "F";
+          if (logoMap[old] && !logoMap[next]) logoMap[next] = logoMap[old];
+        }
+        delete placements[old];
+        delete logoMap[old];
+      });
+      const placeInput = row.querySelector("[data-ob-field='placements']");
+      const mapInput = row.querySelector("[data-ob-field='logoMap']");
+      if (placeInput) placeInput.value = JSON.stringify(placements);
+      if (mapInput) mapInput.value = JSON.stringify(logoMap);
+    }
     const { on } = placementState({
-      decorationCodes: row.querySelector("[data-ob-field='decorationCodes']")?.value || "",
-      placements: read("placements"),
-      logoMap: read("logoMap")
+      decorationCodes: codes.join("/"),
+      placements,
+      logoMap
     });
     row.querySelectorAll("[data-ob-place]").forEach((node) => {
       const box = node.querySelector("[data-ob-place-on]");
@@ -3138,13 +3189,16 @@
     const current = steps.find((step) => step?.state === "running");
     const startedMs = Date.parse(build.startedAt || "") || 0;
     const elapsedMin = startedMs ? Math.max(0, Math.floor((Date.now() - startedMs) / 60000)) : 0;
-    const productCount = list(record.products).length;
+    /* An images-only run (Redo images) covers only the products picked; the
+       title and the estimate say so. */
+    const scope = build.scope?.kind === "images" ? list(build.scope.productIds) : null;
+    const productCount = scope ? scope.length : list(record.products).length;
     const nowDoing = current?.label || (steps.length ? "Finishing up" : "Starting");
     const liveHtml = running
       ? `<div class="ob-building" role="status" aria-live="polite">
           <span class="spinner" aria-hidden="true"></span>
           <div>
-            <p class="ob-building-title">Building now — ${esc(nowDoing)}</p>
+            <p class="ob-building-title">${scope ? `Making images for ${productCount} product${plural(productCount, "", "s")}` : "Building now"} — ${esc(nowDoing)}</p>
             <p class="ob-building-sub">${steps.length ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : "Getting ready"}${startedMs ? ` · ${elapsedMin < 1 ? "under a minute" : `${elapsedMin} min`} so far` : ""} · usually ${Math.max(3, productCount * 2 + 1)}–${Math.max(5, productCount * 3 + 2)} minutes for ${productCount} product${plural(productCount, "", "s")}, mostly the mockups.
             This page updates by itself, and the build keeps going if you leave it.</p>
           </div>
@@ -3156,6 +3210,7 @@
         <button class="${btnClass(record, "build")}" type="button" data-ob="build" ${blockers.length || running ? "disabled" : ""} ${blockers.length ? `title="${esc(`Blocked: ${blockers.join(", ")}`)}"` : ""}>${esc(label)}</button>
         ${interrupted ? `<span class="hint" data-tone="warn">The last run stopped before it finished — resuming picks up where it left off.</span>` : ""}
         ${build.state ? chip(build.state, buildTone(build.state)) : chip("not started", "muted")}
+        ${scope ? chip(`images only · ${productCount} product${plural(productCount, "", "s")}`, "muted") : ""}
         ${build.startedAt ? `<span class="hint">started ${esc(when(build.startedAt))}</span>` : ""}
         ${build.finishedAt ? `<span class="hint">finished ${esc(when(build.finishedAt))}</span>` : ""}
       </div>
@@ -3180,6 +3235,7 @@
           </ul>`
         : stateBlock({ title: "Not built yet", sub: "The build creates the collection first, then the lock, then every product as a Draft with its SKUs and images." })}
       ${collectionLinesHtml(record)}
+      ${redoPanelHtml(record)}
       ${mockupGalleryHtml(record)}`;
   }
 
@@ -3218,6 +3274,68 @@
           })
           .join("")}
       </div>`;
+  }
+
+  /* "Redo images" for several products at once. Dan's round after a build:
+     see which products show an AI-drawn blank, upload the real blank photos
+     on the Products step, come back and redo those — in one run, not one
+     build per product. A product whose images show an AI blank, a failed
+     image, or no image at all starts ticked. Only the ticked products are
+     rendered again and re-pictured in Shopify; nothing else runs. */
+  function redoWhy(product) {
+    const mockups = list(product?.mockups);
+    if (!mockups.length) return product?.shopify?.gid ? "no images yet" : "";
+    const ai = mockups.filter((m) => m?.base === "generated");
+    if (ai.length) {
+      const colors = [...new Set(ai.map((m) => m?.color).filter(Boolean))];
+      return `AI blank${colors.length ? ` in ${colors.join(", ")}` : ""}`;
+    }
+    if (mockups.some((m) => m?.path === "render-failed" || m?.path === "missing-artwork")) return "an image failed";
+    return "";
+  }
+
+  function redoPanelHtml(record) {
+    const running = ["running", "starting"].includes(record.build?.state);
+    const products = list(record.products).filter((p) => p?.id && (list(p.mockups).length || p.shopify?.gid));
+    if (!products.length || running) return "";
+    const flagged = products.filter((p) => redoWhy(p)).length;
+    const name = (p) => p.title || [p.brand, p.styleNumber].filter(Boolean).join(" ") || p.id;
+    return `
+      <div class="ob-redo" data-ob-redo>
+        <div class="ob-redo-head">
+          <div>
+            <p class="field-label">Redo images for several products</p>
+            <p class="hint">Tick the products, then one run makes only their images again and swaps them on their Shopify drafts. Titles, SKUs, the other products and the collection are left alone.${
+              flagged ? ` ${flagged} product${plural(flagged, "", "s")} show${flagged === 1 ? "s" : ""} an AI-drawn blank or a failed image and ${flagged === 1 ? "is" : "are"} ticked already.` : ""
+            }</p>
+          </div>
+          <div class="ob-head-actions">
+            <button class="btn btn-ghost btn-sm" type="button" data-ob="redo-pick" data-ob-pick="all">Tick all</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-ob="redo-pick" data-ob-pick="none">Untick all</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-ob="redo-selected" data-ob-redo-count disabled>Redo images for 0 products</button>
+          </div>
+        </div>
+        <ul class="ob-redo-list">
+          ${products
+            .map((p) => {
+              const why = redoWhy(p);
+              return `<li data-flagged="${why ? "true" : "false"}">
+                <label class="toggle-field"><input type="checkbox" data-ob-redo-product="${esc(p.id)}" ${why ? "checked" : ""}> <span>${esc(name(p))}</span></label>
+                ${why ? `<span class="ob-badge" data-tone="warn">${esc(why)}</span>` : `<span class="ob-badge" data-tone="ok">real blank</span>`}
+              </li>`;
+            })
+            .join("")}
+        </ul>
+      </div>`;
+  }
+
+  // The button says how many products it would redo, and does nothing for none.
+  function syncRedoControls(scope = page()) {
+    const button = scope?.querySelector("[data-ob-redo-count]");
+    if (!button) return;
+    const n = scope.querySelectorAll("[data-ob-redo-product]:checked").length;
+    button.disabled = n === 0;
+    button.textContent = `Redo images for ${n} product${plural(n, "", "s")}`;
   }
 
   /* New artwork, a real blank photo, or a better supplier photo after the
@@ -3512,17 +3630,26 @@
     showBanner(page(), "obDetailError", message);
   }
 
-  function applyRecord(payload) {
+  function applyRecord(payload, { rowsSaved = false } = {}) {
     const next = payload?.onboarding;
     if (!next) throw new Error("The server answered without a record.");
     state.record = next;
-    renderDetail();
+    /* The rows just came back from a save, so the server's version of them
+       (style numbers resolved, titles filled, SKUs previewed) is the one to
+       show; anything else that repaints the page keeps what is typed. */
+    if (rowsSaved) state.draft = null;
+    renderDetail({ keepRows: !rowsSaved });
   }
 
   function onDetailChange(event) {
     // The two "have you done this?" ticks arm the finish button.
     if (event.target.closest("[data-ob-finish-ask]")) {
       syncFinishControls(page());
+      return;
+    }
+    // Ticking products under "Redo images for several products".
+    if (event.target.matches("[data-ob-redo-product]")) {
+      syncRedoControls();
       return;
     }
     const upload = event.target.closest("input[data-ob-upload]");
@@ -3623,6 +3750,17 @@
     if (action === "save-products") return saveProducts(trigger);
     if (action === "build") return startBuild(trigger);
     if (action === "redo-images") return redoImages(trigger);
+    if (action === "redo-selected") return redoSelectedImages(trigger);
+    if (action === "redo-pick") {
+      const all = trigger.dataset.obPick === "all";
+      page()
+        ?.querySelectorAll("[data-ob-redo-product]")
+        .forEach((box) => {
+          box.checked = all;
+        });
+      syncRedoControls();
+      return;
+    }
     if (action === "size-preset") {
       const input = trigger.closest("[data-ob-product]")?.querySelector("[data-ob-field='sizes']");
       if (!input) return;
@@ -4059,6 +4197,68 @@
     if (button) button.disabled = false;
   }
 
+  /* ---- Unsaved rows survive a repaint ---------------------------------------
+     Row edits are local until Save. Every repaint of the page used to rebuild
+     the Products step from the saved record, so going back to the Packet step
+     to add a forgotten logo — or any upload, or the garment list arriving —
+     threw away every row typed since the last save; Dan lost a product list
+     that way on 2026-10-23. Now what is on screen is captured before a repaint
+     and laid back over the saved rows the next time the step is drawn. A save
+     clears it (the server's version of the rows is then the one to show). */
+  const EDITABLE_ROW_FIELDS = ["brand", "styleNumber", "type", "title", "colors", "sizes", "decorationMethod", "decorationCodes", "styles", "otherLogos", "fulfillment", "classB", "notes", "logoMap", "placements"];
+
+  function keepUnsavedRows() {
+    const record = state.record;
+    // Only the Products step knows the rows; any other step on screen leaves
+    // the last capture as it is.
+    if (!record || !page()?.querySelector("[data-ob-panel='inputs']")) return;
+    const rows = collectProducts();
+    const saved = new Map(list(record.products).map((row) => [row?.id, row]));
+    const changed = rows.some((row) => !saved.has(row.id) || rowSignature(row) !== rowSignature(saved.get(row.id)));
+    state.draft = changed ? { id: record.id, rows } : null;
+  }
+
+  // What the operator can type on a row, in a form that compares equal to the
+  // saved row when nothing was changed.
+  function rowSignature(row) {
+    const p = row || {};
+    const text = (value) => String(value || "").trim();
+    const sorted = (obj) =>
+      Object.entries(obj && typeof obj === "object" ? obj : {})
+        .filter(([, v]) => v)
+        .sort(([a], [b]) => a.localeCompare(b));
+    return JSON.stringify([
+      ["brand", "styleNumber", "type", "title", "decorationMethod", "decorationCodes", "fulfillment", "notes"].map((key) => text(p[key])),
+      list(p.colors).map(text),
+      list(p.sizes).map(text),
+      typedStyles(p).map((s) => text(s?.decorationCodes)),
+      list(p.otherLogos).map((o) => [text(o?.logo), text(o?.spot).toUpperCase()]),
+      Boolean(p.classB),
+      sorted(p.logoMap),
+      sorted(p.placements)
+    ]);
+  }
+
+  /* The record as the Products step should draw it: the saved rows with the
+     unsaved edits laid over them, and the rows not saved yet after them. A
+     row not saved yet is flagged so the photo and proof slots (which need the
+     row to exist on the server) stay hidden until it is. */
+  function rowsForScreen(record) {
+    const draft = state.draft;
+    if (!draft || draft.id !== record?.id || !Array.isArray(draft.rows)) return record;
+    const edits = new Map(draft.rows.map((row) => [row.id, row]));
+    const savedIds = new Set(list(record.products).map((row) => row?.id));
+    const rows = list(record.products).map((saved) => {
+      const edited = edits.get(saved?.id);
+      if (!edited) return saved;
+      const out = { ...saved };
+      for (const key of EDITABLE_ROW_FIELDS) if (key in edited) out[key] = edited[key];
+      return out;
+    });
+    for (const row of draft.rows) if (!savedIds.has(row.id)) rows.push({ ...row, unsaved: true });
+    return { ...record, products: rows, unsavedRows: true };
+  }
+
   /* The saved row is spread in first on purpose: blankPhotos, proofs, mockups,
      sourceProduct, and the Shopify ids are server-owned and are NOT rendered as
      inputs. Rebuilding the row from the visible fields alone would silently
@@ -4123,7 +4323,7 @@
       async () => {
         const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
         if (!isCurrent("detail", id)) return;
-        applyRecord(payload);
+        applyRecord(payload, { rowsSaved: true });
         if (!advance) return;
         if (stepDone(state.record, "products")) goToStep("build");
         else fail(products.length ? "Saved. Fix the rows marked “has errors” (and add any missing photos) before the build." : "Add at least one product row first.");
@@ -4160,34 +4360,55 @@
   }
 
   function redoImages(button) {
-    const id = state.record?.id;
     const productId = button.dataset.obProductId;
     const product = list(state.record?.products).find((p) => p?.id === productId);
-    if (!id || !product) return;
+    if (!product) return;
     const name = product.title || product.styleNumber || "this product";
     const built = Boolean(product.shopify?.gid);
     if (!window.confirm(`Make the images for "${name}" again${built ? " and replace them on its Shopify draft" : ""}?
 
-They are rebuilt from the current logos and blank photos. The product's title, SKUs and anything set in Shopify stay as they are.`)) return;
+Only this product is touched: its images are rebuilt from the current logos and blank photos. Its title, SKUs, the other products and anything set in Shopify stay as they are.`)) return;
+    return redoImagesFor(button, [productId]);
+  }
+
+  // The products ticked under "Redo images for several products".
+  function redoSelectedImages(button) {
+    const ids = [...(page()?.querySelectorAll("[data-ob-redo-product]:checked") || [])].map((box) => box.dataset.obRedoProduct);
+    if (!ids.length) return;
+    if (!window.confirm(`Make the images for ${ids.length} product${plural(ids.length, "", "s")} again and replace them on their Shopify drafts?
+
+Only these products are touched, in one run. Their titles, SKUs, the other products and anything set in Shopify stay as they are.`)) return;
+    return redoImagesFor(button, ids);
+  }
+
+  /* One run for the products named: the server renders only their mockups
+     and swaps only their images (an images-only build). It used to walk every
+     step of the store again to redo one hat. */
+  function redoImagesFor(button, productIds) {
+    const id = state.record?.id;
+    if (!id || !productIds.length) return;
     return runAction(
       button,
       "Starting…",
       async () => {
-        /* Edits on the Products step (a logo just picked for a placement) are
-           saved first, so the new images are made from what is on screen. */
-        const onScreen = page()?.querySelector(".ob-products") ? collectProducts().find((p) => p.id === productId) : null;
-        if (onScreen) {
-          const products = list(state.record?.products).map((p) => (p?.id === productId ? onScreen : p));
-          await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
+        /* Edits on the Products step (a logo just picked for a placement, a
+           row typed and not saved) are saved first, so the new images are made
+           from what is on screen and nothing typed is lost on the way to the
+           Build step. */
+        if (page()?.querySelector("[data-ob-panel='inputs']")) {
+          const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products: collectProducts() }) });
           if (!isCurrent("detail", id)) return;
+          state.record = payload.onboarding || state.record;
+          state.draft = null;
         }
-        const started = await api(`${recordPath(id)}/products/${encodeURIComponent(productId)}/redo-images`, { method: "POST", body: "{}" });
+        const started = await api(`${recordPath(id)}/redo-images`, { method: "POST", body: JSON.stringify({ productIds }) });
         if (!isCurrent("detail", id)) return;
         const fresh = await api(recordPath(id));
         if (!isCurrent("detail", id)) return;
         state.record = fresh.onboarding || state.record;
         if (started?.build) state.record.build = { ...(state.record.build || {}), ...started.build, state: started.build.state || "running" };
-        goToStep("build");
+        // The rows were just saved from the screen, so the record is current.
+        goToStep("build", { keepRows: false });
       },
       page(),
       "obDetailError"
@@ -4307,7 +4528,7 @@ They are rebuilt from the current logos and blank photos. The product's title, S
         );
         const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
         if (!isCurrent("detail", id)) return;
-        applyRecord(payload);
+        applyRecord(payload, { rowsSaved: true });
         if (!master.created) showBanner(page(), "obDetailError", `The store already had a master for this garment: ${master.title}. The row now copies from it.`, "ok");
         api(`${API}/garments`)
           .then((more) => {
@@ -4813,6 +5034,7 @@ They are rebuilt from the current logos and blank photos. The product's title, S
     state.id = id || null;
     state.record = null;
     state.step = null;
+    state.draft = null;
     state.healthStep = null;
     // A notice belongs to the page it answered; the menu's health is kept.
     state.menuNotice = null;

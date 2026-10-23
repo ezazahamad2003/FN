@@ -2434,3 +2434,93 @@ test("the build makes one product with a Style option; each Style's front shows 
   assert.deepEqual(images[1].variantIds.map(skuOf), ["NL3600-S-NVY-VAC-F02/B01", "NL3600-M-NVY-VAC-F02/B01"]);
   assert.equal(record.products[0].mockups.find((m) => m.style === "Style 2" && m.face === "back").sameAs, "VAC_NL3600_NVY_Style1_BACK.png");
 });
+
+/* Dan, 2026-10-23: "when I click redo images for that product, it processes
+   through the whole build again just to update the single product's image" —
+   and could it redo several at once after he has uploaded the blank photos. */
+test("Redo images for some products runs only their steps and leaves the rest of the store alone", async () => {
+  const rendered = [];
+  const base = fakeMockups();
+  const mockups = {
+    ...base,
+    async renderProductMockups(args) {
+      rendered.push(args.product.id);
+      return base.renderProductMockups(args);
+    }
+  };
+  const { deps, id } = await builtOnboarding({ mockups });
+  const hat = { id: "p2", brand: "Richardson", styleNumber: "R112", type: "Hat", title: "Snap Back Hat", colors: ["Navy"], sizes: ["OSFA"], decorationMethod: "embroidery", decorationCodes: "E01", fulfillment: "Non Stock Item" };
+  const polo = { id: "p3", brand: "Port Authority", styleNumber: "K500", type: "Polo", title: "Silk Touch Polo", colors: ["Navy"], sizes: ["S", "M"], decorationMethod: "print", decorationCodes: "F01", fulfillment: "Non Stock Item" };
+  const tee = (await store.getOnboarding(id)).products[0];
+  const saved = await agent.saveProducts(id, [tee, hat, polo], { by: "dan" });
+  assert.deepEqual(
+    saved.products.map((p) => p.validation.ok),
+    [true, true, true],
+    JSON.stringify(saved.products.map((p) => p.validation.errors))
+  );
+  await agent.startBuild(id, { by: "dan", wait: true, force: true });
+  const before = await store.getOnboarding(id);
+  assert.equal(before.build.state, "complete", before.build.error || "");
+  assert.equal(before.products.length, 3);
+  rendered.length = 0;
+  const collections = deps.shopify.calls.collection.length;
+  const created = deps.shopify.calls.setProduct.length;
+  const replaced = [];
+  deps.shopify.replaceProductImages = async (gid, images) => {
+    replaced.push(gid);
+    return { removed: 2, added: images.length };
+  };
+
+  const result = await agent.redoProductImages(id, ["p2", "p3"], { by: "dan", wait: true });
+  assert.ok(result.started, JSON.stringify(result));
+  const after = await store.getOnboarding(id);
+  assert.equal(after.build.state, "complete", after.build.error || "");
+  assert.deepEqual(rendered, ["p2", "p3"], "only the picked products were rendered again");
+  assert.deepEqual(after.build.scope, { kind: "images", productIds: ["p2", "p3"] });
+  assert.deepEqual(
+    after.build.steps.map((s) => s.key),
+    ["preflight", "mockups:p2", "mockups:p3", "products:p2", "products:p3", "final-check"],
+    "no collection, lock, other-product or shared-settings step"
+  );
+  assert.equal(deps.shopify.calls.collection.length, collections, "the collection was not touched");
+  assert.equal(deps.shopify.calls.setProduct.length, created, "no product was created");
+  assert.equal(replaced.length, 2, "both drafts got their new images");
+  assert.equal(after.status, before.status, "an images-only run never changes where the store stands");
+  assert.equal(after.phase, before.phase);
+  assert.ok(after.products.every((p) => p.replaceImages === undefined), "no flag lingers");
+  assert.deepEqual(after.products[0].mockups, before.products[0].mockups, "the untouched product kept its images");
+  assert.match(after.events.at(-1).message, /^Images complete: 2 product\(s\) made again\.$/);
+
+  // One product by itself, the way the row's own button asks.
+  rendered.length = 0;
+  await agent.redoProductImages(id, "p1", { by: "dan", wait: true });
+  const one = await store.getOnboarding(id);
+  assert.deepEqual(rendered, ["p1"]);
+  assert.equal(one.build.state, "complete", one.build.error || "");
+  assert.deepEqual(one.build.scope.productIds, ["p1"]);
+
+  // Nothing to redo, or a row that is not there, is refused before anything runs.
+  await assert.rejects(() => agent.redoProductImages(id, [], { by: "dan" }), /at least one product/);
+  await assert.rejects(() => agent.redoProductImages(id, ["p9"], { by: "dan" }), /No product row "p9"/);
+});
+
+test("the router starts Redo images for several products in one call", async () => {
+  const { deps, id } = await builtOnboarding();
+  deps.shopify.replaceProductImages = async (gid, images) => ({ removed: 2, added: images.length });
+  await withServer(async (base) => {
+    const post = (body) =>
+      fetch(`${base}/api/onboardings/${id}/redo-images`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const none = await post({ productIds: [] });
+    assert.equal(none.status, 400);
+    const unknown = await post({ productIds: ["p9"] });
+    assert.equal(unknown.status, 400);
+    const started = await post({ productIds: ["p1"] });
+    assert.equal(started.status, 202);
+    const payload = await started.json();
+    assert.deepEqual(payload.build.scope, { kind: "images", productIds: ["p1"] });
+    // The run goes on in the background; let it finish before the next test resets the fakes.
+    while (agent.isBuildActive(id)) await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  const after = await store.getOnboarding(id);
+  assert.equal(after.build.state, "complete", after.build.error || "");
+});
