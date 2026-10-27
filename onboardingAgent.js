@@ -1872,14 +1872,20 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
   }
   record = await saveBuild(id, build);
 
-  // §12 final check
-  step = stepStart(build, "final-check", "Final check");
-  try {
-    record = await finalCheck(id, { by, build });
-    stepDone(step, `${record.report.completed.length} done, ${record.report.missingInformation.length} missing`);
-  } catch (error) {
-    stepFail(step, error);
-    failures.push(`Final check: ${errorText(error)}`);
+  // §12 final check. Not for an images-only run: the final check re-judges
+  // the whole store and, by §12, takes "complete" away while anything is
+  // unresolved — on 2026-10-27 redoing three hats on Truckee Meadows (which
+  // Dan had finished) left it "built-partial". New pictures change nothing
+  // the final check judges; the next full build or final check refreshes it.
+  if (!imagesOnly) {
+    step = stepStart(build, "final-check", "Final check");
+    try {
+      record = await finalCheck(id, { by, build });
+      stepDone(step, `${record.report.completed.length} done, ${record.report.missingInformation.length} missing`);
+    } catch (error) {
+      stepFail(step, error);
+      failures.push(`Final check: ${errorText(error)}`);
+    }
   }
 
   const created = record.products.filter((p) => p.buildState === "created").length;

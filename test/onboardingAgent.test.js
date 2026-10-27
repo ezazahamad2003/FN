@@ -2462,6 +2462,14 @@ test("Redo images for some products runs only their steps and leaves the rest of
   const before = await store.getOnboarding(id);
   assert.equal(before.build.state, "complete", before.build.error || "");
   assert.equal(before.products.length, 3);
+  /* Dan finished the store. An images-only run must leave it finished even
+     though the final check would not pass it again (the fakes leave the
+     shared settings unconfirmed): on 2026-10-27 the final check at the end
+     of an images-only run demoted Truckee Meadows to "built-partial". */
+  await store.updateOnboarding(id, (r) => {
+    r.status = "complete";
+    return r;
+  });
   rendered.length = 0;
   const collections = deps.shopify.calls.collection.length;
   const created = deps.shopify.calls.setProduct.length;
@@ -2479,14 +2487,15 @@ test("Redo images for some products runs only their steps and leaves the rest of
   assert.deepEqual(after.build.scope, { kind: "images", productIds: ["p2", "p3"] });
   assert.deepEqual(
     after.build.steps.map((s) => s.key),
-    ["preflight", "mockups:p2", "mockups:p3", "products:p2", "products:p3", "final-check"],
-    "no collection, lock, other-product or shared-settings step"
+    ["preflight", "mockups:p2", "mockups:p3", "products:p2", "products:p3"],
+    "no collection, lock, other-product, shared-settings or final-check step"
   );
   assert.equal(deps.shopify.calls.collection.length, collections, "the collection was not touched");
   assert.equal(deps.shopify.calls.setProduct.length, created, "no product was created");
   assert.equal(replaced.length, 2, "both drafts got their new images");
-  assert.equal(after.status, before.status, "an images-only run never changes where the store stands");
+  assert.equal(after.status, "complete", "an images-only run never changes where the store stands");
   assert.equal(after.phase, before.phase);
+  assert.equal(after.report?.generatedAt, before.report?.generatedAt, "the report is not re-judged by an images-only run");
   assert.ok(after.products.every((p) => p.replaceImages === undefined), "no flag lingers");
   assert.deepEqual(after.products[0].mockups, before.products[0].mockups, "the untouched product kept its images");
   assert.match(after.events.at(-1).message, /^Images complete: 2 product\(s\) made again\.$/);
