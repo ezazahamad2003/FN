@@ -233,6 +233,10 @@
     step: null,
     // Master Reference garments ({label, brand, styleNumber, type, group, sizes}).
     garments: null,
+    /* The New product modal on the Departments page, while it is open:
+       { collection, onCreated, productId, saved, phase, overlay, pollTimer,
+         buildStartedAt, polls, error }. state.view is "store-product" then. */
+    store: null,
     /* The live Mega Menu compared with the agent's saved copy (MenuHealth from
        GET …/menu-health). It belongs to the store, not to one onboarding, so it
        survives navigation between the list and a record; null until the first
@@ -267,7 +271,11 @@
   }
 
   function isCurrent(view, id) {
-    return state.view === view && (id === undefined || String(state.id || "") === String(id || ""));
+    /* The New product modal over the Departments page is a detail view of
+       the store's record, so the row handlers' "still on this record?"
+       checks hold there too. */
+    const sameView = state.view === view || (view === "detail" && state.view === "store-product");
+    return sameView && (id === undefined || String(state.id || "") === String(id || ""));
   }
 
   function list(value) {
@@ -604,8 +612,10 @@
     document.removeEventListener("keydown", onModalKeydown);
     modalState.overlay.remove();
     document.body.style.overflow = "";
-    const back = modalState.lastFocus;
+    const { lastFocus: back, onClose } = modalState;
     modalState = null;
+    // A dialog with state of its own (the New product modal) lets go of it here.
+    if (typeof onClose === "function") onClose();
     if (back?.focus) back.focus();
   }
 
@@ -1571,6 +1581,8 @@
   }
 
   function renderDetail({ keepRows = true } = {}) {
+    // The same record, drawn as the New product modal instead of the wizard.
+    if (state.view === "store-product") return renderStoreProduct({ keepRows });
     const node = root();
     const record = state.record;
     if (!node || !record) return;
@@ -2573,7 +2585,7 @@
 
   function otherLogoWhy(spots, logos, rows) {
     if (!spots) return "Tick where the logo goes above first. The other logo goes in the same spot.";
-    if (logos < 2) return "Only one logo is uploaded. Add the department’s other logo in step 1 (Packet) first.";
+    if (logos < 2) return storeOpen() ? "Only one logo is on file. Upload the department’s other logo above first." : "Only one logo is uploaded. Add the department’s other logo in step 1 (Packet) first.";
     return rows ? "Press Save to update the SKUs and the Style option." : "";
   }
 
@@ -2724,7 +2736,7 @@
             <div class="ob-placement" data-ob-place="${esc(p.key)}" data-on="${placed ? "true" : "false"}">
               <label class="ob-place-toggle"><input type="checkbox" data-ob-place-on ${placed ? "checked" : ""}> <b>${esc(p.label)}</b>${p.hint ? ` <small>${esc(p.hint)}</small>` : ""}</label>
               <select data-ob-place-logo aria-label="Logo for the ${esc(p.label.toLowerCase())}">
-                <option value="">${logos.length ? `Default (the ${defaultFor(p.key)} logo)` : "Upload logos in step 1"}</option>
+                <option value="">${logos.length ? `Default (the ${defaultFor(p.key)} logo)` : storeOpen() ? "Upload a logo above first" : "Upload logos in step 1"}</option>
                 ${logos
                   .map((f) => `<option value="${esc(f.assetId)}" ${placed?.logo === f.assetId ? "selected" : ""}>${esc(f.name || "logo")}${f.role ? ` (${esc(f.role)} logo)` : ""}</option>`)
                   .join("")}
@@ -3003,7 +3015,7 @@
         const face = DECORATION_FACES[c.replace(/\d+$/, "")] || "";
         const source = proofed ? "the embroidery proof below" : logo ? `your uploaded logo <b>${esc(logo.name || "")}</b>` : "";
         return `<li data-tone="${source ? "ok" : "warn"}">
-          <b class="code-input">${esc(c)}</b> <span>${esc(face)} — ${source ? `mockups use ${source}` : "no logo yet: upload the department's logo in step 1 (Packet)"}</span>
+          <b class="code-input">${esc(c)}</b> <span>${esc(face)} — ${source ? `mockups use ${source}` : storeOpen() ? "no logo yet: upload the department's logo above" : "no logo yet: upload the department's logo in step 1 (Packet)"}</span>
         </li>`;
       })
       .join("");
@@ -3623,6 +3635,7 @@
      Detail interactions
      ====================================================================== */
   function page() {
+    if (state.view === "store-product") return state.store?.overlay?.querySelector("[data-ob-page='store-product']") || null;
     return root()?.querySelector("[data-ob-page='detail']") || null;
   }
 
@@ -4312,6 +4325,8 @@
   }
 
   function saveProducts(button, advance = false, { skipBlank = false } = {}) {
+    // In the New product modal only that one row is saved — never the list.
+    if (state.view === "store-product") return saveStoreProduct(button);
     const id = state.record?.id;
     if (!id) return;
     const savedIds = new Set(list(state.record?.products).map((p) => p?.id));
@@ -4526,8 +4541,15 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         const products = collectProducts().map((p) =>
           p.id === rowId ? { ...p, styleNumber: master.styleNumber || p.styleNumber, sourceProduct: { id: master.id, legacyId: master.legacyId || "", title: master.title, kind: "master", url: master.url || "" }, masterMissing: false } : p
         );
-        const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
+        // The New product modal saves its one row; the Products step saves the list.
+        const payload = storeOpen()
+          ? await api(`${recordPath(id)}/products/${encodeURIComponent(rowId)}`, {
+              method: "PUT",
+              body: JSON.stringify({ product: products.find((p) => p.id === rowId), by: operator() })
+            })
+          : await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
         if (!isCurrent("detail", id)) return;
+        if (storeOpen()) state.store.saved = true;
         applyRecord(payload, { rowsSaved: true });
         if (!master.created) showBanner(page(), "obDetailError", `The store already had a master for this garment: ${master.title}. The row now copies from it.`, "ok");
         api(`${API}/garments`)
@@ -5084,7 +5106,492 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     if (node) node.innerHTML = "";
   }
 
-  window.FNOnboarding = { mount, unmount };
+  /* =========================================================================
+     NEW PRODUCT on the Departments page — the Products-step row, in a modal
+     -------------------------------------------------------------------------
+     main.js opens this for a store that already exists (#/departments/:id →
+     "New product"). It is the same row as the onboarding's Products step —
+     the store's own blanks, the lookup of any brand and style, the
+     placements with a logo each, the embroidery proofs, another logo as a
+     Style, the blank photos, the SKU preview and the validation — drawn
+     into a modal over the department page and saved, checked and created
+     ONE row at a time:
+
+       GET  /api/stores/:collectionId                 → { onboardingId? }
+       POST /api/stores/:collectionId/adopt           → { onboarding } (a store
+                                                        that predates the agent
+                                                        gets a record on first use)
+       PUT  /api/onboardings/:id/products/:productId  → { onboarding, product }
+       POST /api/onboardings/:id/products/:productId/create → 202 { build }
+       DELETE /api/onboardings/:id/products/:productId → { onboarding }
+
+     While the modal is open state.view is "store-product": page() is the
+     modal, renderDetail() repaints the modal, saveProducts() saves the one
+     row, and the row handlers (onDetailClick / onDetailChange) run as they
+     do on the Products step.
+     ====================================================================== */
+  const STORE_POLL_MS = 4000;
+  // How long the modal keeps looking for its run before giving up on it.
+  const STORE_LOST_AFTER_POLLS = 45;
+
+  function storeOpen() {
+    return state.view === "store-product" && Boolean(state.store);
+  }
+
+  function modalBusy(flag) {
+    if (modalState) modalState.busy = Boolean(flag);
+  }
+
+  function storeRowFilled(row) {
+    return [row?.brand, row?.styleNumber, row?.type, row?.title].some((v) => String(v || "").trim()) || list(row?.colors).length > 0 || list(row?.sizes).length > 0;
+  }
+
+  async function openStoreProduct({ collection, onCreated } = {}) {
+    if (!collection?.id) return;
+    const st = {
+      collection: { id: String(collection.id), title: collection.title || "this department" },
+      onCreated: typeof onCreated === "function" ? onCreated : null,
+      productId: "",
+      saved: false,
+      phase: "loading",
+      overlay: null,
+      pollTimer: null,
+      buildStartedAt: "",
+      polls: 0,
+      error: ""
+    };
+    // openModal closes any dialog already open (and its onClose runs first).
+    const overlay = openModal({
+      id: "obStore",
+      title: "New product",
+      sub: `Adding to “${st.collection.title}”.`,
+      bodyHtml: `<div class="modal-body" data-ob-page="store-product" data-ob-panel="inputs">${stateBlock({ tone: "info", title: "Opening the store's record…", sub: "Reading its logos and products.", spinner: true })}</div>`
+    });
+    overlay.querySelector(".modal")?.classList.add("ob-store-modal");
+    st.overlay = overlay;
+    state.store = st;
+    state.view = "store-product";
+    state.id = null;
+    state.record = null;
+    state.draft = null;
+    modalState.onClose = () => teardownStore(st);
+    overlay.addEventListener("click", onStoreClick);
+    overlay.addEventListener("change", onDetailChange);
+
+    // The store's garments for "pick a garment" on the row.
+    if (!state.garments) {
+      api(`${API}/garments`)
+        .then((payload) => {
+          state.garments = list(payload?.garments);
+          if (state.store === st && st.phase === "form") renderStoreProduct();
+        })
+        .catch(() => {
+          state.garments = null;
+        });
+    }
+
+    try {
+      const info = await api(`/api/stores/${encodeURIComponent(st.collection.id)}`);
+      if (state.store !== st) return;
+      const payload = info?.onboardingId
+        ? await api(recordPath(info.onboardingId))
+        : await api(`/api/stores/${encodeURIComponent(st.collection.id)}/adopt`, { method: "POST", body: JSON.stringify({ by: operator() }) });
+      if (state.store !== st) return;
+      if (!payload?.onboarding) throw new Error("The server answered without the store's record.");
+      state.record = payload.onboarding;
+      state.id = state.record.id;
+      st.productId = nextProductId();
+      st.phase = "form";
+    } catch (error) {
+      if (state.store !== st) return;
+      st.phase = "error";
+      st.error = error?.message || "Could not open the store's record.";
+    }
+    renderStoreProduct({ keepRows: false });
+  }
+
+  function teardownStore(st) {
+    if (!st || state.store !== st) return;
+    if (st.pollTimer) window.clearTimeout(st.pollTimer);
+    st.pollTimer = null;
+    st.overlay?.removeEventListener("click", onStoreClick);
+    st.overlay?.removeEventListener("change", onDetailChange);
+    state.store = null;
+    if (state.view === "store-product") {
+      state.view = null;
+      state.id = null;
+      state.record = null;
+      state.draft = null;
+      releaseObjectUrls();
+    }
+  }
+
+  function closeStoreProduct() {
+    if (!state.store) return;
+    closeModal();
+  }
+
+  function renderStoreProduct({ keepRows = true } = {}) {
+    const st = state.store;
+    const body = st?.overlay?.querySelector("[data-ob-page='store-product']");
+    if (!st || !body) return;
+    // What is typed on the row outlives a repaint (an upload, a role change).
+    if (keepRows && st.phase === "form") keepUnsavedRows();
+    const sub = st.overlay.querySelector(".modal-sub");
+    if (sub) {
+      const code = state.record?.department?.code;
+      sub.textContent = `Adding to “${st.collection.title}”${code?.approved && code.value ? ` · department code ${code.value}` : ""}. The product is created as a Draft; nothing is published.`;
+    }
+    body.innerHTML = storeBodyHtml(st);
+    hydrateAssetImages(body);
+    wirePacketDropzones(body);
+  }
+
+  function storeBodyHtml(st) {
+    const record = state.record;
+    if (st.phase === "loading") return stateBlock({ tone: "info", title: "Opening the store's record…", sub: "Reading its logos and products.", spinner: true });
+    if (st.phase === "error" || !record) {
+      return `${banner("obDetailError")}${stateBlock({
+        tone: "danger",
+        title: "Could not open the product form",
+        sub: st.error || "The store's record could not be read.",
+        actionHtml: `<button class="btn btn-secondary btn-sm" type="button" data-ob="store-retry">Try again</button>`
+      })}`;
+    }
+    if (st.phase !== "form") return storeProgressHtml(st, record);
+    if (!record.department?.code?.approved) return `${banner("obDetailError")}${storeCodeHtml(record)}`;
+
+    const screen = rowsForScreen(record);
+    const rows = list(screen.products);
+    let index = rows.findIndex((p) => p?.id === st.productId);
+    const row = index === -1 ? { id: st.productId, colors: [], sizes: [], styles: [], unsaved: true } : rows[index];
+    if (index === -1) index = rows.length;
+    const saved = list(record.products).some((p) => p?.id === st.productId);
+    const built = saved && Boolean(list(record.products).find((p) => p?.id === st.productId)?.shopify?.gid);
+    return `
+      ${banner("obDetailError")}
+      <p class="ob-store-what">Pick the garment — one of the store's own blanks, or look any brand and style up — tick where the logos go, and set the colours and sizes. <b>Save &amp; check</b> fills the title and Vendor from how the store already sells that blank and previews the SKUs; it also opens the slots for embroidery proofs and blank photos. <b>Create product</b> makes the mockups and the Draft in “${esc(st.collection.title)}”.</p>
+      ${storeLogosHtml(record)}
+      <div class="ob-products">${productRowHtml(screen, row, index)}</div>
+      ${saved && !built ? `<p class="hint ob-store-saved" data-tone="warn" role="status">Saved on the store's record, not in Shopify yet — press Create product when the row validates.</p>` : ""}
+      <div class="modal-actions">
+        ${saved && !built ? `<button class="btn btn-danger-ghost" type="button" data-ob="store-discard">Discard row</button>` : ""}
+        <button class="btn btn-ghost" type="button" data-ob="store-close">Close</button>
+        <button class="btn btn-secondary" type="button" data-ob="save-products">Save &amp; check</button>
+        <button class="btn btn-primary" type="button" data-ob="store-create" ${built ? "disabled title=\"Already created\"" : ""}>Create product</button>
+      </div>`;
+  }
+
+  /* The department's logos, from the store's record: the mockups are made
+     from them and the placements on the row pick among them. A store that
+     predates the agent has none on file until they are uploaded here. */
+  function storeLogosHtml(record) {
+    const files = list(record.packet?.files).filter((f) => (f?.kind || "other") === "artwork");
+    const zone = "obStore-artwork";
+    return `
+      <section class="ob-store-logos" data-done="${files.length ? "true" : "false"}">
+        <div class="ob-packet-slot-head">
+          <p class="field-label"><label for="${zone}">The department's logos</label> <small>the mockups are made from these · each placement on the row picks one</small></p>
+          ${files.length ? chip(`${files.length} on file`, "ok") : chip("none yet", "warn")}
+        </div>
+        ${files.length
+          ? `<div class="ob-files">${files.map((file) => packetFileHtml(record, file)).join("")}</div>`
+          : `<p class="hint">${
+              record.adopted
+                ? "This store was built before the agent, so its logos are not on file yet. Upload the department's logo files once; they stay on the record for every product added here."
+                : "No artwork is on this store's record yet. Upload the department's logo files; they stay on the record for every product added here."
+            }</p>`}
+        <div class="dropzone" data-dropzone="${zone}">
+          <input id="${zone}" type="file" multiple accept="image/*" data-ob-packet-kind="artwork" aria-describedby="${zone}Hint">
+          <span class="dz-title"><b>${files.length ? "Add another logo" : "Click to upload"}</b> or drag &amp; drop</span>
+          <span class="dz-sub" id="${zone}Hint">Logos as images — a PNG with a clear background is best. Set each one's role (chest, back, scramble) so the defaults land right.</span>
+        </div>
+      </section>`;
+  }
+
+  // A store whose code could not be read from its SKUs: the operator types it.
+  function storeCodeHtml(record) {
+    return `
+      <div class="ob-store-code">
+        <p class="field-label">Which department code does this store use?</p>
+        <p class="hint">The code goes into every SKU (STYLE-SIZE-COLOUR-<b>CODE</b>-…) and every product tag, so a product cannot be made without it. It could not be read from the products in “${esc(record.collection?.title || "this store")}” — type it as the store's existing SKUs or Drive folder spell it, 3 or 4 letters.</p>
+        <div class="ob-store-code-bar">
+          <input type="text" class="code-input" data-ob-store-code maxlength="4" autocomplete="off" placeholder="e.g. LPF" aria-label="Department code">
+          <button class="btn btn-primary btn-sm" type="button" data-ob="store-code">Use this code</button>
+        </div>
+      </div>`;
+  }
+
+  /* While the product is being made, and once it is (or is not): the steps of
+     THIS run, the log, and the way out. The run keeps going if the modal is
+     closed; the department page shows the product once it exists. */
+  function storeProgressHtml(st, record) {
+    const row = list(record?.products).find((p) => p?.id === st.productId) || {};
+    const name = row.title || [row.brand, row.styleNumber].filter(Boolean).join(" ") || "the product";
+    const build = record?.build || {};
+    const steps = list(build.steps).filter((s) => s?.key === "preflight" || String(s?.key || "").endsWith(`:${st.productId}`));
+    const done = steps.filter((s) => s.state === "complete" || s.state === "skipped").length;
+    const running = st.phase === "creating";
+    /* Steps appear as they start, so while the run is on, the bar is measured
+       against the three a product run always has (preflight, mockups, the
+       product) — not against "the one step so far", which read 100% at once. */
+    const total = running ? Math.max(steps.length, 3) : steps.length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+    const log = list(build.log).slice(-LOG_TAIL);
+    const current = steps.find((s) => s.state === "running");
+    let head;
+    if (running) {
+      head = `<div class="ob-building" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <p class="ob-building-title">Creating ${esc(name)} — ${esc(current?.label || "starting")}</p>
+            <p class="ob-building-sub">Mockups first, then the Draft in “${esc(st.collection.title)}” with its SKUs and images. Usually 2–4 minutes, mostly the mockups. This updates by itself, and the work carries on if you close it.</p>
+          </div>
+        </div>`;
+    } else if (st.phase === "done") {
+      const images = list(row.mockups).filter((m) => m?.assetId).length;
+      head = `<div class="ob-store-done" data-tone="ok" role="status">
+          <p class="ob-building-title">${esc(name)} is in the store as a Draft.</p>
+          <p class="ob-building-sub">${row.shopify?.variantCount ? `${row.shopify.variantCount} variant${plural(row.shopify.variantCount, "", "s")} · ` : ""}${images} image${plural(images, "", "s")}. Set its price and make it Active in Shopify when it is ready.</p>
+          ${row.shopify?.url ? `<a class="btn btn-secondary btn-sm" href="${esc(row.shopify.url)}" target="_blank" rel="noreferrer">Open in Shopify</a>` : ""}
+        </div>`;
+    } else {
+      head = `<div class="ob-store-done" data-tone="danger" role="alert">
+          <p class="ob-building-title">${esc(name)} was not created.</p>
+          <p class="ob-building-sub">${esc(
+            st.error || row.buildError || build.error || "The run stopped before the product was created. The log below says where."
+          )}</p>
+        </div>`;
+    }
+    return `
+      <div class="ob-store-progress">
+        ${head}
+        ${steps.length
+          ? `<div class="progress">
+              <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Progress"><div class="progress-fill" style="width:${pct}%"></div></div>
+              <div class="progress-meta"><span>${esc(running ? `Step ${Math.min(done + 1, total)} of ${total}` : `${done} of ${total} steps done`)}</span><span>${pct}%</span></div>
+            </div>
+            <ul class="build-steps">
+              ${steps.map((step) => `<li data-state="${esc(step.state || "pending")}"><b>${esc(step.label || step.key || "")}</b><span>${esc(step.detail || (step.state === "running" ? "Working…" : ""))}</span></li>`).join("")}
+            </ul>`
+          : ""}
+        <div class="ob-log" data-ob-log tabindex="0" role="group" aria-label="Build log">
+          ${log.length ? log.map((line) => `<span>${esc(line)}</span>`).join("") : `<span class="hint">Nothing logged yet.</span>`}
+        </div>
+        <div class="modal-actions">
+          ${st.phase === "failed" ? `<button class="btn btn-secondary" type="button" data-ob="store-back">Back to the row</button>` : ""}
+          <button class="btn ${st.phase === "done" ? "btn-primary" : "btn-ghost"}" type="button" data-ob="store-close" ${running ? "disabled" : ""}>${running ? "Creating…" : "Close"}</button>
+        </div>
+      </div>`;
+  }
+
+  function onStoreClick(event) {
+    const trigger = event.target.closest("[data-ob]");
+    const action = trigger?.dataset.ob || "";
+    if (!action.startsWith("store-")) return onDetailClick(event);
+    const st = state.store;
+    if (!st) return;
+    if (action === "store-close") return closeStoreProduct();
+    if (action === "store-create") return createStoreProduct(trigger);
+    if (action === "store-discard") return discardStoreProduct(trigger);
+    if (action === "store-code") return setStoreCode(trigger);
+    if (action === "store-back") {
+      st.phase = "form";
+      st.error = "";
+      renderStoreProduct({ keepRows: false });
+      return;
+    }
+    if (action === "store-retry") {
+      const { collection, onCreated } = st;
+      return openStoreProduct({ collection, onCreated });
+    }
+  }
+
+  function storeRowFromScreen(st) {
+    return collectProducts().find((p) => p.id === st.productId) || null;
+  }
+
+  // PUT the one row; the server fills it from the store and checks it.
+  async function putStoreRow(st, row) {
+    const id = state.record?.id;
+    const payload = await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ product: row, by: operator() })
+    });
+    if (state.store !== st) return null;
+    if (payload?.product?.id) st.productId = payload.product.id;
+    st.saved = true;
+    return payload;
+  }
+
+  function saveStoreProduct(button) {
+    const st = state.store;
+    if (!st || !state.record?.id) return;
+    const row = storeRowFromScreen(st);
+    if (!row) return;
+    if (!storeRowFilled(row)) {
+      fail("Pick a garment first — one of the store's blanks, or look one up by brand and style.");
+      return;
+    }
+    return runAction(
+      button,
+      "Saving…",
+      async () => {
+        modalBusy(true);
+        try {
+          const payload = await putStoreRow(st, row);
+          if (!payload) return;
+          applyRecord(payload, { rowsSaved: true });
+        } finally {
+          modalBusy(false);
+        }
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  /* Save, check, create: the row is saved first so what is created is what is
+     on screen, and a row that does not validate stops here with its errors
+     drawn on it. Then the server runs this product's steps alone. */
+  function createStoreProduct(button) {
+    const st = state.store;
+    const id = state.record?.id;
+    if (!st || !id) return;
+    const row = storeRowFromScreen(st);
+    if (!row) return;
+    if (!storeRowFilled(row)) {
+      fail("Pick a garment first — one of the store's blanks, or look one up by brand and style.");
+      return;
+    }
+    return runAction(
+      button,
+      "Checking…",
+      async () => {
+        modalBusy(true);
+        let creating = false;
+        try {
+          const saved = await putStoreRow(st, row);
+          if (!saved) return;
+          if (saved.product?.validation?.ok !== true) {
+            applyRecord(saved, { rowsSaved: true });
+            fail("Not created yet: fix what the row says is wrong, then press Create product again.");
+            return;
+          }
+          const started = await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}/create`, {
+            method: "POST",
+            body: JSON.stringify({ by: operator() })
+          });
+          if (state.store !== st) return;
+          creating = true;
+          st.phase = "creating";
+          st.error = "";
+          st.polls = 0;
+          st.buildStartedAt = started?.build?.startedAt || "";
+          state.record = saved.onboarding;
+          state.record.build = { ...(state.record.build || {}), ...(started?.build || {}), state: started?.build?.state || "running" };
+          state.draft = null;
+          renderStoreProduct({ keepRows: false });
+          pollStoreBuild();
+        } finally {
+          // The modal stays busy (no Escape, no backdrop close) while it creates.
+          if (!creating) modalBusy(false);
+        }
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  /* Follows THIS run (matched by its start time, so an older build's state is
+     never mistaken for it) until it finishes, then shows the Draft or the
+     reason there is none. */
+  function pollStoreBuild() {
+    const st = state.store;
+    if (!st || st.phase !== "creating") return;
+    if (st.pollTimer) window.clearTimeout(st.pollTimer);
+    const id = state.record?.id;
+    st.pollTimer = window.setTimeout(async () => {
+      if (state.store !== st || st.phase !== "creating") return;
+      try {
+        const payload = await api(recordPath(id));
+        if (state.store !== st || st.phase !== "creating") return;
+        const next = payload?.onboarding;
+        if (next) {
+          state.record = next;
+          st.polls += 1;
+          const build = next.build || {};
+          const mine = !st.buildStartedAt || build.startedAt === st.buildStartedAt;
+          const live = build.state === "running" || build.state === "starting";
+          if (mine && build.startedAt && !live) {
+            const row = list(next.products).find((p) => p?.id === st.productId);
+            st.phase = row?.shopify?.gid && row?.buildState === "created" ? "done" : "failed";
+            modalBusy(false);
+            renderStoreProduct({ keepRows: false });
+            if (st.phase === "done" && st.onCreated) st.onCreated(row);
+            return;
+          }
+          if (!mine && st.polls >= STORE_LOST_AFTER_POLLS) {
+            st.phase = "failed";
+            st.error = "The run could not be followed from here. Open the store's onboarding record (Onboarding Agent) to see what happened to it.";
+            modalBusy(false);
+            renderStoreProduct({ keepRows: false });
+            return;
+          }
+          renderStoreProduct({ keepRows: false });
+        }
+      } catch (error) {
+        // The admin prompt was cancelled: stop, rather than reopen it every few seconds.
+        if (/admin token/i.test(String(error?.message || ""))) return;
+      }
+      pollStoreBuild();
+    }, STORE_POLL_MS);
+  }
+
+  // A row saved on the record but never built: take it off again.
+  function discardStoreProduct(button) {
+    const st = state.store;
+    const id = state.record?.id;
+    if (!st || !id) return;
+    const row = list(state.record.products).find((p) => p?.id === st.productId);
+    if (!row || row.shopify?.gid) return;
+    const name = row.title || [row.brand, row.styleNumber].filter(Boolean).join(" ") || "this row";
+    if (!window.confirm(`Discard "${name}"?\n\nIt was saved on the store's record but not created in Shopify. Its uploaded proofs and photos go with it; a blank photo already kept for other departments stays kept.`)) return;
+    return runAction(
+      button,
+      "Discarding…",
+      async () => {
+        await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}`, { method: "DELETE", body: JSON.stringify({ by: operator() }) });
+        if (state.store !== st) return;
+        closeStoreProduct();
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  function setStoreCode(button) {
+    const st = state.store;
+    if (!st) return;
+    const code = (page()?.querySelector("[data-ob-store-code]")?.value || "").trim().toUpperCase();
+    if (!/^[A-Z]{3,4}$/.test(code)) {
+      fail("A department code is 3 or 4 letters, like LPF.");
+      return;
+    }
+    return runAction(
+      button,
+      "Checking…",
+      async () => {
+        const payload = await api(`/api/stores/${encodeURIComponent(st.collection.id)}/adopt`, { method: "POST", body: JSON.stringify({ code, by: operator() }) });
+        if (state.store !== st) return;
+        applyRecord(payload);
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  window.FNOnboarding = { mount, unmount, openStoreProduct, closeStoreProduct };
 
   /* main.js calls handleRoute() at the end of its own file — before this
      script has run — so a page opened directly on #/onboarding would show an

@@ -375,6 +375,17 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
     }
   });
 
+  /* The record behind a store, made on first use for a store the agent did
+     not build: the Departments page's New product form works on it. A store
+     whose code could not be read from its SKUs is adopted again with `code`. */
+  router.post("/stores/:collectionId/adopt", gate, async (req, res) => {
+    try {
+      res.json({ onboarding: await agent.adoptStore(req.params.collectionId, { code: clean(req.body?.code), by: byOf(req) }) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.post("/onboardings/:id/setup", gate, async (req, res) => {
     try {
       res.json({ onboarding: await agent.runSetup(req.params.id, { by: byOf(req) }) });
@@ -406,6 +417,46 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
     try {
       if (!Array.isArray(req.body?.products)) return res.status(400).json({ error: "products must be an array of rows." });
       res.json({ onboarding: await agent.saveProducts(req.params.id, req.body.products, { by: byOf(req) }) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  /* ---- one product at a time (the Departments page's New product) ------- */
+
+  // Add one row and check it; the rows already saved are left as they are.
+  router.post("/onboardings/:id/products", gate, async (req, res) => {
+    try {
+      res.json(await agent.saveProduct(req.params.id, "", req.body?.product, { by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.put("/onboardings/:id/products/:productId", gate, async (req, res) => {
+    try {
+      res.json(await agent.saveProduct(req.params.id, req.params.productId, req.body?.product, { by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  // A row that was never built; a built product is deleted in Shopify, not here.
+  router.delete("/onboardings/:id/products/:productId", gate, async (req, res) => {
+    try {
+      res.json({ onboarding: await agent.removeProduct(req.params.id, req.params.productId, { by: byOf(req) }) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  // Create this one product in the store: its mockups, its Shopify draft in
+  // the collection, its images. Nothing else in the store is touched.
+  router.post("/onboardings/:id/products/:productId/create", gate, async (req, res) => {
+    try {
+      const result = await agent.createProducts(req.params.id, req.params.productId, { by: byOf(req) });
+      if (!result.started) return res.status(409).json({ error: result.reason, build: result.build || null });
+      res.status(202).json({ started: true, build: result.build });
     } catch (error) {
       fail(res, error);
     }

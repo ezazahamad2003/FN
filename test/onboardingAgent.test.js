@@ -153,13 +153,17 @@ function fakeMenu(extraTitles = []) {
    write_online_store_navigation, so a suite that defaults to "no scope" tests
    a store we do not run. menuTitles is the live menu — verifyMegaMenu answers
    from it, so an item nobody inserted cannot be "verified". */
-function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, menuTitles = [], realMenu = false } = {}) {
+function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, menuTitles = [], realMenu = false, storeProducts = null } = {}) {
   const liveMenuTitles = [...menuTitles];
   const calls = { setProduct: [], attachMockups: [], duplicate: [], collection: [] };
   let lastSet = null;
   const shopify = {
     calls,
     collectionAdminUrl: (id) => `https://admin.test/collections/${id}`,
+    // What a collection holds, as the Departments page's adopt and delete read it.
+    async storeProducts() {
+      return storeProducts || { title: COLLECTION_TITLE, id: "111", gid: COLLECTION_GID, handle: "1-vacaville-fire-department", products: [] };
+    },
     async allProductTags() {
       return ["VAC", "BSH", "Embroidered", "Uniform"];
     },
@@ -1150,6 +1154,148 @@ test("one failing product does not sink the run", async () => {
   assert.equal(record.build.state, "failed");
   // The collection still exists — the run went as far as it could.
   assert.equal(record.collection.id, "111");
+});
+
+/* ---------------------------------------------------------------------------
+   One product at a time — the Departments page's New product
+   ------------------------------------------------------------------------- */
+
+const HAT_ROW = {
+  brand: "Richardson",
+  styleNumber: "R112",
+  type: "Hat",
+  colors: ["Navy"],
+  sizes: ["OSFA"],
+  decorationMethod: "embroidery",
+  decorationCodes: "E01",
+  fulfillment: "Non Stock Item"
+};
+
+test("saveProduct checks one row and leaves the rows already saved exactly as they were", async () => {
+  const { id, record: before } = await builtOnboarding();
+  const first = before.products[0];
+
+  const { onboarding, product } = await agent.saveProduct(id, "", HAT_ROW, { by: "dan" });
+  assert.equal(onboarding.products.length, 2);
+  assert.deepEqual(onboarding.products[0], first, "the built row was not touched");
+  assert.equal(product.id, "p2");
+  assert.equal(product.validation.ok, true, (product.validation.errors || []).join("; "));
+  assert.equal(product.validation.skuPreview.length, 1);
+  assert.match(product.validation.skuPreview[0], /^R112-.*-VAC-E01$/);
+
+  // Saved again by id: same slot, the first row still untouched.
+  const again = await agent.saveProduct(id, product.id, { ...HAT_ROW, colors: ["Navy", "Midnight Navy"] }, { by: "dan" });
+  assert.equal(again.product.id, "p2");
+  assert.equal(again.onboarding.products.length, 2);
+  assert.deepEqual(again.onboarding.products[0], first);
+  assert.equal(again.product.validation.skuPreview.length, 2);
+
+  await assert.rejects(() => agent.saveProduct(id, "", { brand: "", styleNumber: "" }, { by: "dan" }), /Pick a garment first/);
+});
+
+test("createProducts adds one product to a built store and leaves the collection, the lock and the other products alone", async () => {
+  const { deps, id } = await builtOnboarding();
+  const { product } = await agent.saveProduct(id, "", HAT_ROW, { by: "dan" });
+  const collectionWrites = deps.shopify.calls.collection.length;
+  const statusBefore = (await store.getOnboarding(id)).status;
+
+  const started = await agent.createProducts(id, product.id, { by: "dan", wait: true });
+  assert.equal(started.started, true);
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  assert.deepEqual(record.build.scope, { kind: "products", productIds: ["p2"] });
+  assert.deepEqual(
+    record.build.steps.map((s) => s.key),
+    ["preflight", "mockups:p2", "products:p2"],
+    "only this product's steps ran — no collection, lock, shared settings or final check"
+  );
+  assert.equal(deps.shopify.calls.collection.length, collectionWrites, "the collection was not written again");
+  assert.equal(deps.shopify.calls.setProduct.length, 2);
+  assert.deepEqual(deps.shopify.calls.setProduct[1].collectionGids, [COLLECTION_GID], "the new product goes into the store's collection");
+  assert.deepEqual(deps.shopify.calls.setProduct[1].tags, ["VAC", rules.TAG_EMBROIDERED]);
+  assert.equal(record.products[1].buildState, "created");
+  assert.ok(record.products[1].shopify.gid);
+  assert.ok(record.products[1].mockups.length > 0, "its mockups were made");
+  assert.equal(record.products[0].shopify.gid, PRODUCT_GID, "the first product is as it was");
+  assert.equal(record.status, statusBefore, "a product-only run does not re-judge the store");
+
+  // Created once: a second create for the same row is refused, and so is removing it.
+  await assert.rejects(() => agent.createProducts(id, product.id, { by: "dan" }), /already in Shopify/);
+  await assert.rejects(() => agent.removeProduct(id, product.id, { by: "dan" }), /already in Shopify/);
+});
+
+test("createProducts refuses a row that does not validate, and removeProduct takes only that row away", async () => {
+  const { id } = await builtOnboarding();
+  const { product } = await agent.saveProduct(id, "", { ...HAT_ROW, sizes: [] }, { by: "dan" });
+  assert.equal(product.validation.ok, false);
+  await assert.rejects(() => agent.createProducts(id, product.id, { by: "dan" }), /has not passed validation/);
+  const after = await agent.removeProduct(id, product.id, { by: "dan" });
+  assert.deepEqual(after.products.map((p) => p.id), ["p1"]);
+  assert.ok(after.products[0].shopify.gid, "the built product stays");
+});
+
+test("adoptStore gives a store the agent did not build a record with its code read from the SKUs", async () => {
+  const shopify = fakeShopify({
+    storeProducts: {
+      title: "2. Livermore-Pleasanton Firefighters IAFF 1974",
+      id: "222",
+      gid: "gid://shopify/Collection/222",
+      handle: "2-livermore-pleasanton-firefighters-iaff-1974",
+      products: [
+        { gid: "gid://shopify/Product/10", id: "10", title: "5.11 Pro T-Shirt", status: "ACTIVE", tags: ["LPF"], sku: "NL3600-L-NVY-LPF-F01" },
+        { gid: "gid://shopify/Product/11", id: "11", title: "New Era Trucker", status: "ACTIVE", tags: ["Embroidered"], sku: "NE4030-OSFA-NVY-LPF-E01" },
+        { gid: "gid://shopify/Product/12", id: "12", title: "Gift card", status: "DRAFT", tags: [], sku: "" }
+      ]
+    }
+  });
+  harness({ shopify });
+
+  const record = await agent.adoptStore("222", { by: "dan" });
+  assert.ok(record.adopted, "marked as a store the agent did not build");
+  assert.equal(record.department.name, "Livermore-Pleasanton Firefighters IAFF 1974");
+  assert.equal(record.department.storeOrdinal, 2);
+  assert.equal(record.collection.gid, "gid://shopify/Collection/222");
+  assert.equal(record.collection.id, "222");
+  assert.equal(record.collection.title, "2. Livermore-Pleasanton Firefighters IAFF 1974");
+  assert.deepEqual([record.department.code.value, record.department.code.approved, record.department.code.source], ["LPF", true, "store"]);
+  assert.equal(record.status, "complete");
+  assert.equal(record.products.length, 0);
+
+  // Adopting again finds the same record; the Departments page knows it is not the agent's to delete.
+  const again = await agent.adoptStore("gid://shopify/Collection/222", { by: "dan" });
+  assert.equal(again.id, record.id);
+  const info = await agent.storeInfo("222");
+  assert.equal(info.onboardingId, record.id);
+  assert.equal(info.adopted, true);
+  assert.equal(info.builtByAgent, false);
+  assert.equal(info.deletable, false);
+  await assert.rejects(() => agent.deleteStore("222", { confirmName: "2. Livermore-Pleasanton Firefighters IAFF 1974", by: "dan" }), /not built by the Onboarding Agent/);
+
+  // A row saved on it validates under the store's own code.
+  const { product } = await agent.saveProduct(record.id, "", HAT_ROW, { by: "dan" });
+  assert.equal(product.validation.ok, true, (product.validation.errors || []).join("; "));
+  assert.match(product.validation.skuPreview[0], /-LPF-E01$/);
+});
+
+test("a store whose products carry no code waits for the operator to type it", async () => {
+  const shopify = fakeShopify({
+    storeProducts: { title: "Pinehurst Fire", id: "333", gid: "gid://shopify/Collection/333", handle: "pinehurst-fire", products: [{ gid: "gid://shopify/Product/1", id: "1", title: "Tee", status: "DRAFT", tags: [], sku: "" }] }
+  });
+  harness({ shopify });
+  await seedVacavilleOnList();
+
+  const record = await agent.adoptStore("333", { by: "dan" });
+  assert.equal(record.department.code.approved, false);
+  assert.equal(record.department.storeOrdinal, 1);
+  assert.equal(record.collection.title, "Pinehurst Fire");
+  await assert.rejects(() => agent.saveProduct(record.id, "", HAT_ROW, { by: "dan" }), /Approve the department code/);
+  // Another department's code is refused; the store's own is approved in place.
+  await assert.rejects(() => agent.adoptStore("333", { code: "VAC", by: "dan" }), /belongs to "Vacaville Fire Department"/);
+  const approved = await agent.adoptStore("333", { code: "pin", by: "dan" });
+  assert.equal(approved.id, record.id);
+  assert.deepEqual([approved.department.code.value, approved.department.code.approved, approved.department.code.source], ["PIN", true, "manual"]);
+  const { product } = await agent.saveProduct(record.id, "", HAT_ROW, { by: "dan" });
+  assert.match(product.validation.skuPreview[0], /-PIN-E01$/);
 });
 
 test("the build refuses to start while a row has not passed validation", async () => {

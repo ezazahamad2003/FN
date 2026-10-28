@@ -1510,7 +1510,7 @@ input[aria-invalid="true"],
 }
 .banner[data-tone="ok"] .b-glyph { color: var(--success); }
 
-/* ---- New product modal --------------------------------------------------- */
+/* ---- Wide modal (the onboarding dialogs; New product on a department) ----- */
 .modal-wide {
   width: min(720px, 100%);
   max-height: calc(100vh - var(--space-8));
@@ -1536,16 +1536,6 @@ input[aria-invalid="true"],
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
-
-.np-progress {
-  padding: var(--space-4);
-  border: 1px solid var(--info-border);
-  border-radius: var(--radius-md);
-  background: var(--info-soft);
-  margin-bottom: var(--space-4);
-}
-.np-progress[hidden] { display: none; }
-.np-progress .hint { margin-top: var(--space-2); color: var(--text-muted); font-size: var(--fs-xs); }
 
 /* =============================================================================
    Setup page specifics

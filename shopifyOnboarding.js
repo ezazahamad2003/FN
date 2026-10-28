@@ -1479,13 +1479,22 @@ async function applyMegaMenuInsert(menu, proposal, { onLog, baseline = null } = 
    the agent built, after Dan typed its name.
    ------------------------------------------------------------------------- */
 
+/* The first SKU rides along: a store the agent did not build carries its
+   department code nowhere but in its SKUs (STYLE-SIZE-COLOR-CODE-…) and tags,
+   and adopting such a store reads the code from them. */
 const STORE_PRODUCTS_QUERY = `
 query storeProducts($id: ID!, $after: String) {
   collection(id: $id) {
     id
+    legacyResourceId
     title
+    handle
     products(first: 100, after: $after) {
-      nodes { id legacyResourceId title status tags collections(first: 5) { nodes { id title } } }
+      nodes {
+        id legacyResourceId title status tags vendor productType
+        variants(first: 1) { nodes { sku } }
+        collections(first: 5) { nodes { id title } }
+      }
       pageInfo { hasNextPage endCursor }
     }
   }
@@ -1506,11 +1515,15 @@ async function storeProducts(collectionGidOrId) {
   const out = [];
   let after = null;
   let title = "";
+  let legacyId = "";
+  let handle = "";
   do {
     const data = await gql(STORE_PRODUCTS_QUERY, { id, after });
     const collection = data?.collection;
     if (!collection) throw new Error(`Collection ${collectionGidOrId} was not found in Shopify.`);
     title = collection.title;
+    legacyId = String(collection.legacyResourceId || "");
+    handle = collection.handle || "";
     for (const p of collection.products.nodes || []) {
       out.push({
         gid: p.id,
@@ -1518,12 +1531,15 @@ async function storeProducts(collectionGidOrId) {
         title: p.title,
         status: p.status,
         tags: p.tags || [],
+        vendor: p.vendor || "",
+        productType: p.productType || "",
+        sku: p.variants?.nodes?.[0]?.sku || "",
         otherCollections: (p.collections?.nodes || []).filter((c) => c.id !== id).map((c) => c.title)
       });
     }
     after = collection.products.pageInfo?.hasNextPage ? collection.products.pageInfo.endCursor : null;
   } while (after);
-  return { title, products: out };
+  return { title, id: legacyId, gid: id, handle, products: out };
 }
 
 async function deleteProduct(gidOrId) {

@@ -10,9 +10,9 @@
      • GET  /api/products/:id → { product }
      • PATCH /api/products/:id → { product } (title/description/type/vendor/
        status/tags/price; price applies to every variant)
-     • POST /api/collections/:id/products (multipart: description, logos[],
-       price, sizes, productLabel, productType, garmentColor, placement)
-       → SSE `status` / `error` events ending in `created`.
+     • New product on a department page: window.FNOnboarding.openStoreProduct
+       (public/onboarding.js) — the onboarding's product row in a modal, on
+       GET/POST /api/stores/:id[/adopt] and /api/onboardings/:id/products/:pid.
      • /api/onboardings/* and /api/reference/* — the Department Onboarding
        Agent, rendered by public/onboarding.js (window.FNOnboarding).
 
@@ -138,42 +138,6 @@ async function refreshConnectionState() {
     setPill("attention", "Status unavailable");
   }
   return connectionStatus;
-}
-
-/* -----------------------------------------------------------------------------
-   SSE plumbing — the server answers some POSTs with an event stream
-   (fetch + ReadableStream rather than EventSource, because the requests are
-   POST multipart).
-   -------------------------------------------------------------------------- */
-function parseSseChunk(buffer, onEvent) {
-  const events = buffer.split("\n\n");
-  const remainder = events.pop() || "";
-  for (const raw of events) {
-    const lines = raw.split("\n");
-    const event = (lines.find((l) => l.startsWith("event:")) || "event: message").slice(6).trim();
-    const dataLine = lines.find((l) => l.startsWith("data:"));
-    if (!dataLine) continue;
-    let payload;
-    try {
-      payload = JSON.parse(dataLine.slice(5).trim());
-    } catch {
-      continue; // a malformed frame must not abort the whole stream
-    }
-    onEvent(event, payload);
-  }
-  return remainder;
-}
-
-async function readSseStream(res, onEvent) {
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    buffer = parseSseChunk(buffer, onEvent);
-  }
 }
 
 refreshConnectionState();
@@ -2050,168 +2014,29 @@ async function saveProduct(e) {
 }
 
 /* -----------------------------------------------------------------------------
-   New product — describe it, add logos, publish straight into the department
+   New product — the onboarding's product row, in a modal over this department
+   -----------------------------------------------------------------------------
+   public/onboarding.js owns the form (window.FNOnboarding.openStoreProduct):
+   the store's own blanks, the lookup of any brand and style, the placements
+   with a logo each, embroidery proofs, another logo as a Style, blank photos,
+   the SKU preview — and the same build that makes an onboarding's products,
+   scoped to this one row. A store that predates the agent gets a record of
+   its own on first use (POST /api/stores/:id/adopt).
    -------------------------------------------------------------------------- */
-const newProductModal = el("newProductModal");
-const newProductForm = el("newProductForm");
-const npLogoInput = el("npLogos");
-const npLogoThumbs = el("npLogoThumbs");
-let npLastFocus = null;
-const npObjectUrls = new Set();
-
-function renderNpThumbs() {
-  npObjectUrls.forEach((url) => URL.revokeObjectURL(url));
-  npObjectUrls.clear();
-  const files = [...npLogoInput.files];
-  npLogoThumbs.innerHTML = files
-    .map((file, i) => {
-      const url = URL.createObjectURL(file);
-      npObjectUrls.add(url);
-      return `
-        <div class="thumb">
-          <img src="${url}" alt="${escapeHtml(file.name)}">
-          <button class="file-remove" type="button" data-remove-nplogo="${i}" aria-label="Remove ${escapeHtml(file.name)}">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>`;
-    })
-    .join("");
-  syncDropzone("npLogos", files.length);
-  if (files.length) {
-    hideFieldError(npLogoInput, el("npLogosError"));
-    markDropzoneInvalid("npLogos", false);
-  }
-}
-
 function openNewProductModal() {
   if (!currentCollection) return;
-  npLastFocus = document.activeElement;
-  el("newProductDept").textContent = `Creating in “${currentCollection.title}”. Describe the garment, add the logos, set a price.`;
-  newProductModal.hidden = false;
-  document.body.style.overflow = "hidden";
-  document.addEventListener("keydown", onNpKeydown);
-  el("npDescription").focus();
-}
-
-function closeNewProductModal() {
-  if (newProductModal.hidden) return;
-  newProductModal.hidden = true;
-  document.body.style.overflow = "";
-  document.removeEventListener("keydown", onNpKeydown);
-  if (npLastFocus?.focus) npLastFocus.focus();
-}
-
-function onNpKeydown(e) {
-  // A create run is mid-flight once the submit button is disabled; Escape then
-  // would abandon a Shopify write the operator can't see the result of.
-  if (e.key === "Escape" && !el("npSubmit").disabled) {
-    e.preventDefault();
-    closeNewProductModal();
+  if (!window.FNOnboarding?.openStoreProduct) {
+    window.alert("The product form did not load (onboarding.js). Reload the page and try again.");
+    return;
   }
-}
-
-function resetNewProductForm() {
-  newProductForm.reset();
-  setInputFiles(npLogoInput, []);
-  renderNpThumbs();
-  el("npSizes").value = "XS, S, M, L, XL, 2XL, 3XL";
-  el("npProgress").hidden = true;
-  el("npError").hidden = true;
-  hideFieldError(el("npDescription"), el("npDescriptionError"));
-  hideFieldError(el("npPrice"), el("npPriceError"));
-  markDropzoneInvalid("npLogos", false);
-}
-
-const NP_TOTAL_STEPS = 6;
-function setNpProgress(step, label) {
-  const pct = Math.round(((step - 1) / NP_TOTAL_STEPS) * 100);
-  el("npProgressFill").style.width = `${pct}%`;
-  el("npProgressPct").textContent = `${pct}%`;
-  el("npProgressText").textContent = label;
-  el("npProgressBar").setAttribute("aria-valuenow", String(pct));
-}
-
-function validateNewProduct() {
-  let ok = true;
-  if (!el("npDescription").value.trim()) {
-    showFieldError(el("npDescription"), el("npDescriptionError"), "Describe the product first.");
-    ok = false;
-  } else {
-    hideFieldError(el("npDescription"), el("npDescriptionError"));
-  }
-  const price = el("npPrice").value.trim();
-  if (price && (!Number.isFinite(Number(price)) || Number(price) < 0)) {
-    showFieldError(el("npPrice"), el("npPriceError"), "Enter a price of 0 or more.");
-    ok = false;
-  } else {
-    hideFieldError(el("npPrice"), el("npPriceError"));
-  }
-  if (!npLogoInput.files.length) {
-    showFieldError(npLogoInput, el("npLogosError"), "Add at least one logo image.");
-    markDropzoneInvalid("npLogos", true);
-    ok = false;
-  } else {
-    hideFieldError(npLogoInput, el("npLogosError"));
-    markDropzoneInvalid("npLogos", false);
-  }
-  return ok;
-}
-
-async function submitNewProduct(e) {
-  e.preventDefault();
-  if (!currentCollection || !validateNewProduct()) return;
-
-  const submitBtn = el("npSubmit");
-  const cancelBtn = el("npCancel");
-  submitBtn.disabled = true;
-  cancelBtn.disabled = true;
-  submitBtn.querySelector(".btn-label").textContent = "Creating…";
-  submitBtn.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
-  el("npError").hidden = true;
-  el("npProgress").hidden = false;
-  setNpProgress(1, "Starting…");
-
-  let createdProduct = null;
-  try {
-    const res = await fetch(`/api/collections/${encodeURIComponent(currentCollection.id)}/products`, {
-      method: "POST",
-      body: new FormData(newProductForm)
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({ error: "Could not create the product." }));
-      throw new Error(payload.error || "Could not create the product.");
+  const collectionId = currentCollection.id;
+  window.FNOnboarding.openStoreProduct({
+    collection: currentCollection,
+    onCreated: () => {
+      collectionsCache = null; // product counts changed
+      if (currentCollection && String(currentCollection.id) === String(collectionId)) loadDepartment(collectionId);
     }
-
-    let failure = null;
-    await readSseStream(res, (event, payload) => {
-      if (event === "status" && payload.state === "running") {
-        setNpProgress(payload.step, payload.message.replace(/^Step \d+ \w+: /, ""));
-      } else if (event === "status" && payload.state === "complete") {
-        setNpProgress(payload.step + 1, "Working…");
-      } else if (event === "created") {
-        createdProduct = payload.product;
-      } else if (event === "error") {
-        failure = payload.error || "Could not create the product.";
-      }
-    });
-    if (failure) throw new Error(failure);
-    if (!createdProduct) throw new Error("The run ended before the product was created.");
-
-    setNpProgress(NP_TOTAL_STEPS + 1, "Done");
-    closeNewProductModal();
-    resetNewProductForm();
-    collectionsCache = null; // product counts changed
-    await loadDepartment(currentCollection.id);
-    openProductEditor(createdProduct.id);
-  } catch (err) {
-    el("npErrorText").textContent = err.message || "Could not create the product.";
-    el("npError").hidden = false;
-  } finally {
-    submitBtn.disabled = false;
-    cancelBtn.disabled = false;
-    submitBtn.querySelector(".spinner")?.remove();
-    submitBtn.querySelector(".btn-label").textContent = "Create product";
-  }
+  });
 }
 
 /* -----------------------------------------------------------------------------
@@ -2242,11 +2067,6 @@ document.addEventListener("click", (e) => {
     if (retry.dataset.retry === "department") return loadDepartment(retry.dataset.id);
   }
 
-  const npIdx = e.target.closest("[data-remove-nplogo]")?.dataset.removeNplogo;
-  if (npIdx !== undefined) {
-    setInputFiles(npLogoInput, [...npLogoInput.files].filter((_, i) => i !== Number(npIdx)));
-    renderNpThumbs();
-  }
 });
 
 el("drawerClose").addEventListener("click", closeDrawer);
@@ -2254,13 +2074,6 @@ productDrawer.addEventListener("click", (e) => {
   if (e.target === productDrawer) closeDrawer();
 });
 
-el("npCancel").addEventListener("click", closeNewProductModal);
-el("newProductClose").addEventListener("click", closeNewProductModal);
-newProductModal.addEventListener("click", (e) => {
-  if (e.target === newProductModal && !el("npSubmit").disabled) closeNewProductModal();
-});
-newProductForm.addEventListener("submit", submitNewProduct);
-wireDropzone("npLogos", npLogoInput, renderNpThumbs, isImage);
 if (brainForm) {
   brainForm.addEventListener("submit", (event) => {
     event.preventDefault();

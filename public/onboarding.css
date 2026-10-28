@@ -1756,3 +1756,71 @@
   background: var(--warn-soft);
   color: var(--text);
 }
+
+/* =============================================================================
+   New product on the Departments page — the Products-step row in a modal
+   -----------------------------------------------------------------------------
+   The row itself is .ob-product, unchanged. The modal is wider than the
+   onboarding dialogs because the row's grid is three columns, and the row's
+   own remove button is hidden: the dialog's Close and Discard are the way out.
+   ========================================================================== */
+.ob-store-modal { width: min(1100px, 100%); }
+.ob-store-modal .modal-body { display: grid; gap: var(--space-4); align-content: start; }
+.ob-store-modal .ob-product-head .variant-remove { display: none; }
+.ob-store-modal .modal-actions { margin-top: 0; }
+.ob-store-modal .ob-banner { margin: 0; }
+
+.ob-store-what { margin: 0; color: var(--text-muted); font-size: var(--fs-sm); max-width: 96ch; }
+
+.ob-store-logos {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.ob-store-logos[data-done="true"] { border-left-color: var(--success); }
+.ob-store-logos .hint { margin: 0; }
+
+.ob-store-saved {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn-border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  color: var(--text);
+}
+
+.ob-store-code {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--warn-border);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--warn-soft);
+}
+.ob-store-code .hint { margin: 0; color: var(--text); }
+.ob-store-code-bar { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.ob-store-code-bar input { width: 9ch; text-transform: uppercase; }
+
+.ob-store-progress { display: grid; gap: var(--space-3); }
+.ob-store-done {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+  padding: var(--space-4);
+  border: 1px solid var(--success-border);
+  border-left: 3px solid var(--success);
+  border-radius: var(--radius-md);
+  background: var(--success-soft);
+}
+.ob-store-done[data-tone="danger"] { border-color: var(--danger-border); border-left-color: var(--danger); background: var(--danger-soft); }
+.ob-store-done p { margin: 0; }
+
+@media (max-width: 720px) {
+  .ob-store-modal .modal-actions .btn { flex: 1 1 auto; }
+}

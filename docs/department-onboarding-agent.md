@@ -97,6 +97,10 @@ Container `department-onboardings`, blob `<id>` where
   "createdAt": "ISO", "updatedAt": "ISO",
   "status": "packet" | "setup" | "inputs" | "building" | "built" | "built-partial" | "build-error" | "complete",
   "phase": "packet" | "setup" | "inputs" | "build" | "report",
+  // Only on the record behind a store the agent did NOT build (POST /api/stores/:id/adopt):
+  // it holds the logos and the rows added from the Departments page; status is "complete"
+  // from the start, the collection is the live one, and the store is never deletable from here.
+  "adopted": { "at": "ISO", "by": "", "collectionId": "" },
   "department": {
     "name": "Vacaville Fire Department",        // exact spelling = department tag
     "tag": "Vacaville Fire Department",
@@ -221,6 +225,15 @@ Container `department-onboardings`, blob `<id>` where
 | POST | `/api/onboardings/:id/code` | `{ code, by }` approve/set → `{ onboarding }` (continues setup) |
 | POST | `/api/onboardings/:id/review` | re-run policy review → `{ onboarding }` |
 | PUT | `/api/onboardings/:id/products` | `{ products: [row] }` → validates, `{ onboarding }` |
+| POST | `/api/onboardings/:id/products` | `{ product: row, by }` → one row added and checked on its own; every other saved row is left exactly as it stands → `{ onboarding, product }` |
+| PUT | `/api/onboardings/:id/products/:productId` | `{ product: row, by }` → that one row saved and checked → `{ onboarding, product }` |
+| DELETE | `/api/onboardings/:id/products/:productId` | a row never built (no `shopify.gid`) and its proofs/photos → `{ onboarding }` |
+| POST | `/api/onboardings/:id/products/:productId/create` | → `202 { started, build }`: a build scoped to that product (`build.scope = { kind: "products", productIds }`) — its mockups and its Draft in the store's collection; no collection, lock, shared-settings or final-check step, and the record's status is left alone. `400` unless the row validates and is not in Shopify yet |
+| POST | `/api/onboardings/:id/redo-images` | `{ productIds }` → `202 { started, build }` with `build.scope = { kind: "images", productIds }` |
+| POST | `/api/onboardings/:id/products/:productId/redo-images` | → `202 { started, build }` (one product) |
+| GET | `/api/stores/:collectionId` | `{ builtByAgent, adopted, building, deletable, reason, onboardingId?, departmentName?, code?, collectionTitle?, drive? }` — the record behind a Shopify collection |
+| POST | `/api/stores/:collectionId/adopt` | `{ code?, by }` → `{ onboarding }`: the record behind a store the agent did not build, made on first use for the Departments page's New product. The code is read from the store's SKUs (`STYLE-SIZE-COLOR-CODE-…`); when they carry none the record waits unapproved until adopted again with `code`. Never creates anything in Shopify or Drive; links the store's existing Drive folders when their names carry `(CODE)` |
+| DELETE | `/api/stores/:collectionId` | `{ confirmName }` → deletes a store the agent built (refused for an adopted record) |
 | POST | `/api/onboardings/:id/colors/propose` | `{ color, code }` → reference proposal |
 | POST | `/api/onboardings/:id/build` | `{ force? }` → `202 { started, build }` |
 | POST | `/api/onboardings/:id/shared-settings/propose` | → `{ onboarding }` |

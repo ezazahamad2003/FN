@@ -1151,12 +1151,18 @@ async function writeReviewDocs(record, review, by) {
  * resolved (an unknown colour becomes a proposal on the Color Code List),
  * vendor exact, print and embroidery never mixed.
  */
-async function saveProducts(id, products, { by = "" } = {}) {
+async function saveProducts(id, products, { by = "", only = null } = {}) {
   if (!Array.isArray(products)) throw badRequest("products must be an array of rows.");
   const record = await store().getOnboarding(id);
   const code = departmentCode(record);
   if (!code) throw badRequest("Approve the department code before saving product rows.");
   const colorTable = await tables().colorTable();
+  /* `only`: the ids of the rows this save is about. Every other row that is
+     already saved is kept exactly as it stands — not resolved, profiled and
+     validated against Shopify again. One product added to a store of twenty
+     from the Departments page is one row's worth of Shopify reads, not
+     twenty-one. */
+  const onlyIds = Array.isArray(only) && only.length ? new Set(only.map(clean).filter(Boolean)) : null;
 
   const rows = [];
   const proposals = [];
@@ -1173,6 +1179,15 @@ async function saveProducts(id, products, { by = "" } = {}) {
     const incoming = { ...(products[i] || {}) };
     // Owed images are the build's to track, never the console's to send.
     delete incoming.replaceImages;
+    if (onlyIds && incoming.id && !onlyIds.has(clean(incoming.id))) {
+      const kept = productById(record, incoming.id);
+      if (kept && !claimed.has(kept.id)) {
+        claimed.add(kept.id);
+        usedIds.add(kept.id);
+        rows.push(kept);
+        continue;
+      }
+    }
     /* A row with nothing in it (+ Add product, then Save) is not a product.
        Saving it showed four "is required" errors on an empty row and kept
        the store's product list "needing attention" for no reason. */
@@ -1393,13 +1408,248 @@ async function saveProducts(id, products, { by = "" } = {}) {
     if (r.status === "packet" || r.status === "setup") r.status = "inputs";
     if (r.phase === "packet" || r.phase === "setup") r.phase = "inputs";
     const bad = rows.filter((row) => row.validation.ok !== true).length;
-    note(r, { type: "products", message: `${rows.length} product row(s) saved; ${bad} need attention.`, by });
+    if (onlyIds) {
+      const touched = rows.filter((row) => onlyIds.has(row.id));
+      const name = (row) => row.title || row.styleNumber || row.id;
+      note(r, {
+        type: "products",
+        message: `${touched.map(name).join(", ") || "A product row"} saved${touched.some((row) => row.validation.ok !== true) ? "; it needs attention" : ""}.`,
+        by
+      });
+    } else note(r, { type: "products", message: `${rows.length} product row(s) saved; ${bad} need attention.`, by });
     if (proposed.length) note(r, { type: "color", message: `Colour code proposal(s) waiting for approval: ${proposed.join(", ")}.`, by });
     // Losing a built product's mockups is never silent — Dan has to know the
     // row he edited is not the row that was built.
     for (const warning of warnedStyleChanges) note(r, { type: "warning", message: warning, by });
     return r;
   });
+}
+
+/* ---------------------------------------------------------------------------
+   One product at a time — the "New product" form on the Departments page.
+   The same row, the same rules and the same build as the onboarding's
+   Products step, for a store that already exists: the row is saved and
+   checked on its own, and created on its own (createProducts), while the
+   collection, the lock, the menu and every other product are left alone.
+   ------------------------------------------------------------------------- */
+
+function nextRowId(record) {
+  const used = new Set((record.products || []).map((p) => String(p.id || "")));
+  let n = used.size + 1;
+  while (used.has(`p${n}`)) n += 1;
+  return `p${n}`;
+}
+
+/** Save and validate ONE row; every other saved row is kept as it stands. */
+async function saveProduct(id, productId, product, { by = "" } = {}) {
+  const record = await store().getOnboarding(id);
+  const incoming = product && typeof product === "object" ? product : {};
+  const rowId = clean(productId) || clean(incoming.id) || nextRowId(record);
+  const rows = record.products.map((p) => (p.id === rowId ? { ...incoming, id: rowId } : p));
+  if (!rows.some((p) => p.id === rowId)) rows.push({ ...incoming, id: rowId });
+  const saved = await saveProducts(id, rows, { by, only: [rowId] });
+  const row = productById(saved, rowId);
+  if (!row) throw badRequest("Pick a garment first: the row has nothing on it yet.");
+  return { onboarding: saved, product: row };
+}
+
+/** Drop a row that was never built. Its uploaded proofs and blank photos go
+    with it; a blank photo already kept in the link book stays there for the
+    other departments (the book holds its own copy). */
+async function removeProduct(id, productId, { by = "" } = {}) {
+  const record = await store().getOnboarding(id);
+  const row = productById(record, productId);
+  if (!row) throw badRequest(`No product row "${productId}" on this onboarding.`);
+  if (row.shopify?.gid) throw badRequest(`"${row.title || row.styleNumber || productId}" is already in Shopify. Delete it there if it is not wanted.`);
+  if (isBuildActive(id)) throw badRequest("A build is running for this store. Wait for it to finish.");
+  const assets = [
+    ...Object.values(row.proofs || {}),
+    ...Object.values(row.blankPhotos || {}).flatMap((faces) => Object.values(faces || {})),
+    ...(row.mockups || []).map((m) => m?.assetId)
+  ].filter(Boolean);
+  for (const assetId of assets) await store().deleteAsset(id, assetId).catch(() => {});
+  return store().updateOnboarding(id, (r) => {
+    r.products = r.products.filter((p) => p.id !== row.id);
+    note(r, { type: "products", message: `${row.title || row.styleNumber || row.id} removed before it was built.`, by });
+    return r;
+  });
+}
+
+/**
+ * Create the products named, and nothing else: their mockups, their Shopify
+ * drafts in the store's collection, their images. The rows must validate and
+ * must not be in Shopify already (that is "Redo images", not "create").
+ */
+async function createProducts(id, productIds, { by = "", wait = false } = {}) {
+  if (activeBuilds.has(id)) return { started: false, reason: "A build for this store is already running.", build: null };
+  const ids = [...new Set((Array.isArray(productIds) ? productIds : [productIds]).map(clean).filter(Boolean))];
+  if (!ids.length) throw badRequest("Pick at least one product to create.");
+  const record = await store().getOnboarding(id);
+  if (!record.collection.gid && !record.collection.id) {
+    throw badRequest("The store's collection is not known yet, so a product cannot be added to it. Build the store first.");
+  }
+  for (const productId of ids) {
+    const row = productById(record, productId);
+    if (!row) throw badRequest(`No product row "${productId}" on this store.`);
+    const name = row.title || row.styleNumber || productId;
+    if (row.validation?.ok !== true) {
+      throw badRequest(`"${name}" has not passed validation: ${(row.validation?.errors || ["not validated"]).join("; ")}`);
+    }
+    if (row.shopify?.gid && (await catalog().productExists(row.shopify.gid).catch(() => true))) {
+      throw badRequest(`"${name}" is already in Shopify${row.shopify.url ? ` (${row.shopify.url})` : ""}. Use Redo images to change its pictures.`);
+    }
+  }
+  return startBuild(id, { force: true, by, wait, only: ids, kind: "products" });
+}
+
+/* ---------------------------------------------------------------------------
+   A store the agent did not build (the 100+ that predate it) gets a record of
+   its own the first time a product is added to it from the Departments page.
+   The record holds what that needs — the collection, the department code,
+   the logos, the rows — and nothing is created in Shopify or Drive for it:
+   the store is already there. Such a record is marked `adopted`, is never
+   deletable from the console, and its code comes from the store itself:
+   every SKU in it carries the code (STYLE-SIZE-COLOR-CODE-…), so a code read
+   from the SKUs is the store's own by definition. A store with no readable
+   code waits for the operator to type it.
+   ------------------------------------------------------------------------- */
+function codeFromStoreProducts(products) {
+  const counts = new Map();
+  const bump = (code, weight) => {
+    const value = clean(code).toUpperCase();
+    if (!DEPARTMENT_CODE_TAG_RE.test(value) || value === "FN") return;
+    counts.set(value, (counts.get(value) || 0) + weight);
+  };
+  for (const p of products || []) {
+    const parsed = rules.parseSku(p.sku);
+    // A SKU names the code outright; a tag only hints at it.
+    if (parsed?.code) bump(parsed.code, 3);
+    for (const tag of p.tags || []) bump(tag, 1);
+  }
+  let best = "";
+  let n = 0;
+  for (const [code, count] of counts) if (count > n) [best, n] = [code, count];
+  return best;
+}
+
+// The Drive folders an older store already has, found by its code in their
+// names: "<Name> (CODE)" under Departments, "(CODE) <Name>" under Omni Printer.
+async function findDriveFoldersByCode(code) {
+  const out = { departmentFolder: null, productionFolder: null, warnings: [] };
+  const wanted = clean(code).toUpperCase();
+  if (!wanted) return out;
+  for (const [key, parentId, pick] of [
+    ["departmentFolder", process.env.GDRIVE_PARENT_FOLDER_ID, (name) => new RegExp(`\\(${wanted}\\)\\s*$`, "i").test(name)],
+    ["productionFolder", process.env.GDRIVE_OMNI_PRINTER_FOLDER_ID, (name) => new RegExp(`^\\(${wanted}\\)`, "i").test(name)]
+  ]) {
+    if (!clean(parentId)) continue;
+    try {
+      const folders = await drive().listFilesInFolder(parentId, { mimeType: FOLDER_MIME });
+      out[key] = folders.find((f) => pick(String(f.name || "").trim())) || null;
+    } catch (error) {
+      out.warnings.push(`Drive could not be searched for the store's ${key === "departmentFolder" ? "department" : "production"} folder (${errorText(error)}).`);
+    }
+  }
+  return out;
+}
+
+async function approveStoreCode(record, code, by) {
+  const valid = rules.validateDepartmentCode(code);
+  if (valid.error) throw badRequest(valid.error);
+  // The list's owner of that code must be this department, or nobody.
+  const rows = await tables().departmentCodeRows().catch(() => []);
+  const owner = rows.find((row) => String(row.code).toUpperCase() === valid.code);
+  if (owner && clean(owner.agency) && !sameAgency(owner.agency, record.department.name)) {
+    throw badRequest(`Department code ${valid.code} belongs to "${clean(owner.agency)}" on the Department Code List. Check the store's SKUs for its code.`);
+  }
+  return valid.code;
+}
+
+async function linkStoreDriveFolders(id, code, by) {
+  const found = await findDriveFoldersByCode(code);
+  let productImages = null;
+  if (found.departmentFolder) {
+    try {
+      productImages = await drive().ensureSubfolder("Product Images", found.departmentFolder.id);
+    } catch (error) {
+      found.warnings.push(`The Product Images subfolder could not be made in the store's Drive folder (${errorText(error)}).`);
+    }
+  }
+  return store().updateOnboarding(id, (r) => {
+    if (found.departmentFolder) {
+      r.drive.departmentFolderId = found.departmentFolder.id;
+      r.drive.departmentFolderUrl = found.departmentFolder.webViewLink || `https://drive.google.com/drive/folders/${found.departmentFolder.id}`;
+      note(r, { type: "drive", message: `Linked to the store's Drive folder "${found.departmentFolder.name}".`, by });
+    } else note(r, { type: "drive", message: `No Drive folder named with (${code}) was found under Departments, so mockups are kept on the record only.`, by });
+    if (productImages) r.drive.productImagesFolderId = productImages.id;
+    if (found.productionFolder) {
+      r.drive.productionFolderId = found.productionFolder.id;
+      r.drive.productionFolderUrl = found.productionFolder.webViewLink || `https://drive.google.com/drive/folders/${found.productionFolder.id}`;
+    }
+    for (const w of found.warnings) note(r, { type: "warning", message: w, by });
+    return r;
+  });
+}
+
+async function adoptStore(collectionId, { code = "", by = "" } = {}) {
+  const existing = await recordForCollection(collectionId);
+  if (existing) {
+    if (existing.department.code.approved || !clean(code)) return existing;
+    // An adopted store whose code could not be read, now typed by the operator.
+    const approved = await approveStoreCode(existing, code, by);
+    await store().updateOnboarding(existing.id, (r) => {
+      r.department.code = { ...r.department.code, value: approved, source: "manual", approved: true, approvedAt: nowIso(), approvedBy: clean(by) };
+      recordApproval(r, { kind: "code", subject: approved, by });
+      note(r, { type: "code", message: `Department code ${approved} approved for this store.`, by });
+      return r;
+    });
+    return linkStoreDriveFolders(existing.id, approved, by);
+  }
+
+  const live = await shop().storeProducts(collectionId);
+  const title = clean(live.title);
+  if (!title) throw badRequest("That collection has no title, so it cannot be adopted as a store.");
+  const m = title.match(/^(\d+)\.\s*(.+)$/);
+  const ordinal = m ? Math.max(1, Number(m[1])) : 1;
+  const name = rules.departmentTag(m ? m[2] : title);
+  let found = codeFromStoreProducts(live.products);
+  let source = "store";
+  if (!found && clean(code)) {
+    found = await approveStoreCode({ department: { name } }, code, by);
+    source = "manual";
+  }
+
+  const created = await store().createOnboarding({ departmentName: name, storeOrdinal: ordinal, storeName: ordinal > 1 ? name : "", by });
+  const record = await store().updateOnboarding(created.id, (r) => {
+    r.adopted = { at: nowIso(), by: clean(by), collectionId: String(live.id || collectionId) };
+    r.collection = {
+      ...r.collection,
+      title,
+      id: String(live.id || ""),
+      gid: live.gid || "",
+      handle: live.handle || "",
+      url: live.id ? shop().collectionAdminUrl(live.id) : "",
+      storefrontUrl: storefrontCollectionUrl(live.handle),
+      descriptionSet: true
+    };
+    // Built outside the agent: there is nothing for the wizard to do here.
+    r.status = "complete";
+    r.phase = "report";
+    if (found) {
+      r.department.code = { ...r.department.code, value: found, source, approved: true, approvedAt: nowIso(), approvedBy: clean(by) };
+      recordApproval(r, { kind: "code", subject: found, by });
+    }
+    note(r, {
+      type: "created",
+      message: `Record opened for the existing store "${title}" (${live.products.length} product(s) in Shopify)${
+        found ? `, department code ${found} ${source === "store" ? "read from its SKUs" : "typed by the operator"}` : "; its department code could not be read from its products"
+      }.`,
+      by
+    });
+    return r;
+  });
+  if (!found) return record;
+  return linkStoreDriveFolders(record.id, found, by);
 }
 
 /* The colour already on the list that a manufacturer's name is a shade of:
@@ -1558,7 +1808,7 @@ async function redoProductImages(id, productIds, { by = "", wait = false } = {})
   return startBuild(id, { force: true, by, wait, only: ids });
 }
 
-async function startBuild(id, { force = false, by = "", wait = false, only = null } = {}) {
+async function startBuild(id, { force = false, by = "", wait = false, only = null, kind = "images" } = {}) {
   // Reserve the slot BEFORE any await: two concurrent starts must not both
   // pass the check.
   if (activeBuilds.has(id)) return { started: false, reason: "A build for this onboarding is already running.", build: null };
@@ -1579,10 +1829,11 @@ async function startBuild(id, { force = false, by = "", wait = false, only = nul
   if (activeBuilds.get(id) !== placeholder) return { started: false, reason: "A build for this onboarding is already running.", build: null };
 
   const build = newBuildState();
-  // Which products this run is for — "Redo images" for some of them. A full
-  // build has no scope.
+  // Which products this run is for — "Redo images" for some of them, or the
+  // products added to a store that is already built. A full build has no scope.
   const scopedIds = Array.isArray(only) ? [...new Set(only.map(clean).filter(Boolean))] : [];
-  if (scopedIds.length) build.scope = { kind: "images", productIds: scopedIds };
+  const scopeKind = kind === "products" ? "products" : "images";
+  if (scopedIds.length) build.scope = { kind: scopeKind, productIds: scopedIds };
   activeBuilds.set(id, build);
   // Step flushes are the normal heartbeat, but one image call can run for
   // minutes without one; this timer keeps the record fresh.
@@ -1591,7 +1842,7 @@ async function startBuild(id, { force = false, by = "", wait = false, only = nul
   }, HEARTBEAT_EVERY_MS);
   if (typeof heartbeat.unref === "function") heartbeat.unref();
 
-  const task = runBuild(id, build, { by, only: scopedIds.length ? scopedIds : null })
+  const task = runBuild(id, build, { by, only: scopedIds.length ? scopedIds : null, kind: scopeKind })
     .catch(async (error) => {
       build.state = "failed";
       build.error = errorText(error);
@@ -1630,7 +1881,7 @@ function preflight(record, rows = record.products) {
   if (problems.length) throw badRequest(problems.join(" "));
 }
 
-async function runBuild(id, build, { by = "", only = null } = {}) {
+async function runBuild(id, build, { by = "", only = null, kind = "images" } = {}) {
   const log = buildLogger(build);
   let record = await store().getOnboarding(id);
   const failures = [];
@@ -1639,9 +1890,16 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
      the lock, every other product, the shared-settings proposals and the
      record's status are left exactly as they are. Redoing one hat used to walk
      every step of the store again (minutes, for one picture) and left a
-     finished record reading "built" instead of "complete". */
+     finished record reading "built" instead of "complete".
+
+     A "products" scope is the other partial run: products added to a store
+     that is already built (the Departments page's New product). Their
+     mockups are made and they are created in the store's collection; the
+     rest of the store is left alone in the same way. */
   const scoped = Array.isArray(only) && only.length ? new Set(only) : null;
-  const imagesOnly = Boolean(scoped);
+  const partial = Boolean(scoped);
+  const productsOnly = partial && kind === "products";
+  const imagesOnly = partial && !productsOnly;
   const rowsOf = (r) => (scoped ? r.products.filter((p) => scoped.has(p.id)) : r.products);
 
   let step = stepStart(build, "preflight", "Preflight");
@@ -1654,11 +1912,16 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
     throw error;
   }
   record = await saveBuild(id, build, (r) => {
-    if (!imagesOnly) {
+    if (!partial) {
       r.status = "building";
       r.phase = "build";
     }
-    note(r, { type: "build", message: imagesOnly ? `Images started for ${rowsOf(r).length} product(s); the rest of the store is left as it is.` : "Build started.", by }, build);
+    const message = productsOnly
+      ? `Adding ${rowsOf(r).length} product(s) to the store; the rest of the store is left as it is.`
+      : imagesOnly
+        ? `Images started for ${rowsOf(r).length} product(s); the rest of the store is left as it is.`
+        : "Build started.";
+    note(r, { type: "build", message, by }, build);
   });
 
   // §5 mockups — before the products, because the product images are these.
@@ -1700,8 +1963,8 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
     }
   }
 
-  // §6 collection — created BEFORE any product. An images-only run has one.
-  if (!imagesOnly) {
+  // §6 collection — created BEFORE any product. A partial run has one.
+  if (!partial) {
     step = stepStart(build, "collection", "Collection");
     try {
       const collection = await buildCollection(id, record, log);
@@ -1719,7 +1982,7 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
   }
 
   // §7 lock
-  if (!imagesOnly) {
+  if (!partial) {
     step = stepStart(build, "lock", "Locksmith lock");
     try {
       const lock = await buildLock(record, log);
@@ -1852,8 +2115,8 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
   }
 
   // §8 shared settings — proposals only; applying needs a separate approval.
-  // An images-only run proposes nothing: the store's settings did not change.
-  if (!imagesOnly) {
+  // A partial run proposes nothing: the store's settings did not change.
+  if (!partial) {
     step = stepStart(build, "shared-settings", "Shared settings");
     try {
       record = await proposeSharedSettings(id, { by });
@@ -1872,12 +2135,13 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
   }
   record = await saveBuild(id, build);
 
-  // §12 final check. Not for an images-only run: the final check re-judges
-  // the whole store and, by §12, takes "complete" away while anything is
+  // §12 final check. Not for a partial run: the final check re-judges the
+  // whole store and, by §12, takes "complete" away while anything is
   // unresolved — on 2026-10-27 redoing three hats on Truckee Meadows (which
-  // Dan had finished) left it "built-partial". New pictures change nothing
-  // the final check judges; the next full build or final check refreshes it.
-  if (!imagesOnly) {
+  // Dan had finished) left it "built-partial". New pictures, or one more
+  // Draft, change nothing the final check judges; the next full build or
+  // final check refreshes it.
+  if (!partial) {
     step = stepStart(build, "final-check", "Final check");
     try {
       record = await finalCheck(id, { by, build });
@@ -1888,18 +2152,20 @@ async function runBuild(id, build, { by = "", only = null } = {}) {
     }
   }
 
-  const created = record.products.filter((p) => p.buildState === "created").length;
+  const created = rowsOf(record).filter((p) => p.buildState === "created").length;
   build.state = failures.length ? (created ? "partial" : "failed") : "complete";
   build.error = failures.length ? failures.join(" | ") : null;
   build.finishedAt = nowIso();
   await saveBuild(id, build, (r) => {
-    if (!imagesOnly) {
+    if (!partial) {
       if (r.status !== "complete") r.status = failures.length ? (created ? "built-partial" : "build-error") : "built";
       r.phase = "report";
     }
-    const message = imagesOnly
-      ? `Images ${build.state}: ${rowsOf(r).length} product(s) made again${failures.length ? `; ${failures.length} failed` : ""}.`
-      : `Build ${build.state}: ${created} product(s) created.`;
+    const message = productsOnly
+      ? `Products ${build.state}: ${created} of ${rowsOf(r).length} added to the store${failures.length ? `; ${failures.length} failed` : ""}.`
+      : imagesOnly
+        ? `Images ${build.state}: ${rowsOf(r).length} product(s) made again${failures.length ? `; ${failures.length} failed` : ""}.`
+        : `Build ${build.state}: ${created} product(s) created.`;
     note(r, { type: "build", message, by }, build);
   });
   return { state: build.state, created, failures };
@@ -3395,9 +3661,11 @@ async function resumeInterruptedBuilds({ onLog = () => {} } = {}) {
 
     onLog(`resuming ${record.department.name || summary.id}: build was ${interrupted ? "interrupted by a shutdown" : "running with no heartbeat"}`);
     try {
-      // An images-only run (Redo images) resumes as one; the rest of the store is not walked again.
-      const only = record.build?.scope?.kind === "images" ? record.build.scope.productIds : null;
-      const result = await startBuild(summary.id, { force: true, by: "resume", only });
+      // A partial run (Redo images, or products added to a built store)
+      // resumes as one; the rest of the store is not walked again.
+      const scope = record.build?.scope;
+      const only = Array.isArray(scope?.productIds) && scope.productIds.length ? scope.productIds : null;
+      const result = await startBuild(summary.id, { force: true, by: "resume", only, kind: scope?.kind || "images" });
       if (result.started) resumed++;
       else onLog(`resume of ${summary.id} not started: ${result.reason}`);
     } catch (error) {
@@ -3428,12 +3696,21 @@ async function recordForCollection(collectionId) {
 async function storeInfo(collectionId) {
   const record = await recordForCollection(collectionId);
   if (!record) {
-    return { builtByAgent: false, deletable: false, reason: "This store was not built by the Onboarding Agent, so it cannot be deleted from here." };
+    return { builtByAgent: false, adopted: false, deletable: false, reason: "This store was not built by the Onboarding Agent, so it cannot be deleted from here." };
   }
+  /* An adopted record only holds the products added from the Departments
+     page; the store itself was built outside the agent and stays undeletable. */
+  const adopted = Boolean(record.adopted);
   return {
-    builtByAgent: true,
-    deletable: !isBuildActive(record.id),
-    reason: isBuildActive(record.id) ? "The store is building. Wait for the build to finish." : "",
+    builtByAgent: !adopted,
+    adopted,
+    building: isBuildActive(record.id),
+    deletable: !adopted && !isBuildActive(record.id),
+    reason: adopted
+      ? "This store was not built by the Onboarding Agent, so it cannot be deleted from here."
+      : isBuildActive(record.id)
+        ? "The store is building. Wait for the build to finish."
+        : "",
     onboardingId: record.id,
     departmentName: record.department.name,
     code: departmentCode(record),
@@ -3456,6 +3733,9 @@ async function storeInfo(collectionId) {
 async function deleteStore(collectionId, { confirmName = "", by = "" } = {}) {
   const record = await recordForCollection(collectionId);
   if (!record) throw badRequest("Only stores built by the Onboarding Agent can be deleted here.");
+  if (record.adopted) {
+    throw badRequest("This store was not built by the Onboarding Agent (its record only holds the products added from the Departments page), so it cannot be deleted from here.");
+  }
   if (isBuildActive(record.id)) {
     const error = new Error("The store is building. Wait for the build to finish before deleting it.");
     error.code = "BUILD_RUNNING";
@@ -3622,6 +3902,10 @@ module.exports = {
   ensureDriveFolders,
   reviewPolicy,
   saveProducts,
+  saveProduct,
+  removeProduct,
+  createProducts,
+  adoptStore,
   proposeColor,
   startBuild,
   redoProductImages,

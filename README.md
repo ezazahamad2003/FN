@@ -102,13 +102,20 @@ From there:
     byte-for-byte. If you do edit a description containing a size-chart table,
     the drawer warns you that the round-trip through plain text will flatten it;
     edit those in Shopify admin.
-- **New product** creates one product in that department from a description
-  plus logos, without needing a policy document. You supply the description,
-  logo files, price, sizes, and optionally a name, type, color, and placement;
-  the app plans the garment, generates the photo, composites each logo, writes
-  the description, creates the product with Front Logo × Size variants, and adds
-  it to the collection. The same no-invention rule applies — anything you don't
-  state is left blank rather than guessed.
+- **New product** adds one product to that department with the same form as
+  the Onboarding Agent's Products step: pick one of the store's own blanks (or
+  look any brand and style up and have the row filled from the web), tick
+  where the logos go and which logo goes on each placement, set colours and
+  sizes, add embroidery proofs, another logo as a Style, and blank photos.
+  **Save & check** fills the title and Vendor from how the store already sells
+  that blank and previews the SKUs; **Create product** runs the agent's build
+  for that one row — mockups, then a Draft in the collection with its SKUs and
+  images — and nothing else in the store is touched. The store's logos live on
+  its onboarding record; a store that predates the agent gets a record of its
+  own on first use (`POST /api/stores/:id/adopt`), with its department code
+  read from its existing SKUs, or typed if they carry none. Such a record is
+  marked `adopted`, shows in the Onboarding Agent's queue, and can never
+  delete the store.
 
 ### Catalog API
 
@@ -118,7 +125,7 @@ From there:
 | `GET` | `/api/collections/:id` | One collection plus its products |
 | `GET` | `/api/products/:id` | Full product detail |
 | `PATCH` | `/api/products/:id` | Update supplied fields only; `price` repriced across all variants |
-| `POST` | `/api/collections/:id/products` | Create a product (multipart; SSE progress) |
+| `POST` | `/api/collections/:id/products` | Legacy description-based create (multipart; SSE progress). The console's **New product** no longer uses it — it goes through `/api/stores/:id` and `/api/onboardings/:id/products/:productId` (see the agent's API) |
 
 ## Customer intake link (New Stores)
 
