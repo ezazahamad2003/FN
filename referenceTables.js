@@ -214,6 +214,69 @@ async function upsertRows(name, rows, { source = "", by = "" } = {}) {
   return changed;
 }
 
+/*
+ * Retire a row (or bring it back). A retired row stays on the table for the
+ * history but is never resolved against again. Returns the row or null.
+ */
+async function setRowStatus(name, key, status, { by = "", note } = {}) {
+  const table = assertTable(name);
+  if (!["active", "retired"].includes(status)) throw new Error(`A row can be "active" or "retired", not "${status}"`);
+  const doc = await loadTable(name);
+  const wanted = String(key || "").trim().toUpperCase();
+  const row = doc.rows.find((r) => String(r[table.key]).toUpperCase() === wanted);
+  if (!row) return null;
+  row.status = status;
+  row.updatedAt = new Date().toISOString();
+  if (by) row.updatedBy = by;
+  if (typeof note === "string") row.note = note;
+  if (status === "active") {
+    delete row.duplicateOf;
+    delete row.preferred;
+  }
+  await saveTable(name, doc);
+  return row;
+}
+
+/*
+ * Resolve a flagged duplicate pair (BLA / BLK, both "Black"): the chosen code
+ * becomes the active one and every other live row for the same value is
+ * retired, noted as its duplicate. On color-codes "the same value" is the
+ * normalised colour name; on every table a row that names the other as its
+ * duplicateOf counts too. Returns { kept, retired: [codes] } or null.
+ */
+async function keepRow(name, key, { by = "" } = {}) {
+  const table = assertTable(name);
+  const doc = await loadTable(name);
+  const wanted = String(key || "").trim().toUpperCase();
+  const kept = doc.rows.find((r) => String(r[table.key]).toUpperCase() === wanted);
+  if (!kept) return null;
+  const now = new Date().toISOString();
+  const sameColor = (row) => name === "color-codes" && rules.normalizeColorName(row.color) === rules.normalizeColorName(kept.color);
+  const namesEachOther = (row) =>
+    String(row.duplicateOf || "").toUpperCase() === wanted ||
+    String(kept.duplicateOf || "").toUpperCase() === String(row[table.key]).toUpperCase();
+  const retired = [];
+  for (const row of doc.rows) {
+    if (row === kept || row.status === "retired") continue;
+    if (!sameColor(row) && !namesEachOther(row)) continue;
+    row.status = "retired";
+    row.duplicateOf = String(kept[table.key]);
+    row.note = `Retired · duplicate of ${kept[table.key]}`;
+    row.updatedAt = now;
+    if (by) row.updatedBy = by;
+    delete row.preferred;
+    retired.push(String(row[table.key]));
+  }
+  kept.status = "active";
+  kept.note = retired.length ? `Kept over ${retired.join(" / ")}` : "";
+  kept.updatedAt = now;
+  if (by) kept.updatedBy = by;
+  delete kept.duplicateOf;
+  delete kept.preferred;
+  await saveTable(name, doc);
+  return { kept, retired };
+}
+
 async function removeRow(name, key) {
   const table = assertTable(name);
   const doc = await loadTable(name);
@@ -368,6 +431,8 @@ module.exports = {
   getRows,
   upsertRows,
   removeRow,
+  setRowStatus,
+  keepRow,
   propose,
   decideProposal,
   pendingProposals,

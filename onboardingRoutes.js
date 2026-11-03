@@ -600,6 +600,31 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
     }
   });
 
+  // Dan keeps one code of a flagged duplicate pair; the others retire.
+  router.post("/reference/:table/rows/:key/keep", gate, async (req, res) => {
+    try {
+      if (!knownTable(req.params.table)) return res.status(404).json({ error: `There is no reference table "${req.params.table}".` });
+      const result = await referenceTables.keepRow(req.params.table, req.params.key, { by: byOf(req) });
+      if (!result) return res.status(404).json({ error: `${req.params.key} is not on the ${req.params.table} table.` });
+      res.json(result);
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.post("/reference/:table/rows/:key/status", gate, async (req, res) => {
+    try {
+      if (!knownTable(req.params.table)) return res.status(404).json({ error: `There is no reference table "${req.params.table}".` });
+      const status = clean(req.body?.status);
+      if (!["active", "retired"].includes(status)) return res.status(400).json({ error: "status must be active or retired." });
+      const row = await referenceTables.setRowStatus(req.params.table, req.params.key, status, { by: byOf(req) });
+      if (!row) return res.status(404).json({ error: `${req.params.key} is not on the ${req.params.table} table.` });
+      res.json({ row });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.post("/reference/:table/proposals/:proposalId", gate, async (req, res) => {
     try {
       if (!knownTable(req.params.table)) return res.status(404).json({ error: `There is no reference table "${req.params.table}".` });

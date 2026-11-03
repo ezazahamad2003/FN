@@ -78,3 +78,42 @@ test("seeded tables work without blob storage (in-memory)", async () => {
     ref.invalidate();
   }
 });
+
+test("Dan keeps one code of a flagged duplicate pair; the other retires and the warning goes", async () => {
+  const prev = process.env.AZURE_STORAGE_CONNECTION_STRING;
+  delete process.env.AZURE_STORAGE_CONNECTION_STRING;
+  ref.invalidate();
+  try {
+    const rules = require("../onboardingRules");
+    const before = rules.resolveColorCode("Black", await ref.colorTable());
+    assert.equal(before.code, "BLK");
+    assert.match(before.warning, /duplicate codes/);
+
+    const result = await ref.keepRow("color-codes", "blk", { by: "Dan" });
+    assert.deepEqual(result.retired, ["BLA"]);
+    assert.equal(result.kept.status, "active");
+    assert.equal(result.kept.preferred, undefined);
+    const table = await ref.colorTable();
+    const bla = table.find((c) => c.code === "BLA");
+    assert.equal(bla.status, "retired");
+    assert.equal(bla.duplicateOf, "BLK");
+    assert.equal(bla.updatedBy, "Dan");
+    const after = rules.resolveColorCode("Black", table);
+    assert.equal(after.code, "BLK");
+    assert.equal(after.warning, undefined);
+    // Other pairs are untouched.
+    assert.equal(table.find((c) => c.code === "CHA").status, "flagged");
+
+    // Retire / restore by hand.
+    assert.equal((await ref.setRowStatus("color-codes", "NVY", "retired", { by: "Dan" })).status, "retired");
+    assert.ok(rules.resolveColorCode("Navy", await ref.colorTable()).missing);
+    assert.equal((await ref.setRowStatus("color-codes", "nvy", "active")).status, "active");
+    assert.equal(rules.resolveColorCode("Navy", await ref.colorTable()).code, "NVY");
+    assert.equal(await ref.setRowStatus("color-codes", "ZZZ", "retired"), null);
+    await assert.rejects(() => ref.setRowStatus("color-codes", "NVY", "gone"), /active.*retired/);
+    assert.equal(await ref.keepRow("color-codes", "ZZZ"), null);
+  } finally {
+    if (prev) process.env.AZURE_STORAGE_CONNECTION_STRING = prev;
+    ref.invalidate();
+  }
+});

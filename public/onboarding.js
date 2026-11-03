@@ -224,6 +224,7 @@
     record: null,
     refTab: REFERENCE_TABS[0].key,
     refFilter: "",
+    refEdit: null,
     refData: null,
     // Capabilities are read on the list view but needed on the detail view too
     // (the lock card offers to create a lock only when Locksmith is reachable).
@@ -4898,6 +4899,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
   }
 
   async function loadReferenceTable(key) {
+    if (state.refTab !== key) state.refEdit = null;
     state.refTab = key;
     state.refData = null;
     const panel = el("obTabPanel");
@@ -4950,13 +4952,13 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       ${rows.length
         ? `<div class="ob-table-wrap">
             <table class="ob-table">
-              <thead><tr>${tab.columns.map((column) => `<th scope="col">${esc(column.label)}</th>`).join("")}</tr></thead>
+              <thead><tr>${tab.columns.map((column) => `<th scope="col">${esc(column.label)}</th>`).join("")}<th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 ${rows
                   .map(
-                    (row) => `<tr>${tab.columns
+                    (row) => `<tr${isRetired(row) ? ' class="ob-row-retired"' : ""}${state.refEdit && rowKey(tab, row) === state.refEdit ? ' aria-current="true"' : ""}>${tab.columns
                       .map((column) => `<td${column.mono ? ' class="ob-mono"' : ""}${column.wide ? ' class="ob-wide"' : ""}>${esc(cellText(row?.[column.k]))}</td>`)
-                      .join("")}</tr>`
+                      .join("")}<td class="ob-actions">${rowActionsHtml(tab, row, data.rows)}</td></tr>`
                   )
                   .join("")}
               </tbody>
@@ -4972,6 +4974,52 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     if (!search) return;
     search.focus({ preventScroll: true });
     if (caret != null) search.setSelectionRange(caret, caret);
+  }
+
+  function rowKey(tab, row) {
+    return String(row?.[tab.keyField] ?? "").trim().toUpperCase();
+  }
+
+  function isRetired(row) {
+    return String(row?.status || "") === "retired";
+  }
+
+  /* Colour names compare the way the server resolves them: case, spacing and
+     the "W/" shorthand do not make two colours different. */
+  function sameColour(a, b) {
+    const norm = (value) =>
+      String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/\s*\/\s*/g, "/");
+    return !!norm(a) && norm(a) === norm(b);
+  }
+
+  /* The other live rows this one duplicates: on colour codes every row with
+     the same colour, on every table a row that names it (or that it names)
+     as its duplicate. */
+  function duplicatesOf(tab, row, rows) {
+    const key = rowKey(tab, row);
+    return rows.filter((other) => {
+      if (other === row || isRetired(other) || rowKey(tab, other) === key) return false;
+      if (tab.key === "color-codes" && sameColour(other.color, row.color)) return true;
+      return String(other.duplicateOf || "").toUpperCase() === key || String(row.duplicateOf || "").toUpperCase() === rowKey(tab, other);
+    });
+  }
+
+  function rowActionsHtml(tab, row, rows) {
+    const key = rowKey(tab, row);
+    if (!key) return "";
+    const dupes = isRetired(row) ? [] : duplicatesOf(tab, row, rows);
+    const keep = dupes.length
+      ? `<button class="btn btn-primary btn-sm" type="button" data-ob="keep-row" data-ob-key="${esc(key)}" title="Keep ${esc(key)}; retire ${esc(dupes.map((d) => rowKey(tab, d)).join(", "))}">Keep this one</button>`
+      : "";
+    const status = isRetired(row)
+      ? `<button class="btn btn-ghost btn-sm" type="button" data-ob="row-status" data-ob-key="${esc(key)}" data-ob-status="active">Restore</button>`
+      : `<button class="btn btn-ghost btn-sm" type="button" data-ob="row-status" data-ob-key="${esc(key)}" data-ob-status="retired">Retire</button>`;
+    const edit = `<button class="btn btn-ghost btn-sm" type="button" data-ob="edit-row" data-ob-key="${esc(key)}">Edit</button>`;
+    return keep + edit + status;
   }
 
   function proposalsHtml(tab, proposals) {
@@ -5006,24 +5054,28 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
 
   function addRowFormHtml(tab) {
     const inputs = tab.columns.filter((column) => column.input);
+    const editing = state.refEdit ? (state.refData?.rows || []).find((row) => rowKey(tab, row) === state.refEdit) || null : null;
+    const value = (column) => (editing ? cellText(editing[column.k]) : "");
+    const locked = (column) => editing && column.k === tab.keyField;
     return `
-      <form class="ob-addrow card card-pad" data-ob-addrow>
-        <p class="field-label">Add a row to ${esc(tab.label.toLowerCase())}</p>
+      <form class="ob-addrow card card-pad" data-ob-addrow${editing ? ' data-ob-editing="true"' : ""}>
+        <p class="field-label">${editing ? `Edit ${esc(state.refEdit)} on ${esc(tab.label.toLowerCase())}` : `Add a row to ${esc(tab.label.toLowerCase())}`}</p>
         <div class="category-edit-grid">
           ${inputs
             .map(
               (column) => `
             <label${column.wide ? ' class="span-2"' : ""}>
-              <span>${esc(column.label)}${column.required ? " *" : ""}</span>
+              <span>${esc(column.label)}${column.required ? " *" : ""}${locked(column) ? " · fixed" : ""}</span>
               ${column.type === "textarea"
-                ? `<textarea data-ob-row-field="${esc(column.k)}" rows="3"></textarea>`
-                : `<input type="text" data-ob-row-field="${esc(column.k)}"${column.mono ? ' class="code-input"' : ""} autocomplete="off">`}
+                ? `<textarea data-ob-row-field="${esc(column.k)}" rows="3">${esc(value(column))}</textarea>`
+                : `<input type="text" data-ob-row-field="${esc(column.k)}"${column.mono ? ' class="code-input"' : ""} autocomplete="off" value="${esc(value(column))}"${locked(column) ? " readonly" : ""}>`}
             </label>`
             )
             .join("")}
         </div>
         <div class="ob-panel-actions">
-          <button class="btn btn-secondary btn-sm" type="submit">Add row</button>
+          <button class="btn btn-secondary btn-sm" type="submit">${editing ? "Save changes" : "Add row"}</button>
+          ${editing ? `<button class="btn btn-ghost btn-sm" type="button" data-ob="cancel-edit">Cancel</button>` : ""}
         </div>
       </form>`;
   }
@@ -5043,6 +5095,52 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       return;
     }
     if (action === "reload-table") return loadReferenceTable(state.refTab);
+    if (action === "edit-row" || action === "cancel-edit") {
+      state.refEdit = action === "edit-row" ? trigger.dataset.obKey || null : null;
+      renderReferenceTable();
+      const form = root()?.querySelector("[data-ob-addrow]");
+      if (!form) return;
+      if (state.refEdit) {
+        form.scrollIntoView({ block: "nearest" });
+        form.querySelector("[data-ob-row-field]:not([readonly])")?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    if (action === "keep-row" || action === "row-status") {
+      const key = trigger.dataset.obKey;
+      if (!key) return;
+      const status = trigger.dataset.obStatus;
+      const busy = action === "keep-row" ? "Keeping…" : status === "retired" ? "Retiring…" : "Restoring…";
+      return runAction(
+        trigger,
+        busy,
+        async () => {
+          const table = encodeURIComponent(state.refTab);
+          const payload =
+            action === "keep-row"
+              ? await api(`${REF_API}/${table}/rows/${encodeURIComponent(key)}/keep`, { method: "POST", body: JSON.stringify({ by: operator() }) })
+              : await api(`${REF_API}/${table}/rows/${encodeURIComponent(key)}/status`, { method: "POST", body: JSON.stringify({ status, by: operator() }) });
+          if (!isCurrent("reference")) return;
+          if (state.refEdit === key.toUpperCase()) state.refEdit = null;
+          await loadReferenceTable(state.refTab);
+          const retired = list(payload?.retired);
+          showBanner(
+            root()?.querySelector("[data-ob-page='reference']"),
+            "obRefError",
+            action === "keep-row"
+              ? retired.length
+                ? `${key} stays. ${retired.join(", ")} retired as ${retired.length === 1 ? "its" : "their"} duplicate.`
+                : `${key} is active; nothing else matched it.`
+              : status === "retired"
+                ? `${key} retired. It stays on the list but is never used for a new SKU.`
+                : `${key} is active again.`,
+            "ok"
+          );
+        },
+        root()?.querySelector("[data-ob-page='reference']"),
+        "obRefError"
+      );
+    }
     if (action === "sync-codes") {
       return runAction(
         trigger,
@@ -5088,12 +5186,13 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     if (!form) return;
     event.preventDefault();
     const tab = refTab();
+    const editing = form.dataset.obEditing === "true";
     const row = {};
     tab.columns
       .filter((column) => column.input)
       .forEach((column) => {
         const value = form.querySelector(`[data-ob-row-field="${column.k}"]`)?.value.trim() || "";
-        if (value) row[column.k] = value;
+        if (value || editing) row[column.k] = value;
       });
     const missing = tab.columns.filter((column) => column.required && !row[column.k]);
     if (missing.length) {
@@ -5102,10 +5201,11 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     }
     runAction(
       form.querySelector('[type="submit"]'),
-      "Adding…",
+      editing ? "Saving…" : "Adding…",
       async () => {
-        await api(`${REF_API}/${encodeURIComponent(tab.key)}/rows`, { method: "POST", body: JSON.stringify({ rows: [row] }) });
+        await api(`${REF_API}/${encodeURIComponent(tab.key)}/rows`, { method: "POST", body: JSON.stringify({ rows: [row], by: operator() }) });
         if (!isCurrent("reference")) return;
+        state.refEdit = null;
         await loadReferenceTable(tab.key);
       },
       root()?.querySelector("[data-ob-page='reference']"),
