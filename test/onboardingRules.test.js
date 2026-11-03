@@ -31,14 +31,18 @@ test("sizes: alpha, tall, hats, numeric, waist x inseam, fitted", () => {
   assert.ok(rules.normalizeSize("").error);
 });
 
-test("decoration codes: parse, order, two digits, never mixed", () => {
+test("decoration codes: parse, order, two digits, print and embroidery together", () => {
   const nd = rules.normalizeDecorations("B01/F01");
   assert.deepEqual(nd.codes, ["F01", "B01"]);
   assert.equal(nd.method, "print");
   assert.deepEqual(rules.normalizeDecorations(["ls01", "rs01", "b02", "f01"]).codes, ["F01", "B02", "RS01", "LS01"]);
   assert.deepEqual(rules.normalizeDecorations("E02, E01").codes, ["E01", "E02"]);
-  const mixed = rules.normalizeDecorations("F01/E01");
-  assert.ok(mixed.errors.some((e) => /all print or all embroidery/.test(e)));
+  // Print and embroidery share an item since Dan's 2026-11-02 call: the EWP
+  // job shirt has an embroidered front crest and a printed full back.
+  const mixed = rules.normalizeDecorations("E02/B02");
+  assert.deepEqual(mixed.errors, []);
+  assert.deepEqual(mixed.codes, ["B02", "E02"]);
+  assert.equal(mixed.method, rules.DECORATION_MIXED);
   assert.ok(rules.normalizeDecorations("F1").errors.length);
   assert.ok(rules.normalizeDecorations("F001").errors.length);
   assert.ok(rules.normalizeDecorations("X01").errors.length);
@@ -189,13 +193,25 @@ test("expandProduct: embroidered hat gets the Embroidered tag, Class B gets Unif
   assert.deepEqual(classB.product.tags, ["VAC", "Embroidered", "Uniform"]);
 });
 
-test("expandProduct: errors for mixed methods, missing print files, unknown colours, bad vendor", () => {
+test("expandProduct: a mixed item builds, missing print files, unknown colours, bad vendor", () => {
+  // Dan's EWP job shirt: embroidered front crest (E02), printed full back
+  // (B02), the row's method left on "embroidery". It validates, its SKU
+  // lists both codes in order, and it is an Embroidered item.
   const mixed = rules.expandProduct(
-    { brand: "X", styleNumber: "X1", colors: ["Navy"], sizes: ["S"], decorationCodes: "F01/E01", fulfillment: "One Week Item" },
+    { brand: "5.11", styleNumber: "72534", type: "Job Shirt", colors: ["Navy"], sizes: ["S"], decorationMethod: "embroidery", decorationCodes: "E02/B02", fulfillment: "Non Stock Item" },
     { departmentCode: "VAC" }
   );
-  assert.equal(mixed.ok, false);
-  assert.ok(mixed.errors.some((e) => /all print or all embroidery/.test(e)));
+  assert.equal(mixed.ok, true, mixed.errors.join("; "));
+  assert.equal(mixed.product.decorationMethod, rules.DECORATION_MIXED);
+  assert.deepEqual(mixed.product.tags, ["VAC", "Embroidered"]);
+  assert.equal(mixed.variants[0].sku, "72534-S-NVY-VAC-B02/E02");
+  // A declared method still has to agree with codes that are all the other one.
+  const contradicted = rules.expandProduct(
+    { brand: "X", styleNumber: "X1", colors: ["Navy"], sizes: ["S"], decorationMethod: "embroidery", decorationCodes: "F01/B01", fulfillment: "One Week Item" },
+    { departmentCode: "VAC" }
+  );
+  assert.equal(contradicted.ok, false);
+  assert.ok(contradicted.errors.some((e) => /Decoration method is "embroidery" but the decoration codes are print codes/.test(e)));
 
   const printed = rules.expandProduct(
     { brand: "X", styleNumber: "X1", colors: ["Navy"], sizes: ["S"], decorationCodes: "F01/B01", fulfillment: "One Week Item" },

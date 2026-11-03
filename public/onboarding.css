@@ -1617,6 +1617,21 @@
 .ob-place-toggle { display: flex; gap: var(--space-2); align-items: baseline; cursor: pointer; }
 .ob-place-toggle small { color: var(--text-subtle); }
 
+/* Tick + name on the left, "Printed / Embroidered" on the right; the
+   choice wraps under the name when the card is narrow. */
+.ob-place-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.ob-place-head .ob-place-toggle { flex: 1 1 auto; min-width: 0; }
+.ob-place-method {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-sm);
+  line-height: 1.3;
+  border-radius: var(--radius-pill);
+}
+.ob-placement[data-method="embroidery"][data-on="true"] .ob-place-method { border-color: var(--info-border); background: var(--info-soft); }
+
 .ob-suggestion-list {
   list-style: none;
   margin: 0;

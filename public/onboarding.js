@@ -145,7 +145,7 @@
     { label: "S/M, L/XL", sizes: "S/M, L/XL" },
     { label: "Waist 28–44", sizes: "28, 30, 32, 34, 36, 38, 40, 42, 44" }
   ];
-  const DECORATION_HINT = "Front, back, then sleeve, joined with “/” — F01/B01, E01, F01/B01/RS01. Print and embroidery never mix.";
+  const DECORATION_HINT = "Front, back, then sleeve, joined with “/” — F01/B01, E01, F01/B01/RS01. An embroidered front with a printed back is E01/B01.";
 
   const SHARED_KINDS = [
     { key: "megaMenu", label: "Mega Menu", sub: "Link the collection under Store, oldest → newest, above the public stores." },
@@ -2459,7 +2459,7 @@
           <label><span>Product title <small class="muted-inline">(optional)</small></span><input type="text" data-ob-field="title" value="${esc(product?.title || "")}" placeholder="Filled on save from the store's name for this blank"></label>
           <label class="span-2"><span>Colours</span><input type="text" data-ob-field="colors" value="${esc(csv(product?.colors))}" placeholder="e.g. Navy"></label>
           <label class="span-2"><span>Sizes</span><input type="text" data-ob-field="sizes" value="${esc(csv(product?.sizes))}" placeholder="e.g. S, M, L, XL, 2XL"></label>
-          <label><span>Decoration method</span><select data-ob-field="decorationMethod">${optionsHtml(DECORATION_METHODS, product?.decorationMethod)}</select></label>
+          <label><span>Decoration method <small class="muted-inline">(the default — each placement below can differ)</small></span><select data-ob-field="decorationMethod">${optionsHtml(DECORATION_METHODS, product?.decorationMethod)}</select></label>
           <label><span>Decoration codes <small class="muted-inline">(filled from the placements below)</small></span><input type="text" data-ob-field="decorationCodes" class="code-input" value="${esc(product?.decorationCodes || "")}" placeholder="e.g. F01/B01"></label>
           <label><span>Fulfillment (Vendor field)</span><select data-ob-field="fulfillment">${optionsHtml([{ key: "", label: "—" }, ...FULFILLMENTS.map((v) => ({ key: v, label: v }))], product?.fulfillment)}</select></label>
           <label class="toggle-field"><input type="checkbox" data-ob-field="classB" ${product?.classB ? "checked" : ""}> <span>Class B uniform item</span></label>
@@ -2611,6 +2611,15 @@
     { key: "LS", label: "Left sleeve", hint: "" }
   ];
 
+  /* How a placement's logo goes on. The row's "Decoration method" is the
+     default for every placement; this is the choice on each card, so one
+     row carries an embroidered front crest and a printed full back (Dan,
+     2026-11-02). */
+  const PLACE_METHODS = [
+    { key: "print", label: "Printed" },
+    { key: "embroidery", label: "Embroidered" }
+  ];
+
   function garmentPickerHtml(product) {
     const garments = list(state.garments);
     // Without the store's garment list (still loading, or it failed) the
@@ -2691,22 +2700,40 @@
     return map;
   }
 
-  // Which placements a row's codes already describe, and the logo on each.
+  /* The print code each placement owns: the lowest-numbered F/B/RS/LS code
+     with its letters. B01 as a rule — but a department's back design can be
+     its second (Dan typed B02 by hand for the EWP job shirt), and a Back
+     that did not own it kept inventing E01 beside it. A second code with the
+     same letters (F01 and F02 both typed) stays a code the grid does not
+     cover. */
+  function printKeys(codes) {
+    const map = {};
+    for (const code of codes) {
+      const m = code.match(/^(F|B|RS|LS)(\d{2})$/);
+      if (!m) continue;
+      if (!map[m[1]] || Number(m[2]) < Number(map[m[1]].slice(m[1].length))) map[m[1]] = code;
+    }
+    return map;
+  }
+
+  // Which placement a row's codes already describe, the logo on each, and
+  // whether that spot is printed or embroidered.
   function placementState(product) {
     const codes = codeList(product?.decorationCodes);
     const logoMap = product?.logoMap && typeof product.logoMap === "object" ? product.logoMap : {};
     const placements = product?.placements && typeof product.placements === "object" ? product.placements : {};
     const eKeys = embroideryKeys(codes, placements);
+    const pKeys = printKeys(codes);
     const out = {};
     let custom = false;
     for (const code of codes) {
       const m = code.match(/^(F|B|RS|LS|E|P)(\d{2})$/);
       if (!m) continue;
       if (m[1] === "E" || m[1] === "P") {
-        if (eKeys[code] && !out[eKeys[code]]) out[eKeys[code]] = { code, logo: logoMap[code] || "" };
+        if (eKeys[code] && !out[eKeys[code]]) out[eKeys[code]] = { code, logo: logoMap[code] || "", method: "embroidery" };
         else custom = true;
-      } else if (m[2] === "01") {
-        out[m[1]] = { code, logo: logoMap[code] || "" };
+      } else if (pKeys[m[1]] === code && !out[m[1]]) {
+        out[m[1]] = { code, logo: logoMap[code] || "", method: "print" };
       } else {
         custom = true;
       }
@@ -2725,16 +2752,26 @@
       return `<div class="ob-placements" data-ob-placements><p class="field-label">Where the logos go</p><p class="hint">This row is sold in Styles, so each Style row below carries its own codes. Remove the Styles to use the placements here.</p></div>`;
     }
     const defaultFor = (key) => (key === "B" ? "back" : "chest");
+    /* Each placement says how its logo goes on. The row's method is the
+       default; a placement set the other way keeps it, so an embroidered
+       crest and a printed full back live on one row. A spot with a code
+       shows that code's method, whatever the row says. */
+    const rowMethod = product?.decorationMethod === "embroidery" || product?.decorationMethod === "print" ? product.decorationMethod : "";
+    const typeDefault = /hat|cap|beanie|snapback/i.test(String(product?.type || "")) ? "embroidery" : "print";
     return `
       <div class="ob-placements" data-ob-placements data-ob-proof-codes="${esc(Object.keys(product?.proofs || {}).filter((k) => product.proofs[k]).join(","))}">
-        <p class="field-label">Where the logos go <small>tick each placement and pick the logo for it</small></p>
+        <p class="field-label">Where the logos go <small>tick each placement, pick the logo for it, and say whether it is printed or embroidered</small></p>
         ${custom ? `<p class="hint" data-tone="warn">This row also has codes the four placements do not cover (e.g. F02, P01). Ticking placements keeps them; change them in "Decoration codes" above.</p>` : ""}
         <div class="ob-placement-grid">
           ${PLACEMENTS.map((p) => {
             const placed = on[p.key];
+            const method = placed?.method || rowMethod || typeDefault;
             return `
-            <div class="ob-placement" data-ob-place="${esc(p.key)}" data-on="${placed ? "true" : "false"}">
-              <label class="ob-place-toggle"><input type="checkbox" data-ob-place-on ${placed ? "checked" : ""}> <b>${esc(p.label)}</b>${p.hint ? ` <small>${esc(p.hint)}</small>` : ""}</label>
+            <div class="ob-placement" data-ob-place="${esc(p.key)}" data-on="${placed ? "true" : "false"}" data-method="${esc(method)}">
+              <div class="ob-place-head">
+                <label class="ob-place-toggle"><input type="checkbox" data-ob-place-on ${placed ? "checked" : ""}> <b>${esc(p.label)}</b>${p.hint ? ` <small>${esc(p.hint)}</small>` : ""}</label>
+                <select class="ob-place-method" data-ob-place-method aria-label="How the ${esc(p.label.toLowerCase())} logo is applied">${optionsHtml(PLACE_METHODS, method)}</select>
+              </div>
               <select data-ob-place-logo aria-label="Logo for the ${esc(p.label.toLowerCase())}">
                 <option value="">${logos.length ? `Default (the ${defaultFor(p.key)} logo)` : storeOpen() ? "Upload a logo above first" : "Upload logos in step 1"}</option>
                 ${logos
@@ -2749,32 +2786,49 @@
       </div>`;
   }
 
+  // The method on one placement's card: its own choice, else the fallback.
+  function placeMethod(node, fallback) {
+    const value = node.querySelector("[data-ob-place-method]")?.value || "";
+    return value === "embroidery" || value === "print" ? value : fallback;
+  }
+
+  function setPlaceMethod(node, method) {
+    const select = node.querySelector("[data-ob-place-method]");
+    if (select && (method === "embroidery" || method === "print")) select.value = method;
+    node.dataset.method = placeMethod(node, method);
+  }
+
   /* Placements → decoration codes, the logo per code and, for embroidery,
      where each E code sits. Only the codes the four placements own change:
-     F01 / B01 / RS01 / LS01 for print, and the E codes mapped to a placement.
-     Anything else on the row — F02, P01, an E02 from the policy, codes typed
-     by hand — is kept exactly as it is. An embroidery placement keeps its E
-     number when others are unticked, so proofs (filed by code) stay put. */
+     the print code each placement owns (F01 / B01 / RS01 / LS01, or the B02
+     typed for it) and the E codes mapped to a placement. Anything else on
+     the row — a second F code, P01, an E02 from the policy, codes typed by
+     hand — is kept exactly as it is. A placement keeps its number when
+     others are unticked, so proofs (filed by code) stay put. Each card
+     says printed or embroidered, so one row can embroider the front and
+     print the back. */
   function syncPlacements(row, { fromPlacement = true } = {}) {
     // A row sold in Styles shows no placements; its codes are left alone.
     if (!row.querySelector("[data-ob-place]")) return;
-    const method = row.querySelector("[data-ob-field='decorationMethod']")?.value || "";
-    const ticked = PLACEMENTS.map((p) => row.querySelector(`[data-ob-place='${p.key}']`)).filter(
-      (node) => node && node.querySelector("[data-ob-place-on]")?.checked
-    );
+    const methodSelect = row.querySelector("[data-ob-field='decorationMethod']");
+    const cards = PLACEMENTS.map((p) => row.querySelector(`[data-ob-place='${p.key}']`)).filter(Boolean);
+    const ticked = cards.filter((node) => node.querySelector("[data-ob-place-on]")?.checked);
+    /* The row's method is the default for every placement: changing it moves
+       them all (F01/B01 → E01/E02, as it always did). A placement set the
+       other way on its own card afterwards keeps its own. */
+    if (!fromPlacement && methodSelect?.value) cards.forEach((node) => setPlaceMethod(node, methodSelect.value));
     // Codes typed by hand (no placement ticked) are left alone when only the
     // method changes.
     if (!ticked.length && !fromPlacement) return;
-    row.querySelectorAll("[data-ob-place]").forEach((node) => {
+    cards.forEach((node) => {
       node.dataset.on = node.querySelector("[data-ob-place-on]")?.checked ? "true" : "false";
     });
-    if (ticked.length && !method) {
-      const select = row.querySelector("[data-ob-field='decorationMethod']");
+    if (ticked.length && methodSelect && !methodSelect.value) {
       // Headwear is embroidered as a rule; everything else is printed.
       const type = `${row.querySelector("[data-ob-field='type']")?.value || ""}`.toLowerCase();
-      if (select) select.value = /hat|cap|beanie|snapback/.test(type) ? "embroidery" : "print";
+      methodSelect.value = /hat|cap|beanie|snapback/.test(type) ? "embroidery" : "print";
     }
-    const embroidered = (row.querySelector("[data-ob-field='decorationMethod']")?.value || "") === "embroidery";
+    const rowMethod = methodSelect?.value === "embroidery" ? "embroidery" : "print";
     const codesInput = row.querySelector("[data-ob-field='decorationCodes']");
     const mapInput = row.querySelector("[data-ob-field='logoMap']");
     const placeInput = row.querySelector("[data-ob-field='placements']");
@@ -2790,7 +2844,8 @@
     const oldLogos = readJson(mapInput);
     const oldPlacements = readJson(placeInput);
     const eKeys = embroideryKeys(current, oldPlacements);
-    const owned = new Set(["F01", "B01", "RS01", "LS01", ...Object.keys(eKeys)]);
+    const pKeys = printKeys(current);
+    const owned = new Set([...Object.values(pKeys), ...Object.keys(eKeys)]);
     const kept = current.filter((code) => !owned.has(code));
     /* An embroidery or patch code typed by hand with no placement yet (E01
        changed to E05, or a code typed before its placement was ticked) is the
@@ -2807,13 +2862,18 @@
       .filter(Boolean);
     const eFor = {};
     for (const [code, key] of Object.entries(eKeys)) eFor[key] = code;
-    /* A placement unticked just now keeps its code on the node, so ticking it
-       again brings the same code back (E05 stays E05) rather than a fresh
-       E01. Lives on the node only: nothing stale is sent to the server. */
-    row.querySelectorAll("[data-ob-place]").forEach((node) => {
+    /* A placement unticked just now, or switched to the other method, keeps
+       the code it had on the node, so it comes back the same (E05 stays E05,
+       B02 stays B02) rather than as a fresh E01 or B01. Dan unticked the Back
+       on "E02/B02" and ticking it again gave him "E02/E01/B02". Lives on the
+       node only: nothing stale is sent to the server. */
+    for (const node of cards) {
       const key = node.dataset.obPlace;
-      if (!node.querySelector("[data-ob-place-on]")?.checked && eFor[key]) node.dataset.obLastCode = eFor[key];
-    });
+      const on = node.querySelector("[data-ob-place-on]")?.checked;
+      const method = placeMethod(node, rowMethod);
+      if (eFor[key] && (!on || method !== "embroidery")) node.dataset.obLastApplied = eFor[key];
+      if (pKeys[key] && (!on || method !== "print")) node.dataset.obLastPrint = pKeys[key];
+    }
     const nextE = () => {
       for (let n = 1; n < 100; n += 1) {
         const code = `E${String(n).padStart(2, "0")}`;
@@ -2823,17 +2883,24 @@
     };
     for (const node of ticked) {
       const key = node.dataset.obPlace;
+      const method = placeMethod(node, rowMethod);
       let code;
-      if (embroidered) {
-        const last = node.dataset.obLastCode || "";
+      if (method === "embroidery") {
+        const last = node.dataset.obLastApplied || "";
         const remembered = /^[EP]\d{2}$/.test(last) && !used.has(last) && !Object.values(eFor).includes(last) ? last : "";
         code = eFor[key] && !used.has(eFor[key]) ? eFor[key] : remembered || (spare.length ? spare.shift() : nextE());
-        delete node.dataset.obLastCode;
+        delete node.dataset.obLastApplied;
         eFor[key] = code;
         placements[code] = key;
       } else {
-        code = `${key}01`;
+        const last = node.dataset.obLastPrint || "";
+        const remembered = new RegExp(`^${key}\\d{2}$`).test(last) && !used.has(last) ? last : "";
+        code = pKeys[key] || remembered || `${key}01`;
+        delete node.dataset.obLastPrint;
+        // The E code this placement had is let go (remembered above).
+        if (eFor[key]) delete eFor[key];
       }
+      setPlaceMethod(node, method);
       used.add(code);
       codes.push(code);
       const logo = node.querySelector("[data-ob-place-logo]")?.value || "";
@@ -2923,8 +2990,11 @@
     });
     row.querySelectorAll("[data-ob-place]").forEach((node) => {
       const box = node.querySelector("[data-ob-place-on]");
-      if (box) box.checked = Boolean(on[node.dataset.obPlace]);
+      const placed = on[node.dataset.obPlace];
+      if (box) box.checked = Boolean(placed);
       node.dataset.on = box?.checked ? "true" : "false";
+      // A typed code says how its spot goes on: B02 printed, E05 embroidered.
+      if (placed?.method) setPlaceMethod(node, placed.method);
     });
   }
 

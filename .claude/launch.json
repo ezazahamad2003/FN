@@ -4,8 +4,18 @@
     {
       "name": "fn-onboarding",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["start"],
+      "runtimeArgs": [
+        "start"
+      ],
       "port": 3456
+    },
+    {
+      "name": "fn-onboarding-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "test/onboarding-preview.js"
+      ],
+      "port": 3499
     }
   ]
 }

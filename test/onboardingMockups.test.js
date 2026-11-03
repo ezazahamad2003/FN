@@ -134,8 +134,8 @@ test("toSquare: contain on white at the requested size", async () => {
 
 test("decorationPlan: tee F01/B01", () => {
   const plan = mockups.decorationPlan(tee());
-  assert.deepEqual(plan.front, [{ code: "F01", label: "Front left chest", tier: "Small" }]);
-  assert.deepEqual(plan.back, [{ code: "B01", label: "Center back", tier: "Large / Full Back" }]);
+  assert.deepEqual(plan.front, [{ code: "F01", label: "Front left chest", tier: "Small", method: "print" }]);
+  assert.deepEqual(plan.back, [{ code: "B01", label: "Center back", tier: "Large / Full Back", method: "print" }]);
 });
 
 test("decorationPlan: hats put embroidery on the front panel, back is empty", () => {
@@ -144,7 +144,7 @@ test("decorationPlan: hats put embroidery on the front panel, back is empty", ()
     { departmentCode: "VAC" }
   ).product;
   const plan = mockups.decorationPlan(hat);
-  assert.deepEqual(plan.front, [{ code: "E01", label: "Front center", tier: "Standard" }]);
+  assert.deepEqual(plan.front, [{ code: "E01", label: "Front center", tier: "Standard", method: "embroidery" }]);
   assert.deepEqual(plan.back, []);
   // Beanies count as headwear too.
   assert.equal(mockups.decorationPlan({ type: "Knit beanie", decorationCodes: "E01" }).front[0].label, "Front center");
@@ -762,4 +762,46 @@ test("embroidery codes are placed where the row ticked them", () => {
   assert.deepEqual(plan.back.map((d) => d.label), ["Center back"]);
   const classB = mockups.decorationPlan({ type: "Class B Shirt", classB: true, decorationCodes: "E01/E02", placements: { E01: "RS", E02: "LS" } });
   assert.deepEqual(classB.front.map((d) => `${d.code}:${d.label}`), ["E01:Right sleeve", "E02:Left sleeve"]);
+});
+
+test("renderProductMockups: an embroidered front with a printed back is drawn each its own way", async () => {
+  // Dan's EWP job shirt (2026-11-02): E02 ticked on the front, B02 on the
+  // back. One method per product drew the printed back as thread; the face
+  // decides now.
+  const calls = fakeRenderers();
+  const shirt = rules.expandProduct(
+    {
+      brand: "5.11",
+      styleNumber: "72534",
+      type: "Job Shirt",
+      colors: ["Navy"],
+      sizes: ["S"],
+      decorationMethod: "embroidery",
+      decorationCodes: "E02/B02",
+      fulfillment: "Non Stock Item"
+    },
+    { departmentCode: "EWP" }
+  ).product;
+  const out = await mockups.renderProductMockups({
+    product: { ...shirt, placements: { E02: "F" } },
+    departmentCode: "EWP",
+    artwork: {
+      E02: { buffer: await solid(30, 30, "#ff0000"), mimetype: "image/png", name: "EWP-F01 agent.png" },
+      B02: { buffer: await solid(30, 30, "#00ff00"), mimetype: "image/png", name: "EWP-B02 agent.png" }
+    },
+    blankPhotos: { Navy: { front: await solid(100, 100, "#222266"), back: await solid(100, 100, "#222266") } },
+    supplierLookup: null,
+    verify: false,
+    size: SIZE
+  });
+  assert.deepEqual(out.map((m) => [m.fileName, m.path]), [
+    ["EWP_72534_NVY_FRONT.png", "render"],
+    ["EWP_72534_NVY_BACK.png", "render"]
+  ]);
+  const front = calls.render.find((c) => c.face === "front");
+  const back = calls.render.find((c) => c.face === "back");
+  assert.equal(front.method, "embroidery");
+  assert.deepEqual(front.decorations.map((d) => [d.logo.originalName, d.label, d.method]), [["EWP-F01 agent.png", "Front left chest", "embroidery"]]);
+  assert.equal(back.method, "print");
+  assert.deepEqual(back.decorations.map((d) => [d.logo.originalName, d.label, d.method]), [["EWP-B02 agent.png", "Center back", "print"]]);
 });

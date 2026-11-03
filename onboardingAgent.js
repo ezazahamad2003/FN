@@ -1359,7 +1359,12 @@ async function saveProducts(id, products, { by = "", only = null } = {}) {
       }
     }
     if (!clean(merged.title)) merged.title = expanded.product.title;
-    if (!clean(merged.decorationMethod) && expanded.product.decorationMethod) merged.decorationMethod = expanded.product.decorationMethod;
+    /* The row's method is the operator's default for its placements, so only
+       a plain print or embroidery fills an empty one; "mixed" is what the
+       codes add up to, not a choice to store. */
+    if (!clean(merged.decorationMethod) && [rules.DECORATION_PRINT, rules.DECORATION_EMBROIDERY].includes(expanded.product.decorationMethod)) {
+      merged.decorationMethod = expanded.product.decorationMethod;
+    }
 
     for (const color of expanded.product.colors) {
       if (color.code || !color.proposal) continue;

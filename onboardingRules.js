@@ -58,6 +58,8 @@ const OPTION_STYLE = "Style";
 
 const DECORATION_PRINT = "print";
 const DECORATION_EMBROIDERY = "embroidery";
+// One item carrying both: an embroidered chest crest with a printed back.
+const DECORATION_MIXED = "mixed";
 
 /* ---------------------------------------------------------------------------
    Appendix A — colour code list, as delivered (duplicates flagged for Dan)
@@ -263,8 +265,16 @@ function expandSizeList(inputs, { hat = false, apparel = false } = {}) {
  * that uses it reports an assumption for Dan to confirm.
  *
  * It groups with embroidery rather than print: a patch is applied to the
- * garment, not printed on it, so P and E may share an item while F/B/RS/LS
- * may not (spec §10 "either all print or all embroidery").
+ * garment, not printed on it.
+ *
+ * Spec §10 rule 1 said an item is either all print or all embroidery, and a
+ * mixed one is a custom order the store does not build. Dan's call on
+ * 2026-11-02 ("we should be able to set up embroidered items with print as
+ * well" — the EWP job shirt has an embroidered front crest and a printed
+ * full back, E02/B02): print and embroidery MAY share an item. Each code
+ * keeps its own method, the SKU lists them in the usual order, the mockups
+ * draw each face the way its codes say, and an item with any embroidery on
+ * it is tagged Embroidered.
  */
 const DECORATION_PREFIX_ORDER = ["F", "B", "RS", "LS", "E", "P"];
 const PRINT_PREFIXES = ["F", "B", "RS", "LS"];
@@ -300,7 +310,8 @@ function parseDecorationCode(input) {
 /*
  * Accepts "F01/B01", "F01, B01", ["F01","B01"] and returns the codes sorted
  * into SKU order (front, back, right sleeve, left sleeve, embroidery; numeric
- * within a location). Mixed print/embroidery is rejected (§10 rule 1).
+ * within a location). `method` is print, embroidery, or mixed when the codes
+ * carry both (an embroidered front with a printed back); null with no codes.
  */
 function normalizeDecorations(input) {
   const list = Array.isArray(input)
@@ -321,15 +332,10 @@ function normalizeDecorations(input) {
     return true;
   });
   const methods = new Set(unique.map((p) => p.method));
-  if (methods.size > 1) {
-    errors.push(
-      "An item is either all print or all embroidery. Never mix F/B/RS/LS codes with E codes — a mixed item is a custom order and is not built in the store."
-    );
-  }
   const assumptions = [];
   if (unique.some((p) => p.patch)) {
     assumptions.push(
-      "P## is a sewn-patch code used in the live store but not listed in the spec's decoration codes. It is treated as applied decoration (it may share an item with E##, never with F/B/RS/LS). Confirm with Dan."
+      "P## is a sewn-patch code used in the live store but not listed in the spec's decoration codes. It is treated as applied decoration, like embroidery. Confirm with Dan."
     );
   }
   unique.sort((a, b) => {
@@ -340,7 +346,7 @@ function normalizeDecorations(input) {
   return {
     codes: unique.map((p) => p.code),
     decorations: unique,
-    method: methods.size === 1 ? [...methods][0] : null,
+    method: methods.size === 1 ? [...methods][0] : methods.size > 1 ? DECORATION_MIXED : null,
     errors,
     assumptions
   };
@@ -673,7 +679,8 @@ function parseSku(sku, { departmentCode = "" } = {}) {
  *   brand, styleNumber, type, title?,
  *   colors: ["Navy", ...] (names) — or objects {name, code?}
  *   sizes: ["S", ...],
- *   decorationMethod: "print" | "embroidery" | "" (derived from codes when empty)
+ *   decorationMethod: "print" | "embroidery" | "" (the row's default; the codes
+ *                     decide — "mixed" comes back when they carry both)
  *   decorationCodes: "F01/B01" | [..]           (single-style items)
  *   styles: [{ name?: "Style 1", decorationCodes }] (multi-style items)
  *   fulfillment: "One Week Item" | "Non Stock Item"
@@ -759,14 +766,18 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED 
     if (new Set(sigs).size !== sigs.length) errors.push("Two Styles have the same decoration codes — Styles must differ.");
     if (styles.some((s) => !s.decorationCodes.length)) errors.push("Every Style needs at least one decoration code.");
   }
+  /* What the codes say, across every Style: print, embroidery, or mixed when
+     they carry both (one Style printed and another embroidered counts too).
+     The row's declared method is its default for new placements; it only
+     contradicts codes that are all the other method. */
   const methods = new Set(styles.map((s) => s.method).filter(Boolean));
-  if (methods.size > 1) errors.push("Styles on one product must all be print or all be embroidery.");
-  const derivedMethod = methods.size === 1 ? [...methods][0] : null;
+  const derivedMethod = methods.size === 1 ? [...methods][0] : methods.size > 1 ? DECORATION_MIXED : null;
   const declared = String(product.decorationMethod || "").trim().toLowerCase();
-  if (declared && derivedMethod && declared !== derivedMethod) {
+  const pure = (value) => value === DECORATION_EMBROIDERY || value === DECORATION_PRINT;
+  if (pure(declared) && pure(derivedMethod) && declared !== derivedMethod) {
     errors.push(`Decoration method is "${declared}" but the decoration codes are ${derivedMethod} codes.`);
   }
-  const method = derivedMethod || (declared === DECORATION_EMBROIDERY || declared === DECORATION_PRINT ? declared : null);
+  const method = derivedMethod || (pure(declared) ? declared : null);
   const hasDecoration = allCodes.size > 0;
   /* A method with no codes is a decorated garment whose codes were never
      typed, not a plain stock item. Passing it built Pine Hollow's tee as a
@@ -815,7 +826,8 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED 
     }
   }
 
-  const embroidered = method === DECORATION_EMBROIDERY;
+  // Anything embroidered on it makes it an Embroidered item, printed back or not.
+  const embroidered = styles.some((s) => s.decorations.some((d) => d.method === DECORATION_EMBROIDERY));
   const tags = productTags(code, { embroidered, classB: Boolean(product.classB) });
 
   return {
@@ -1163,6 +1175,7 @@ module.exports = {
   OPTION_STYLE,
   DECORATION_PRINT,
   DECORATION_EMBROIDERY,
+  DECORATION_MIXED,
   COLOR_CODES_SEED,
   ALPHA_SIZES,
   TALL_SIZES,

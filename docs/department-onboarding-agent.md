@@ -189,7 +189,10 @@ Container `department-onboardings`, blob `<id>` where
    blank photos per colour, embroidery proofs, banner logo choice. Validation
    (rules) on every save: SKU preview, decoration files matched against the
    production folder listing, colours resolved (unknown → proposal to the
-   Color Code List with approval), vendor exact, print/embroidery never mixed.
+   Color Code List with approval), vendor exact. Print and embroidery may share
+   one item (Dan, 2026-11-02: an embroidered front crest with a printed full
+   back, E02/B02) — each placement carries its own method, the mockups draw
+   each face the way its codes say, and any embroidery tags the item Embroidered.
 4. **Build** (`POST /api/onboardings/:id/build`): persisted, resumable,
    additive. Steps: `mockups` (per product), `collection` (create before
    products, banner, description), `lock` (Locksmith API or checklist),

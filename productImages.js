@@ -249,6 +249,14 @@ async function renderFaceImage({
     });
   }
 
+  /* One finish for the face as a rule. A face that carries both — an
+     embroidered chest crest beside a printed sleeve — names the finish on
+     each mark instead, and the closing sentence covers both. A face of one
+     finish keeps the sentence exactly as it was A/B tested. */
+  const finishes = [...new Set(decorations.map((d) => String(d.method || "")).filter(Boolean))];
+  const mixedFace = /^mixed$/i.test(method) || finishes.length > 1;
+  const finishOf = (decoration) => (mixedFace ? decoration.method || method : method);
+
   const instructions = decorations
     .map((decoration) => {
       const index = indexByName.get(decoration.logo.originalName || "logo.png");
@@ -258,15 +266,19 @@ async function renderFaceImage({
          border, where the ink should sit straight on the cloth. So the word
          follows the decoration method: a patch and embroidery ARE badges, a
          print and a transfer are not. */
-      const asBadge = /embroider|patch/i.test(method) ? " as a badge," : "";
+      const asBadge = /embroider|patch/i.test(finishOf(decoration)) ? " as a badge," : "";
       const position = positionPhrase(decoration.label);
       return (
         "Put the logo in image " + index + " on the " + String(decoration.label || "front left chest").toLowerCase() +
         (position ? ", " + position + "," : "") +
-        asBadge + " " + tierPhrase(decoration.tier, decoration.label) + "."
+        asBadge + " " + tierPhrase(decoration.tier, decoration.label) +
+        (mixedFace ? ", " + finishPhrase(finishOf(decoration)) : "") + "."
       );
     })
     .join(" ");
+  const finishClause = mixedFace
+    ? " Make each one look really " + [...new Set(decorations.map((d) => finishPhrase(finishOf(d))))].join(" or ") + " on the fabric, as said for it,"
+    : " Make each one look really " + finishPhrase(method) + " on the fabric,";
 
   /* Wording matters more than any other lever here, and this sentence is the
      result of an A/B across six phrasings on the same garment.
@@ -295,7 +307,7 @@ async function renderFaceImage({
   const prompt =
     "Image 1 is a " + productType + ", shown from the " + face + ". " + instructions +
     viewClause +
-    " Make each one look really " + finishPhrase(method) + " on the fabric," +
+    finishClause +
     " keeping the logo's own colours bright, crisp and exactly as they are in its own image —" +
     " same colours, same text, spelled the same." +
     " Change nothing else about the photo.";

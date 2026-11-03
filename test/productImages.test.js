@@ -46,3 +46,29 @@ test("each placement asks for the size the store signed off on", async () => {
   // A custom size is the customer's own number, whatever the placement.
   assert.match(await promptFor("Front left chest", "Custom: 4.5"), /about 4\.5 inches wide/);
 });
+
+test("a face carrying embroidery and print names the finish on each mark", async () => {
+  const base = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#1f2a44" } }).png().toBuffer();
+  const crest = await sharp({ create: { width: 32, height: 32, channels: 3, background: "#ffffff" } }).png().toBuffer();
+  const sleeve = await sharp({ create: { width: 32, height: 32, channels: 3, background: "#eeeeee" } }).png().toBuffer();
+  prompts.length = 0;
+  await renderFaceImage({
+    baseBuffer: base,
+    decorations: [
+      { logo: { buffer: crest, mimetype: "image/png", originalName: "crest.png" }, label: "Front left chest", tier: "Small", method: "embroidery" },
+      { logo: { buffer: sleeve, mimetype: "image/png", originalName: "sleeve.png" }, label: "Right sleeve", tier: "Small", method: "print" }
+    ],
+    method: "mixed",
+    productType: "Job Shirt"
+  });
+  const prompt = prompts[0];
+  assert.match(prompt, /on the front left chest as a badge, .*?, embroidered\./);
+  assert.match(prompt, /on the right sleeve .*?, screen printed\./);
+  assert.doesNotMatch(prompt, /on the right sleeve as a badge/);
+  assert.match(prompt, /Make each one look really embroidered or screen printed on the fabric, as said for it,/);
+
+  // A face of one finish keeps the sentence exactly as it was tested.
+  const single = await promptFor("Front left chest", "Small");
+  assert.match(single, /Make each one look really screen printed on the fabric, keeping/);
+  assert.doesNotMatch(single, /as said for it/);
+});

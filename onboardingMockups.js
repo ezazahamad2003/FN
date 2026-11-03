@@ -241,7 +241,9 @@ function planCodes(codes, product) {
     const placed = placeDecoration(parsed, product);
     const bucket = placed.face === "back" ? back : front;
     if (bucket.some((d) => d.code === placed.code)) continue;
-    bucket.push({ code: placed.code, label: placed.label, tier: placed.tier });
+    // Each mark carries its own method: an item may embroider the front and
+    // print the back, so the face, not the product, decides the finish.
+    bucket.push({ code: placed.code, label: placed.label, tier: placed.tier, method: parsed.method });
   }
   return { front, back };
 }
@@ -522,7 +524,18 @@ async function renderProductMockups({
   const plans = stylePlans(product);
   const hasDecoration = plans.some((plan) => plan.codes.length > 0);
   const classBShirt = isClassBShirt(product);
-  const method = classBShirt || product.decorationMethod === rules.DECORATION_EMBROIDERY ? "embroidery" : "print";
+  /* The finish the renderer is asked for, per face: what that face's codes
+     say (E## embroidered, F/B/RS/LS printed), "mixed" when one face carries
+     both so the prompt says it per mark. A Class B shirt is embroidered
+     throughout. Before this the product's one method covered every face, and
+     a printed back on an embroidered item would have been drawn as thread. */
+  const methodFor = (decorations) => {
+    if (classBShirt) return "embroidery";
+    const methods = [...new Set(decorations.map((d) => d.method).filter(Boolean))];
+    if (methods.length === 1) return methods[0];
+    if (methods.length > 1) return rules.DECORATION_MIXED;
+    return product.decorationMethod === rules.DECORATION_EMBROIDERY ? "embroidery" : "print";
+  };
   const productType = product.type || "garment";
   const styleNumber = product.styleNumber || "";
   // Front photo URL per colour, so the back lookup can find the same garment's
@@ -644,10 +657,11 @@ async function renderProductMockups({
             return {
               logo: { buffer: art.buffer, mimetype: art.mimetype || "image/png", originalName: art.name || `${rules.decorationFileStem(departmentCode, d.code)}.png` },
               label: d.label,
-              tier: d.tier
+              tier: d.tier,
+              method: d.method
             };
           }),
-          method,
+          method: methodFor(decorations),
           productType,
           size,
           log: (message) => log(`${tag} ${face}: ${message}`)
