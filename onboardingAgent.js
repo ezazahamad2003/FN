@@ -354,9 +354,25 @@ function flattenFiles(files) {
 function defaultArtworkRole(name) {
   const n = String(name || "");
   if (/scramble/i.test(n)) return "scramble";
-  if (/chest|front|f01/i.test(n)) return "chest";
-  if (/back|b01/i.test(n)) return "back";
+  if (/chest|front/i.test(n) || hasDecorationCode(n, "F")) return "chest";
+  if (/back/i.test(n) || hasDecorationCode(n, "B")) return "back";
   return "";
+}
+
+/* Dan names artwork by its decoration code ("REA-B04 agent.png" is the art
+   for B04). A file named for a code is that code's logo before any role: on
+   Reach Copter 46 the back file was "REA-B04", no file was tagged "back", and
+   the Back placement's default fell through to the scramble — the chest
+   design printed on the back. `prefix` alone ("B") matches any B## name. */
+function hasDecorationCode(name, code) {
+  const want = String(code || "").toUpperCase();
+  if (!want) return false;
+  const pattern = /^[A-Z]+$/.test(want) ? `${want}\\d{2}` : want.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|[^A-Z0-9])${pattern}(?![0-9])`, "i").test(String(name || ""));
+}
+
+function artworkNamedForCode(files, code) {
+  return (Array.isArray(files) ? files : []).find((f) => hasDecorationCode(f?.name, code)) || null;
 }
 
 async function describePacketFile(file, kind, log) {
@@ -2221,8 +2237,11 @@ async function buildMockups(id, record, product, log) {
     const chosen = chosenId ? packetArt.find((f) => f.assetId === chosenId) : null;
     // An embroidered code ticked on the Back takes the back logo too.
     const onBack = prefix === "B" || (product.placements && product.placements[decoration] === "B");
+    // Nothing picked: a packet file named for this code ("REA-B04") is its
+    // logo, then the roles.
     const file =
       chosen ||
+      artworkNamedForCode(packetArt, decoration) ||
       (onBack
         ? byRole(["back", "scramble"])
         : byRole(["chest", "pick", "scramble", ""]) || packetArt.find((f) => (f.role || "") !== "back") || null);
@@ -3930,6 +3949,8 @@ module.exports = {
   resumeInterruptedBuilds,
   // exported for tests
   defaultArtworkRole,
+  hasDecorationCode,
+  artworkNamedForCode,
   variantIdsForMockup,
   megaMenuChecklist
 };

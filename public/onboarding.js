@@ -2675,6 +2675,25 @@
     return list(record?.packet?.files).filter((f) => f?.kind === "artwork" && f.assetId && !/proof/i.test(f?.name || ""));
   }
 
+  // A file named for a decoration code ("REA-B04 agent.png" for B04).
+  function hasCode(name, code) {
+    const want = String(code || "").toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return Boolean(want) && new RegExp(`(^|[^A-Z0-9])${want}(?![0-9])`, "i").test(String(name || ""));
+  }
+
+  /* The logo the build uses for a code when none is picked — the same order
+     as the server: a packet file named for the code, then the back logo for
+     the back (or the scramble), the chest logo (or the pick, or the scramble,
+     or any file not tagged back) everywhere else. */
+  function defaultLogo(record, product, code, onBack) {
+    const art = packetLogos(record);
+    const byRole = (roles) => roles.map((role) => art.find((f) => (f?.role || "") === role)).find(Boolean) || null;
+    return (
+      art.find((f) => hasCode(f.name, code)) ||
+      (onBack ? byRole(["back", "scramble"]) : byRole(["chest", "pick", "scramble", ""]) || art.find((f) => (f?.role || "") !== "back") || null)
+    );
+  }
+
   // Which placements a row's codes already describe, and the logo on each.
   // Codes as the server reads them: split on "/", commas or spaces.
   function codeList(value) {
@@ -2752,7 +2771,18 @@
     if (typedStyles(product).length) {
       return `<div class="ob-placements" data-ob-placements><p class="field-label">Where the logos go</p><p class="hint">This row is sold in Styles, so each Style row below carries its own codes. Remove the Styles to use the placements here.</p></div>`;
     }
-    const defaultFor = (key) => (key === "B" ? "back" : "chest");
+    /* "Default" says which file it is. "Default (the back logo)" with no file
+       tagged as the back logo fell through to the scramble — the chest design
+       — and Dan could not see that from the dropdown. */
+    const defaultLabel = (key, placed) => {
+      if (!logos.length) return storeOpen() ? "Upload a logo above first" : "Upload logos in step 1";
+      const code = placed?.code || `${key}01`;
+      const file = defaultLogo(record, product, code, key === "B");
+      if (!file) return `Default (no ${key === "B" ? "back" : "chest"} logo in the packet)`;
+      const wanted = key === "B" ? "back" : "chest";
+      const why = hasCode(file.name, code) ? `named for ${code}` : file.role === wanted ? `the ${wanted} logo` : `no file is tagged as the ${wanted} logo`;
+      return `Default — ${file.name} (${why})`;
+    };
     /* Each placement says how its logo goes on. The row's method is the
        default; a placement set the other way keeps it, so an embroidered
        crest and a printed full back live on one row. A spot with a code
@@ -2774,7 +2804,7 @@
                 <select class="ob-place-method" data-ob-place-method aria-label="How the ${esc(p.label.toLowerCase())} logo is applied">${optionsHtml(PLACE_METHODS, method)}</select>
               </div>
               <select data-ob-place-logo aria-label="Logo for the ${esc(p.label.toLowerCase())}">
-                <option value="">${logos.length ? `Default (the ${defaultFor(p.key)} logo)` : storeOpen() ? "Upload a logo above first" : "Upload logos in step 1"}</option>
+                <option value="">${esc(defaultLabel(p.key, placed))}</option>
                 ${logos
                   .map((f) => `<option value="${esc(f.assetId)}" ${placed?.logo === f.assetId ? "selected" : ""}>${esc(f.name || "logo")}${f.role ? ` (${esc(f.role)} logo)` : ""}</option>`)
                   .join("")}
@@ -3072,11 +3102,9 @@
        makes: the embroidery proof if one was uploaded, otherwise the
        department's own logo from the packet (the back logo for B, the chest
        logo, pick or scramble for everything else). */
-    const art = list(record.packet?.files).filter((f) => f?.kind === "artwork" && !/proof/i.test(f?.name || ""));
-    const byRole = (roles) => roles.map((role) => art.find((f) => (f?.role || "") === role)).find(Boolean) || null;
+    const art = packetLogos(record);
     const onBack = (c) => /^B\d{2}$/.test(c) || (product?.placements && product.placements[c] === "B");
-    const logoFor = (c) =>
-      onBack(c) ? byRole(["back", "scramble"]) : byRole(["chest", "pick", "scramble", ""]) || art.find((f) => (f?.role || "") !== "back") || null;
+    const logoFor = (c) => defaultLogo(record, product, c, onBack(c));
     const rows = codes
       .map((c) => {
         const print = /^(F|B|RS|LS)\d{2}$/.test(c);
@@ -3298,6 +3326,7 @@
         ${build.finishedAt ? `<span class="hint">finished ${esc(when(build.finishedAt))}</span>` : ""}
       </div>
       ${blockers.length ? `<p class="hint" data-tone="warn">Blocked until ${esc(blockers.join(", "))}.</p>` : ""}
+      ${!running && unsavedRows(record.id) ? `<p class="hint" data-tone="warn" data-ob-unsaved-rows>Product rows were edited and not saved yet. "${esc(label)}" saves them first, so the build uses what the Products step shows.</p>` : ""}
       ${build.error ? `<p class="build-error">${esc(build.error)}</p>` : ""}
       ${steps.length
         ? `<div class="progress">
@@ -4291,6 +4320,12 @@
      clears it (the server's version of the rows is then the one to show). */
   const EDITABLE_ROW_FIELDS = ["brand", "styleNumber", "type", "title", "colors", "sizes", "decorationMethod", "decorationCodes", "styles", "otherLogos", "fulfillment", "classB", "notes", "logoMap", "placements"];
 
+  // Whether this record has row edits captured from the Products step that
+  // the server has not seen yet.
+  function unsavedRows(id) {
+    return Boolean(state.draft && state.draft.id === id && Array.isArray(state.draft.rows) && state.draft.rows.length);
+  }
+
   function keepUnsavedRows() {
     const record = state.record;
     // Only the Products step knows the rows; any other step on screen leaves
@@ -4427,6 +4462,24 @@
       button,
       "Starting…",
       async () => {
+        /* Rows edited on the Products step and not saved are saved first, so
+           the build makes what is on screen. Dan picked the back logo for a
+           placement, moved to this step without saving, and the build used
+           the default — the chest design on the back — while the Products
+           step still showed his pick. A row that fails validation stops here,
+           on the Products step, where the error is. */
+        if (unsavedRows(id)) {
+          const products = list(rowsForScreen(state.record).products).map(({ unsaved, ...row }) => row);
+          const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
+          if (!isCurrent("detail", id)) return;
+          state.record = payload.onboarding || state.record;
+          state.draft = null;
+          if (!stepDone(state.record, "products")) {
+            goToStep("products", { keepRows: false });
+            fail("The product rows were saved, but some need attention before the build. Fix the rows marked “has errors”, then build again.");
+            return;
+          }
+        }
         const started = await api(recordPath(id, "/build"), { method: "POST", body: JSON.stringify({ force: rerun }) });
         if (!isCurrent("detail", id)) return;
         /* Use the build the server just started. Re-reading the record here

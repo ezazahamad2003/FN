@@ -537,6 +537,13 @@ test("defaultArtworkRole follows the §6.3 order (scramble beats chest beats bac
   assert.equal(agent.defaultArtworkRole("VAC-F01.png"), "chest");
   assert.equal(agent.defaultArtworkRole("vac-back-logo.png"), "back");
   assert.equal(agent.defaultArtworkRole("random.pdf"), "");
+  // Dan names artwork by its code: REA-B04 is the back, REA-F03 the chest.
+  assert.equal(agent.defaultArtworkRole("REA-B04 agent.png"), "back");
+  assert.equal(agent.defaultArtworkRole("REA-F03 agent.png"), "chest");
+  assert.equal(agent.defaultArtworkRole("REA-LS02 agent.png"), "");
+  assert.equal(agent.hasDecorationCode("REA-B04 agent.png", "B04"), true);
+  assert.equal(agent.hasDecorationCode("REA-B04 agent.png", "B01"), false);
+  assert.equal(agent.hasDecorationCode("REA-B040.png", "B04"), false);
 });
 
 /* ---------------------------------------------------------------------------
@@ -2370,6 +2377,35 @@ test("a logo picked for a placement is the one the mockups use", async () => {
   const last = seen[seen.length - 1];
   assert.equal(last.B01, "station-back.png", JSON.stringify(last));
   assert.equal(last.F01, "VFD-scramble.png", "an unpicked placement keeps the default logo");
+});
+
+test("a packet file named for the code is that code's logo when none is picked", async () => {
+  const seen = [];
+  const base = fakeMockups();
+  const mockups = {
+    ...base,
+    async renderProductMockups(args) {
+      seen.push(Object.fromEntries(Object.entries(args.artwork || {}).map(([code, art]) => [code, art.name])));
+      return base.renderProductMockups(args);
+    }
+  };
+  const { id } = await builtOnboarding({ productionFiles: [], mockups });
+  // Both are tagged "back" from their names; B01 is the file named for B01, not the first back file.
+  const withArt = await agent.addFiles(id, {
+    files: [packetFile("files", "REA-B02 agent.png", "image/png"), packetFile("files", "REA-B01 agent.png", "image/png")],
+    kind: "artwork",
+    by: "dan"
+  });
+  assert.deepEqual(
+    withArt.packet.files.filter((f) => /REA-B/.test(f.name)).map((f) => f.role),
+    ["back", "back"]
+  );
+  const row = { ...withArt.products[0], styles: [], decorationMethod: "print", decorationCodes: "F01/B01", logoMap: {} };
+  const saved = await agent.saveProducts(id, [row], { by: "dan" });
+  await agent.redoProductImages(id, saved.products[0].id, { by: "dan", wait: true });
+  const last = seen[seen.length - 1];
+  assert.equal(last.B01, "REA-B01 agent.png", JSON.stringify(last));
+  assert.equal(last.F01, "VFD-scramble.png", "no file is named for F01, so the chest default stands");
 });
 
 test("a style the store has never sold is flagged on the row with Create the master", async () => {
