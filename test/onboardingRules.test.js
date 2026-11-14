@@ -26,7 +26,14 @@ test("sizes: alpha, tall, hats, numeric, waist x inseam, fitted", () => {
   assert.deepEqual(rules.normalizeSize("30x32"), { size: "30x32", kind: "waistInseam" });
   assert.deepEqual(rules.normalizeSize("30 / 32"), { size: "30x32", kind: "waistInseam" });
   assert.deepEqual(rules.normalizeSize("7 1/8"), { size: "71/8", kind: "fitted" });
-  assert.ok(rules.normalizeSize("27").error);
+  assert.deepEqual(rules.normalizeSize("27"), { size: "27", kind: "numeric" });
+  assert.deepEqual(rules.normalizeSize("0"), { size: "0", kind: "numeric" });
+  assert.deepEqual(rules.normalizeSize("2"), { size: "2", kind: "numeric" });
+  assert.deepEqual(rules.normalizeSize("08"), { size: "8", kind: "numeric" });
+  assert.deepEqual(rules.normalizeSize("00"), { size: "00", kind: "numeric" });
+  assert.deepEqual(rules.expandSizeRange("0-20"), ["0", "2", "4", "6", "8", "10", "12", "14", "16", "18", "20"]);
+  assert.deepEqual(rules.expandSizeRange("6-8", { hat: true }), ["6-8"]);
+  assert.ok(rules.normalizeSize("57").error);
   assert.ok(rules.normalizeSize("giant").error);
   assert.ok(rules.normalizeSize("").error);
 });

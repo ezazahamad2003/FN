@@ -126,7 +126,8 @@ const ALPHA_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "6XL
 const TALL_SIZES = ["LT", "XLT", "2XLT", "3XLT", "4XLT"];
 const YOUTH_SIZES = ["YXS", "YS", "YM", "YL", "YXL"];
 const HAT_SIZES = ["OSFA", "S/M", "L/XL"];
-const NUMERIC_MIN = 28;
+// 0, not 28: women's pants run 0–20 (Dan, 2026-11-13); men's waists 28–56.
+const NUMERIC_MIN = 0;
 const NUMERIC_MAX = 56;
 const INSEAM_MIN = 26;
 const INSEAM_MAX = 40;
@@ -172,10 +173,11 @@ function normalizeSize(input) {
     if (inseam < INSEAM_MIN || inseam > INSEAM_MAX) return { error: `Inseam ${inseam} is outside ${INSEAM_MIN}–${INSEAM_MAX}` };
     return { size: `${waist}x${inseam}`, kind: "waistInseam" };
   }
-  if (/^\d{2}$/.test(raw)) {
+  if (/^\d{1,2}$/.test(raw)) {
     const n = Number(raw);
     if (n < NUMERIC_MIN || n > NUMERIC_MAX) return { error: `Numeric size ${n} is outside ${NUMERIC_MIN}–${NUMERIC_MAX}` };
-    return { size: raw, kind: "numeric" };
+    // "02" is size 2; "00" is its own women's size, smaller than 0.
+    return { size: raw === "00" ? raw : String(n), kind: "numeric" };
   }
   // Fitted hats: "7 1/8" → "71/8" (spaces removed, as the live PTS65 SKUs do).
   if (/^[678](\s?\d\/\d)?$/.test(raw)) return { size: raw.replace(/\s+/g, ""), kind: "fitted" };
@@ -184,7 +186,7 @@ function normalizeSize(input) {
 
 /*
  * A size range as people write it — "S-3XL", "XS–5XL", "S to 3XL",
- * "LT-4XLT", "YXS-YXL", "28-44" — expanded to every size in between, in
+ * "LT-4XLT", "YXS-YXL", "28-44", "0-20" — expanded to every size in between, in
  * the store's order. Anything that is not a range comes back unchanged for
  * normalizeSize to judge. "S-M" and "L-XL" on a hat are the hat sizes S/M
  * and L/XL, not ranges. Waists step by 2 when both ends are even (28, 30,
@@ -232,7 +234,8 @@ function expandSizeRange(token, { hat = false, apparel = false } = {}) {
     const j = ladder.indexOf(b);
     if (i >= 0 && j >= 0 && i <= j) return ladder.slice(i, j + 1);
   }
-  if (/^\d{2}$/.test(a) && /^\d{2}$/.test(b)) {
+  // On a hat a one-digit end is a fitted size (6–8 in eighths), not a waist.
+  if (/^\d{1,2}$/.test(a) && /^\d{1,2}$/.test(b) && !(hat && (a.length < 2 || b.length < 2))) {
     const from = Number(a);
     const to = Number(b);
     if (from <= to && from >= NUMERIC_MIN && to <= NUMERIC_MAX) {
