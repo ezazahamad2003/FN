@@ -2414,7 +2414,11 @@
             </div>`
           : ""}
         ${products.length
-          ? `<div class="ob-products">${products.map((product, index) => productRowHtml(record, product, index)).join("")}</div>`
+          ? `<div class="ob-products">${products.map((product, index) => productRowHtml(record, product, index)).join("")}</div>
+            <div class="ob-products-foot">
+              <button class="btn btn-ghost btn-sm" type="button" data-ob="add-product">+ Add product</button>
+              <button class="btn btn-secondary btn-sm" type="button" data-ob="save-products">Save</button>
+            </div>`
           : stateBlock({ title: "No products yet", sub: "Add the suggested products above, or press + Add product and pick a garment the store sells." })}
       </section>`;
   }
