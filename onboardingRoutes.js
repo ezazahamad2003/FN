@@ -29,6 +29,15 @@ const PACKET_FIELDS = [
 const FILES_FIELD = "files";
 const FILES_MAX = 40;
 
+/* The Products step saves the whole list in one PUT, about 1 KB a row.
+   Express parses JSON at 100 KB unless told otherwise, and on 2026-11-17
+   Noroton Heights (109 rows, 107 KB) could not be saved at all: body-parser
+   refused the request before the route ran and the console only had
+   "Request failed (500)" to show for it. The router parses its own JSON at
+   this limit, so every app that mounts it takes a long list, and server.js
+   parses at the same limit ahead of it. */
+const JSON_BODY_LIMIT = "10mb";
+
 // Asset ids are generated as "<base36>-<base36>.<ext>"; anything else — a
 // slash, a backslash, ".." — is refused before it reaches the blob layer.
 const ASSET_ID_RE = /^[a-z0-9-]+(\.[a-z0-9]+)?$/i;
@@ -115,7 +124,7 @@ function knownTable(name) {
   return Object.prototype.hasOwnProperty.call(referenceTables.TABLES, name);
 }
 
-function createOnboardingRouter({ requireAdminToken, upload } = {}) {
+function createOnboardingRouter({ requireAdminToken, upload, jsonBodyLimit = JSON_BODY_LIMIT } = {}) {
   if (!upload || typeof upload.fields !== "function") {
     throw new Error("createOnboardingRouter needs the app's multer instance as `upload`.");
   }
@@ -127,6 +136,9 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
   }
   const gate = requireAdminToken;
   const router = express.Router();
+  // A no-op where the app already parsed the body (server.js does, at the
+  // same limit); the parser the router's own routes can count on otherwise.
+  router.use(express.json({ limit: jsonBodyLimit }));
   const packetUpload = withUpload(upload.fields(PACKET_FIELDS));
   const filesUpload = withUpload(upload.array(FILES_FIELD, FILES_MAX));
 
@@ -642,7 +654,19 @@ function createOnboardingRouter({ requireAdminToken, upload } = {}) {
     }
   });
 
+  /* body-parser hands a body it will not read to next(error), which would
+     reach the app's HTML error handler as a bare 500. Answered as JSON here,
+     with the limit in the message, so the console can say what happened. */
+  router.use((error, req, res, next) => {
+    if (error?.type === "entity.too.large") {
+      return res.status(413).json({ error: `This is too much to save in one request (the limit is ${jsonBodyLimit}). Save fewer rows at a time.` });
+    }
+    if (error?.type === "entity.parse.failed") return res.status(400).json({ error: "The request body is not valid JSON." });
+    next(error);
+  });
+
   return router;
 }
 
 module.exports = createOnboardingRouter;
+module.exports.JSON_BODY_LIMIT = JSON_BODY_LIMIT;

@@ -68,7 +68,9 @@ const PORT = Number(process.env.PORT || 3456);
 app.set("trust proxy", true);
 
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+// The onboarding console saves a department's whole product list in one
+// request, so the app parses JSON at the router's limit, not Express's 100 KB.
+app.use(express.json({ limit: createOnboardingRouter.JSON_BODY_LIMIT }));
 
 /*
  * Internal pages sit on the same origin as the customer intake form, so with
@@ -906,6 +908,11 @@ app.post(
 
 app.use((err, req, res, next) => {
   console.error(err);
+  // The app's own parser refuses a body over the limit before any router
+  // sees it; an API caller still gets JSON that says so rather than a 500.
+  if (err?.type === "entity.too.large" && req.path.startsWith("/api/")) {
+    return res.status(413).json({ error: `This is too much to save in one request (the limit is ${createOnboardingRouter.JSON_BODY_LIMIT}). Save fewer rows at a time.` });
+  }
   res.status(500).send(`<pre>${err.message}</pre>`);
 });
 

@@ -1958,9 +1958,10 @@ test("a blocker the report files under warnings is still listed as unresolved", 
    The router over real HTTP
    ------------------------------------------------------------------------- */
 
-async function withServer(run) {
+async function withServer(run, { jsonBodyLimit } = {}) {
   const app = express();
-  app.use(express.json());
+  // No parser of the app's own: the router parses its JSON itself, at the
+  // limit server.js shares, and that is what these tests exercise.
   // The router refuses to build without a gate, so the pass-through used in
   // tests is explicit rather than implied by omission.
   const openGate = (req, res, next) => next();
@@ -1968,7 +1969,8 @@ async function withServer(run) {
     "/api",
     createOnboardingRouter({
       requireAdminToken: openGate,
-      upload: multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 50 } })
+      upload: multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 50 } }),
+      ...(jsonBodyLimit ? { jsonBodyLimit } : {})
     })
   );
   const server = app.listen(0);
@@ -2036,6 +2038,36 @@ test("the router creates, reads and 404s an onboarding over HTTP", async () => {
 });
 
 const JSON_POST = (body) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+const JSON_PUT = (body) => ({ method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+test("the Products step saves a list longer than Express's default 100 KB body (Noroton Heights, 2026-11-17)", async () => {
+  const { id } = await readyForProducts();
+  await withServer(async (base) => {
+    /* 120 rows carrying what the console echoes back on every save (the
+       store profile, the validation, the notes): about 1 KB a row in prod.
+       At 109 rows Dan's list could not be saved at all. */
+    const products = Array.from({ length: 120 }, (_, i) => ({ ...TEE_ROW, id: `p${i + 1}`, notes: `row ${i + 1} ${"x".repeat(900)}` }));
+    const body = JSON.stringify({ products });
+    assert.ok(body.length > 100 * 1024, `the body must be over 100 KB to prove anything (${body.length})`);
+    const saved = await fetch(`${base}/api/onboardings/${id}/products`, JSON_PUT({ products }));
+    const text = await saved.text();
+    assert.equal(saved.status, 200, text);
+    assert.equal(JSON.parse(text).onboarding.products.length, 120);
+  });
+});
+
+test("a body over the router's limit is a JSON 413 that says so, not an HTML 500", async () => {
+  const { id } = await readyForProducts();
+  await withServer(
+    async (base) => {
+      const refused = await fetch(`${base}/api/onboardings/${id}/products`, JSON_PUT({ products: [{ ...TEE_ROW, notes: "x".repeat(4096) }] }));
+      assert.equal(refused.status, 413);
+      assert.equal(refused.headers.get("content-type")?.split(";")[0], "application/json");
+      assert.match((await refused.json()).error, /too much to save in one request/);
+    },
+    { jsonBodyLimit: "2kb" }
+  );
+});
 const MENU_HEALTH_KEYS = ["available", "baseline", "checkedAt", "healthy", "message", "missing", "nestedMissing", "reasons", "storeCount"];
 
 test("the menu-health routes answer the contract's shapes, and a Helium refusal is a 409", async (t) => {
