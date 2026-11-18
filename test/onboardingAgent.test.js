@@ -2609,6 +2609,19 @@ test("an other logo with no logo picked blocks the row and says why", async () =
   assert.match(record.products[0].validation.errors.join(" "), /Style 2: pick which logo goes on the front/);
 });
 
+test("the build sends SKUs in garment order: an embroidered front before a printed back", async () => {
+  // Noroton Heights, 2026-11-18: the row read E01/B01, Shopify got B01/E01.
+  const { deps, id, chest, ems, row } = await twoLogoStore();
+  const crew = { ...row, decorationMethod: "embroidery", decorationCodes: "E01/B01", placements: { E01: "F" }, logoMap: { E01: chest.assetId, B01: ems.assetId }, otherLogos: [] };
+  const saved = await agent.saveProducts(id, [crew], { by: "dan" });
+  assert.equal(saved.products[0].validation.ok, true, saved.products[0].validation.errors.join(" "));
+  assert.deepEqual(saved.products[0].validation.skuPreview, ["NL3600-S-NVY-VAC-E01/B01", "NL3600-M-NVY-VAC-E01/B01"]);
+  await agent.startBuild(id, { by: "dan", wait: true });
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  assert.deepEqual(deps.shopify.calls.setProduct[0].variants.map((v) => v.sku), ["NL3600-S-NVY-VAC-E01/B01", "NL3600-M-NVY-VAC-E01/B01"]);
+});
+
 test("the build makes one product with a Style option; each Style's front shows its own logo, the shared back once", async () => {
   const seen = {};
   const base = fakeMockups();

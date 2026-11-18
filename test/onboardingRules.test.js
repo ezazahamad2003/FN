@@ -48,8 +48,16 @@ test("decoration codes: parse, order, two digits, print and embroidery together"
   // job shirt has an embroidered front crest and a printed full back.
   const mixed = rules.normalizeDecorations("E02/B02");
   assert.deepEqual(mixed.errors, []);
-  assert.deepEqual(mixed.codes, ["B02", "E02"]);
+  assert.deepEqual(mixed.codes, ["E02", "B02"], "an E code with no placement counts as the front");
   assert.equal(mixed.method, rules.DECORATION_MIXED);
+  // SKU order follows the garment — front, back, right sleeve, left sleeve —
+  // so an E code goes where the row placed it (Noroton Heights, 2026-11-18:
+  // the crews' SKUs had gone out as B01/E01 for a row that read E01/B01).
+  assert.deepEqual(rules.normalizeDecorations("E01/B01", { placements: { E01: "F" } }).codes, ["E01", "B01"]);
+  assert.deepEqual(rules.normalizeDecorations("E01/F01", { placements: { E01: "B" } }).codes, ["F01", "E01"]);
+  assert.deepEqual(rules.normalizeDecorations("LS01/E01/RS01/F02", { placements: { E01: "RS" } }).codes, ["F02", "RS01", "E01", "LS01"]);
+  assert.deepEqual(rules.normalizeDecorations("E02/E01", { placements: { E01: "B", E02: "F" } }).codes, ["E02", "E01"]);
+  assert.deepEqual(rules.normalizeDecorations("E01/E02/E03", { placements: {} }).codes, ["E01", "E02", "E03"], "Class B shoulders: no placement, number order");
   assert.ok(rules.normalizeDecorations("F1").errors.length);
   assert.ok(rules.normalizeDecorations("F001").errors.length);
   assert.ok(rules.normalizeDecorations("X01").errors.length);
@@ -211,7 +219,18 @@ test("expandProduct: a mixed item builds, missing print files, unknown colours, 
   assert.equal(mixed.ok, true, mixed.errors.join("; "));
   assert.equal(mixed.product.decorationMethod, rules.DECORATION_MIXED);
   assert.deepEqual(mixed.product.tags, ["VAC", "Embroidered"]);
-  assert.equal(mixed.variants[0].sku, "72534-S-NVY-VAC-B02/E02");
+  assert.equal(mixed.variants[0].sku, "72534-S-NVY-VAC-E02/B02", "the front crest first, then the back");
+  // Noroton Heights' crew as the console saves it: the E code placed on the front.
+  const noroton = rules.expandProduct(
+    { brand: "Nike", styleNumber: "NKFD9863", type: "Sweatshirt", colors: ["Black"], sizes: ["S"], decorationMethod: "embroidery", decorationCodes: "E01/B01", placements: { E01: "F" }, fulfillment: "Non Stock Item" },
+    { departmentCode: "NRH" }
+  );
+  assert.equal(noroton.variants[0].sku, "NKFD9863-S-BLK-NRH-E01/B01");
+  const backCrest = rules.expandProduct(
+    { brand: "Nike", styleNumber: "NKFD9863", type: "Sweatshirt", colors: ["Black"], sizes: ["S"], decorationMethod: "embroidery", decorationCodes: "E01/F01", placements: { E01: "B" }, fulfillment: "Non Stock Item" },
+    { departmentCode: "NRH" }
+  );
+  assert.equal(backCrest.variants[0].sku, "NKFD9863-S-BLK-NRH-F01/E01", "an E code placed on the back follows the printed front");
   // A declared method still has to agree with codes that are all the other one.
   const contradicted = rules.expandProduct(
     { brand: "X", styleNumber: "X1", colors: ["Navy"], sizes: ["S"], decorationMethod: "embroidery", decorationCodes: "F01/B01", fulfillment: "One Week Item" },
@@ -422,7 +441,7 @@ test("an embroidered other logo keeps the spot of the one it replaces", () => {
     otherLogos: [{ logo: "logo-b" }]
   });
   assert.deepEqual(hat.errors, []);
-  assert.deepEqual(hat.styles.map((s) => s.decorationCodes), ["E01/E02", "E02/E03"]);
+  assert.deepEqual(hat.styles.map((s) => s.decorationCodes), ["E01/E02", "E03/E02"], "garment order: the swapped front code leads, the back follows");
   assert.equal(hat.placements.E03, "F", "drawn on the front, like E01");
   assert.equal(hat.logoMap.E03, "logo-b");
 
@@ -498,4 +517,15 @@ test("a row that needs more variants than Shopify allows says so on save, not at
   const fits = rules.expandProduct({ ...TEE, colors: ["Navy"], sizes, styles }, { departmentCode: "VAC" });
   assert.equal(fits.ok, true, fits.errors.join(" | "));
   assert.equal(fits.variants.length, 1197);
+});
+
+test("an embroidered front with a printed back keeps garment order in every Style", () => {
+  const crew = { ...TEE, decorationMethod: "embroidery", decorationCodes: "E01/B01", placements: { E01: "F" }, logoMap: { E01: "logo-a", B01: "logo-back" } };
+  const made = rules.logoStyles({ ...crew, otherLogos: [{ logo: "logo-b" }] });
+  assert.deepEqual(made.errors, []);
+  assert.deepEqual(made.styles.map((s) => s.decorationCodes), ["E01/B01", "E02/B01"]);
+  assert.equal(made.placements.E02, "F");
+  const spec = rules.expandProduct({ ...crew, styles: made.styles, logoMap: made.logoMap, placements: made.placements }, { departmentCode: "VAC" });
+  assert.equal(spec.ok, true, spec.errors.join(" | "));
+  assert.deepEqual(spec.variants.slice(0, 2).map((v) => v.sku), ["NL3600-S-NVY-VAC-E01/B01", "NL3600-S-NVY-VAC-E02/B01"]);
 });

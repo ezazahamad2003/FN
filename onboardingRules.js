@@ -315,11 +315,23 @@ function parseDecorationCode(input) {
 
 /*
  * Accepts "F01/B01", "F01, B01", ["F01","B01"] and returns the codes sorted
- * into SKU order (front, back, right sleeve, left sleeve, embroidery; numeric
- * within a location). `method` is print, embroidery, or mixed when the codes
- * carry both (an embroidered front with a printed back); null with no codes.
+ * into SKU order: where each sits on the garment — front, back, right sleeve,
+ * left sleeve. A print code says so by its letters; an E/P code takes its
+ * place from the row's `placements` (the front when it has none, where the
+ * mockups draw it), so an embroidered front with a printed back is E01/B01,
+ * as Dan reads it. Noroton Heights' crews went out as B01/E01 (2026-11-18)
+ * because embroidery used to sort last whatever its spot. Codes on the same
+ * spot keep the prefix order, then the number. `method` is print,
+ * embroidery, or mixed when the codes carry both; null with no codes.
  */
-function normalizeDecorations(input) {
+const SPOT_ORDER = ["F", "B", "RS", "LS"];
+function skuSpotIndex(parsed, placements) {
+  if (PRINT_PREFIXES.includes(parsed.prefix)) return SPOT_ORDER.indexOf(parsed.prefix);
+  const spot = SPOT_ORDER.indexOf(String(placements?.[parsed.code] || "").toUpperCase());
+  return spot >= 0 ? spot : 0;
+}
+
+function normalizeDecorations(input, { placements = null } = {}) {
   const list = Array.isArray(input)
     ? input
     : String(input == null ? "" : input).split(/[\/,\s]+/);
@@ -345,9 +357,10 @@ function normalizeDecorations(input) {
     );
   }
   unique.sort((a, b) => {
+    const spot = skuSpotIndex(a, placements) - skuSpotIndex(b, placements);
     const ai = DECORATION_PREFIX_ORDER.indexOf(a.prefix);
     const bi = DECORATION_PREFIX_ORDER.indexOf(b.prefix);
-    return ai - bi || a.number - b.number;
+    return spot || ai - bi || a.number - b.number;
   });
   return {
     codes: unique.map((p) => p.code),
@@ -759,7 +772,7 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED 
   const styles = [];
   const allCodes = new Set();
   styleInputs.forEach((s, i) => {
-    const nd = normalizeDecorations(s.decorationCodes);
+    const nd = normalizeDecorations(s.decorationCodes, { placements: product.placements });
     nd.errors.forEach((e) => errors.push(`${styleInputs.length > 1 ? `${styleName(i + 1)}: ` : ""}${e}`));
     (nd.assumptions || []).forEach((a) => {
       if (!assumptions.includes(a)) assumptions.push(a);
@@ -928,7 +941,7 @@ function logoStyles(product, { previous = null } = {}) {
     .map((other) => ({ logo: String(other.logo || "").trim(), spot: String(other.spot || "").trim().toUpperCase() }));
   const allStyles = Array.isArray(product?.styles) ? product.styles : [];
   const typed = allStyles.filter((style) => style?.source !== OTHER_LOGO_SOURCE);
-  const base = normalizeDecorations(product.decorationCodes);
+  const base = normalizeDecorations(product.decorationCodes, { placements });
   /* A code an earlier save made for an other logo (F02, F03…) that no Style
      uses any more leaves the logo and spot maps; nothing else is touched.
      `previous` is the row as stored: the console sends a row back without
@@ -1002,7 +1015,10 @@ function logoStyles(product, { previous = null } = {}) {
     used.add(code);
     derived[code] = { logo: other.logo, spot: target.spot, embroidered: !PRINT_PREFIXES.includes(prefix) };
     // In SKU order, as every other code list on the row is kept.
-    const codes = normalizeDecorations(base.codes.map((c) => (c === target.code ? code : c))).codes;
+    const codes = normalizeDecorations(
+      base.codes.map((c) => (c === target.code ? code : c)),
+      { placements: { ...placements, [code]: target.spot } }
+    ).codes;
     styles.push({ decorationCodes: codes.join("/"), source: OTHER_LOGO_SOURCE });
   });
 

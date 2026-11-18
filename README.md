@@ -158,9 +158,12 @@ model is used only for reading messy policies, drafting the rep email, and
 rendering mockups.
 
 A SKU is `STYLE-SIZE-COLOR-CODE-DECORATIONS`, e.g. `NL3600-L-NVY-VAC-F01/B01`,
-`R112-OSFA-NVY-VAC-E01`. An item is either **all print** (`F##`/`B##`/`RS##`/
-`LS##`) or **all embroidery** (`E##`) — a mixed item is a custom order and is
-rejected rather than built.
+`R112-OSFA-NVY-VAC-E01`. The decoration codes read in garment order — front,
+back, right sleeve, left sleeve — whatever their method: a print code by its
+letters, an `E##`/`P##` code by the placement the row gave it (the front when
+it has none). An embroidered front with a printed back is `E01/B01`. One item
+may mix print and embroidery (since 2026-11-02) and is tagged Embroidered when
+any code is embroidery.
 
 ### Source-of-truth tables
 
