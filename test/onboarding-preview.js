@@ -235,20 +235,24 @@ function fakeMockups() {
   return {
     async renderProductMockups({ product, departmentCode }) {
       const out = [];
+      // A row sold in Styles (other logos) gets a front and back per Style, as the real renderer does.
+      const styles = (product.styles || []).filter((s) => s.name).map((s) => s.name);
       for (const color of product.colors || []) {
-        for (const face of ["front", "back"]) {
-          out.push({
-            color: color.name,
-            colorCode: color.code,
-            style: null,
-            face,
-            buffer: await sharp({ create: { width: 200, height: 200, channels: 3, background: "#223355" } }).png().toBuffer(),
-            fileName: rules.mockupFileName({ departmentCode, styleNumber: product.styleNumber, colorCode: color.code, style: null, face }),
-            path: "render",
-            base: "photo",
-            warnings: [],
-            verified: { ok: true, notes: "preview" }
-          });
+        for (const style of styles.length ? styles : [null]) {
+          for (const face of ["front", "back"]) {
+            out.push({
+              color: color.name,
+              colorCode: color.code,
+              style,
+              face,
+              buffer: await sharp({ create: { width: 200, height: 200, channels: 3, background: "#223355" } }).png().toBuffer(),
+              fileName: rules.mockupFileName({ departmentCode, styleNumber: product.styleNumber, colorCode: color.code, style, face }),
+              path: "render",
+              base: "photo",
+              warnings: [],
+              verified: { ok: true, notes: "preview" }
+            });
+          }
         }
       }
       return out;

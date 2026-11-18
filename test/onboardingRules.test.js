@@ -461,6 +461,41 @@ test("an other logo that cannot be built says why on the row", () => {
   assert.match(errors({ decorationCodes: "", otherLogos: [{ logo: "logo-b" }] }), /Tick where the logo goes/);
   assert.match(errors({ styles: [{ decorationCodes: "F01" }, { decorationCodes: "F02" }], otherLogos: [{ logo: "logo-b" }] }), /Styles typed as codes/);
   const many = Array.from({ length: rules.OTHER_LOGOS_MAX + 1 }, (_, i) => ({ logo: `logo-${i}` }));
-  assert.match(errors({ otherLogos: many }), /at most 5 other logos/);
+  assert.match(errors({ otherLogos: many }), new RegExp(`at most ${rules.OTHER_LOGOS_MAX} other logos \\(Style 2 to Style ${rules.OTHER_LOGOS_MAX + 1}\\)\\. Remove 1\\.`));
   assert.deepEqual(rules.logoStyles({ ...TEE }).errors, [], "no other logo, nothing to say");
+});
+
+test("a product takes OTHER_LOGOS_MAX other logos, each the next Style with its own front code", () => {
+  // Santa Cruz City FD's hat needed 6 (2026-11-18); the cap started at 5.
+  assert.equal(rules.OTHER_LOGOS_MAX, 20);
+  const last = rules.OTHER_LOGOS_MAX + 1;
+  const all = Array.from({ length: rules.OTHER_LOGOS_MAX }, (_, i) => ({ logo: `logo-${i}` }));
+  const made = rules.logoStyles({ ...TEE, otherLogos: all });
+  assert.deepEqual(made.errors, []);
+  assert.equal(made.styles.length, last);
+  assert.deepEqual(made.styles.slice(0, 3).map((s) => s.decorationCodes), ["F01/B01", "F02/B01", "F03/B01"]);
+  assert.equal(made.styles[last - 1].decorationCodes, `F${last}/B01`);
+  assert.equal(made.logoMap[`F${last}`], `logo-${rules.OTHER_LOGOS_MAX - 1}`);
+
+  // Through to the product: a Style option value per logo, a SKU per size × Style.
+  const spec = rules.expandProduct({ ...TEE, styles: made.styles, logoMap: made.logoMap }, { departmentCode: "VAC" });
+  assert.equal(spec.ok, true, spec.errors.join(" | "));
+  assert.equal(spec.options[2].name, rules.OPTION_STYLE);
+  assert.equal(spec.options[2].values.length, last);
+  assert.equal(spec.options[2].values[last - 1], `Style ${last}`);
+  assert.equal(spec.variants.length, TEE.sizes.length * last);
+  assert.equal(spec.variants[spec.variants.length - 1].sku, `NL3600-M-NVY-VAC-F${last}/B01`);
+});
+
+test("a row that needs more variants than Shopify allows says so on save, not at the build", () => {
+  const styles = Array.from({ length: 21 }, (_, i) => ({ decorationCodes: `F${String(i + 1).padStart(2, "0")}/B01` }));
+  const sizes = Array.from({ length: 57 }, (_, i) => String(i)); // 0–56, every numeric size there is
+  const spec = rules.expandProduct({ ...TEE, colors: ["Navy", "Black"], sizes, styles }, { departmentCode: "VAC" });
+  assert.equal(spec.ok, false);
+  assert.match(spec.errors.join(" | "), new RegExp(`^2394 variants \\(2 colors × 57 sizes × 21 Styles\\) is more than the ${rules.SHOPIFY_MAX_VARIANTS} Shopify allows on one product`));
+  assert.equal(rules.SHOPIFY_MAX_VARIANTS, require("../shopify").MAX_VARIANTS, "the build's own cap");
+
+  const fits = rules.expandProduct({ ...TEE, colors: ["Navy"], sizes, styles }, { departmentCode: "VAC" });
+  assert.equal(fits.ok, true, fits.errors.join(" | "));
+  assert.equal(fits.variants.length, 1197);
 });

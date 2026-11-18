@@ -55,6 +55,9 @@ const TAG_UNIFORM = "Uniform";
 const OPTION_COLOR = "Color";
 const OPTION_SIZE = "Size";
 const OPTION_STYLE = "Style";
+// Shopify's cap on variants per product (colors × sizes × Styles) — the same
+// number shopify.js builds against.
+const SHOPIFY_MAX_VARIANTS = 2048;
 
 const DECORATION_PRINT = "print";
 const DECORATION_EMBROIDERY = "embroidery";
@@ -828,6 +831,15 @@ function expandProduct(product, { departmentCode, colorTable = COLOR_CODES_SEED 
       }
     }
   }
+  /* Shopify takes at most SHOPIFY_MAX_VARIANTS variants on one product
+     (colors × sizes × Styles). Said on the row at save, not by the build
+     failing at productSet. */
+  if (variants.length > SHOPIFY_MAX_VARIANTS) {
+    const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    errors.push(
+      `${variants.length} variants (${count(colors.length, "color")} × ${count(sizes.length, "size")} × ${count(styles.length, "Style")}) is more than the ${SHOPIFY_MAX_VARIANTS} Shopify allows on one product. Use fewer colors, sizes or Styles, or split the product.`
+    );
+  }
 
   // Anything embroidered on it makes it an Embroidered item, printed back or not.
   const embroidered = styles.some((s) => s.decorations.some((d) => d.method === DECORATION_EMBROIDERY));
@@ -882,7 +894,13 @@ function defaultProductTitle(product) {
  * Returns { styles, logoMap, placements, otherLogos, errors } — the row's new
  * values for those fields, and why an other logo could not be placed.
  */
-const OTHER_LOGOS_MAX = 5;
+/* How many other logos one product takes. It started at 5; Santa Cruz City
+   FD's hat carried its crest plus a logo for Truck 61 and each of Engines
+   61–64 (Dan, 2026-11-18), one more than that. The hard ceilings are
+   Shopify's variants per product (SHOPIFY_MAX_VARIANTS) and 99 codes per
+   prefix; 20 keeps the Style dropdown and the mockup bill — one render per
+   Style per colour — within reason. */
+const OTHER_LOGOS_MAX = 20;
 const OTHER_LOGO_SOURCE = "other-logo";
 const SPOT_LABELS = { F: "front", B: "back", RS: "right sleeve", LS: "left sleeve" };
 
@@ -1223,6 +1241,7 @@ module.exports = {
   parseSku,
   expandProduct,
   defaultProductTitle,
+  SHOPIFY_MAX_VARIANTS,
   OTHER_LOGOS_MAX,
   OTHER_LOGO_SOURCE,
   decorationSpot,
