@@ -91,7 +91,30 @@ test("planProductUpdate: a value Shopify already has keeps Shopify's spelling an
   assert.equal(plan.ok, true, plan.problems.join(" "));
   assert.deepEqual(plan.variants.map((v) => v.sku), ["72534-S-BLA-NRH-E02", "72534-M-BLA-NRH-E02", "72534-L-BLA-NRH-E02"]);
   assert.ok(plan.variants.every((v) => v.optionValues[0].name === "BLACK"), "no second colour beside the one that is there");
-  assert.match(plan.warnings.join(" "), /3 variants already in Shopify carry SKUs the row would write differently/);
+  assert.deepEqual(plan.warnings, [], "the product's own colour code is not a difference to report");
+});
+
+test("planProductUpdate: an ending Dan gave every SKU by hand goes on the new SKUs too", () => {
+  // Noroton Heights' tees: built as …-F01/B01, then every SKU edited to end /E00.
+  const tee = { ...JOB_SHIRT, decorationMethod: "print", decorationCodes: "F01/B01", placements: {}, styles: [{ decorationCodes: "F01/B01" }, { decorationCodes: "F02/B01" }] };
+  const live = liveFrom(tee);
+  live.variants.forEach((v) => {
+    v.sku = `${v.sku}/E00`;
+  });
+  const row = { ...tee, styles: [...tee.styles, { decorationCodes: "F03/B01" }] };
+  const plan = productUpdate.planProductUpdate(expand(row), live, { departmentCode: "NRH" });
+  assert.equal(plan.ok, true, plan.problems.join(" "));
+  assert.equal(plan.skuEnding, "/E00");
+  assert.deepEqual(plan.variants.map((v) => v.sku), ["72534-S-BLK-NRH-F03/B01/E00", "72534-M-BLK-NRH-F03/B01/E00", "72534-L-BLK-NRH-F03/B01/E00"]);
+  assert.match(plan.warnings.join(" "), /Every SKU on this product ends in "\/E00"/);
+  assert.doesNotMatch(plan.warnings.join(" "), /would write differently/);
+
+  // One variant without the ending: nothing is assumed, and it is said.
+  live.variants[0].sku = live.variants[0].sku.replace("/E00", "");
+  const mixed = productUpdate.planProductUpdate(expand(row), live, { departmentCode: "NRH" });
+  assert.equal(mixed.skuEnding, "");
+  assert.equal(mixed.variants[0].sku, "72534-S-BLK-NRH-F03/B01");
+  assert.match(mixed.warnings.join(" "), /5 variants already in Shopify carry SKUs the row would write differently/);
 });
 
 test("planProductUpdate: nothing is ever removed, and a product set up by hand is refused", () => {

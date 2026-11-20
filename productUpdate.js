@@ -108,7 +108,9 @@ function planProductUpdate(expanded, snapshot, { departmentCode = "" } = {}) {
     newSizes: [],
     newStyles: [],
     liveCount: (snapshot?.variants || []).length,
-    extraLive: 0
+    extraLive: 0,
+    // An ending every live SKU carries beyond the row's own ("/E00").
+    skuEnding: ""
   };
   if (!snapshot) {
     problems.push("This product is no longer in Shopify.");
@@ -170,21 +172,38 @@ function planProductUpdate(expanded, snapshot, { departmentCode = "" } = {}) {
 
   const wantedKeys = new Set();
   const newPairs = new Map();
+  const skuFor = (variant) => {
+    const liveCode = liveColorCodes.get(colorKey(variant.color));
+    return liveCode && liveCode !== clean(variant.colorCode).toUpperCase()
+      ? rules.buildSku({ styleNumber: expanded.product.styleNumber, size: variant.size, colorCode: liveCode, departmentCode, decorationCodes: variant.decorationCodes })
+      : variant.sku;
+  };
+  /* An ending Dan gave every SKU of the product by hand after it was built
+     (Noroton Heights' tees all end "/E00") belongs on the new ones too: when
+     each variant already there is the row's SKU plus the SAME extra ending,
+     the new variants take that ending. One variant without it, or two
+     different endings, and nothing is assumed. */
+  const endings = new Set();
   let skuDiffers = 0;
+  for (const variant of expanded.variants) {
+    const live = liveKeys.get(variantKey(variant.color, variant.size, clean(variant.style)));
+    const mine = clean(skuFor(variant)).toUpperCase();
+    const theirs = clean(live?.sku).toUpperCase();
+    if (!live || !mine || !theirs) continue;
+    if (theirs !== mine) skuDiffers += 1;
+    endings.add(theirs.startsWith(mine) ? theirs.slice(mine.length) : null);
+  }
+  const ending = endings.size === 1 ? [...endings][0] : null;
+  out.skuEnding = ending && /^[\/-][A-Z0-9\/-]+$/.test(ending) ? ending : "";
+  if (out.skuEnding) skuDiffers = 0;
+
   for (const variant of expanded.variants) {
     const style = clean(variant.style);
     const key = variantKey(variant.color, variant.size, style);
     wantedKeys.add(key);
-    const live = liveKeys.get(key);
-    if (live) {
-      if (clean(live.sku) && clean(variant.sku) && clean(live.sku).toUpperCase() !== clean(variant.sku).toUpperCase()) skuDiffers += 1;
-      continue;
-    }
-    const liveCode = liveColorCodes.get(colorKey(variant.color));
-    const sku =
-      liveCode && liveCode !== clean(variant.colorCode).toUpperCase()
-        ? rules.buildSku({ styleNumber: expanded.product.styleNumber, size: variant.size, colorCode: liveCode, departmentCode, decorationCodes: variant.decorationCodes })
-        : variant.sku;
+    if (liveKeys.get(key)) continue;
+    const base = skuFor(variant);
+    const sku = base ? `${base}${out.skuEnding}` : base;
     if (sku && liveSkus.has(clean(sku).toUpperCase())) {
       problems.push(`${variant.color} / ${variant.size}${style ? ` / ${style}` : ""} would get the SKU ${sku}, which another variant of this product already has. The row's logos do not match how the product was built; check its decoration codes.`);
       continue;
@@ -203,6 +222,9 @@ function planProductUpdate(expanded, snapshot, { departmentCode = "" } = {}) {
   out.newPairs = [...newPairs.values()];
   out.extraLive = [...liveKeys.keys()].filter((key) => !wantedKeys.has(key)).length;
 
+  if (out.skuEnding && out.variants.length) {
+    warnings.push(`Every SKU on this product ends in "${out.skuEnding}" (added in Shopify after it was built), so the new SKUs end in it too.`);
+  }
   if (skuDiffers) {
     warnings.push(`${skuDiffers} variant${skuDiffers === 1 ? "" : "s"} already in Shopify carr${skuDiffers === 1 ? "ies a SKU" : "y SKUs"} the row would write differently. They are left exactly as they are.`);
   }
