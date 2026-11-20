@@ -1859,6 +1859,73 @@
 .ob-store-done[data-tone="danger"] { border-color: var(--danger-border); border-left-color: var(--danger); background: var(--danger-soft); }
 .ob-store-done p { margin: 0; }
 
+/* =============================================================================
+   Adding to a product already in Shopify, and a logo onto many products
+   -----------------------------------------------------------------------------
+   The plan under the row says what "Update product" will do before it does
+   it. Its tone is the answer at a glance: green = it will add something,
+   grey = nothing to add yet, red = it cannot run, blue = still checking.
+   ========================================================================== */
+.ob-store-modal[data-ob-store-mode="update"] .ob-garment-pick,
+.ob-store-modal[data-ob-store-mode="update"] .ob-lookup { display: none; }
+.ob-store-modal[data-ob-store-mode="update"] [data-ob-field="styleNumber"][readonly] {
+  background: var(--surface-3);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.ob-store-saved[data-tone="info"] { border-color: var(--info-border); border-left-color: var(--info); background: var(--info-soft); }
+
+.ob-store-plan {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.ob-store-plan p, .ob-store-plan ul { margin: 0; }
+.ob-store-plan ul { padding-left: var(--space-5); color: var(--text-muted); }
+.ob-store-plan[data-tone="ok"] { border-color: var(--success-border); border-left-color: var(--success); background: var(--success-soft); }
+.ob-store-plan[data-tone="danger"] { border-color: var(--danger-border); border-left-color: var(--danger); background: var(--danger-soft); }
+.ob-store-plan[data-tone="danger"] ul { color: var(--text); }
+.ob-store-plan[data-tone="warn"] { border-color: var(--warn-border); border-left-color: var(--warn); background: var(--warn-soft); }
+.ob-store-plan[data-tone="info"] { display: flex; align-items: center; border-color: var(--info-border); border-left-color: var(--info); background: var(--info-soft); }
+.ob-store-plan-skus { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: baseline; color: var(--text-muted); }
+.ob-store-plan-skus code {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
+.ob-bulk {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.ob-bulk legend { padding: 0 var(--space-2); font-weight: 800; font-size: var(--fs-sm); color: var(--text); }
+.ob-bulk legend small { font-weight: 500; color: var(--text-muted); }
+.ob-bulk .hint { margin: 0; }
+.ob-bulk-spot select { width: min(100%, 420px); }
+.ob-bulk-products { max-height: min(42vh, 420px); overflow-y: auto; padding-right: var(--space-1); }
+.ob-bulk .ob-head-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.ob-bulk-skipped { font-size: var(--fs-sm); color: var(--text-muted); }
+.ob-bulk-skipped summary { cursor: pointer; font-weight: 700; color: var(--text); }
+.ob-bulk-skipped ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
+
 @media (max-width: 720px) {
   .ob-store-modal .modal-actions .btn { flex: 1 1 auto; }
+  .dw-add .btn { flex: 1 1 auto; }
 }

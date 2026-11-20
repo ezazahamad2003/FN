@@ -28,6 +28,7 @@
  */
 
 const rules = require("./onboardingRules");
+const productUpdate = require("./productUpdate");
 
 /* ---------------------------------------------------------------------------
    Injectable collaborators
@@ -1167,6 +1168,10 @@ async function writeReviewDocs(record, review, by) {
  * resolved (an unknown colour becomes a proposal on the Color Code List),
  * vendor exact, print and embroidery never mixed.
  */
+// On a built row whose additions are not in Shopify yet (row.updatePending).
+const UPDATE_PENDING_NOTE =
+  "Already in Shopify without what was added here. Press Update product to add it: the variants already there keep their prices, SKUs and pictures.";
+
 async function saveProducts(id, products, { by = "", only = null } = {}) {
   if (!Array.isArray(products)) throw badRequest("products must be an array of rows.");
   const record = await store().getOnboarding(id);
@@ -1195,6 +1200,8 @@ async function saveProducts(id, products, { by = "", only = null } = {}) {
     const incoming = { ...(products[i] || {}) };
     // Owed images are the build's to track, never the console's to send.
     delete incoming.replaceImages;
+    // So is "this built product has additions waiting for Update product".
+    delete incoming.updatePending;
     if (onlyIds && incoming.id && !onlyIds.has(clean(incoming.id))) {
       const kept = productById(record, incoming.id);
       if (kept && !claimed.has(kept.id)) {
@@ -1305,11 +1312,24 @@ async function saveProducts(id, products, { by = "", only = null } = {}) {
       ]);
     let specWarning = "";
     if (existing && !styleChanged && specKey(existing) !== specKey(merged)) {
-      if (Array.isArray(merged.mockups) && merged.mockups.length) merged.mockups = [];
-      if (merged.shopify?.gid) {
-        specWarning = `Already built in Shopify from the previous details. Delete that draft${merged.shopify.url ? ` (${merged.shopify.url})` : ""} and re-run the build to recreate it with these SKUs and logos.`;
+      /* A product already in Shopify that only GAINED colours, sizes or logos
+         (Styles) keeps its mockups — they are still right — and waits for
+         "Update product", which adds what Shopify does not have yet. Before
+         this the only way to add a logo to a built product was to delete it
+         and build again (Dan, Noroton Heights, 2026-11-20). Anything else —
+         a logo swapped, a colour taken off — is still a different product. */
+      if (merged.shopify?.gid && productUpdate.additiveChange(existing, merged)) {
+        merged.updatePending = true;
+      } else {
+        delete merged.updatePending;
+        if (Array.isArray(merged.mockups) && merged.mockups.length) merged.mockups = [];
+        if (merged.shopify?.gid) {
+          specWarning = `Already built in Shopify from the previous details. Delete that draft${merged.shopify.url ? ` (${merged.shopify.url})` : ""} and re-run the build to recreate it with these SKUs and logos.`;
+        }
       }
     }
+    if (merged.updatePending && merged.shopify?.gid) specWarning = UPDATE_PENDING_NOTE;
+    else delete merged.updatePending;
 
     /* Start the row from how the store already sells this blank: the style as
        the store writes it ("Richardson 112" → R112), the house product name
@@ -1361,7 +1381,8 @@ async function saveProducts(id, products, { by = "", only = null } = {}) {
        Say so on the row, where "Create the master" fixes it in one click. A
        Shopify error here is not a verdict, so only a clean "not found" counts. */
     merged.masterMissing = false;
-    if (clean(merged.styleNumber) && !clean(merged.sourceProduct?.id)) {
+    // A product already in Shopify is added to, never duplicated from a master.
+    if (clean(merged.styleNumber) && !clean(merged.sourceProduct?.id) && !merged.shopify?.gid) {
       const source = await shop()
         .findSourceProduct(merged.styleNumber)
         .catch(() => undefined);
@@ -1521,6 +1542,206 @@ async function createProducts(id, productIds, { by = "", wait = false } = {}) {
     }
   }
   return startBuild(id, { force: true, by, wait, only: ids, kind: "products" });
+}
+
+/* ---------------------------------------------------------------------------
+   Editing a product that is already in the store (Departments → Edit →
+   "Add colours, sizes or logos"). The row is the product's own row on the
+   record; a product the agent has no row for — built by hand, or in a store
+   that predates the agent — gets one read off the live product. Saving the
+   row is saveProduct, as for a new product; updateProducts then adds what
+   Shopify does not have yet (runBuild's "update" scope).
+   ------------------------------------------------------------------------- */
+
+function legacyProductId(value) {
+  return clean(value).replace(/^gid:\/\/shopify\/Product\//, "");
+}
+
+function rowForShopifyProduct(record, productId) {
+  const want = legacyProductId(productId);
+  if (!want) return null;
+  return (record.products || []).find((p) => legacyProductId(p.shopify?.productId) === want || legacyProductId(p.shopify?.gid) === want) || null;
+}
+
+/**
+ * The record and row behind one live product of a store. Returns
+ * { onboarding, product } — `product` is null while the store's department
+ * code is not known (the form asks for it first).
+ */
+async function storeProductRow(collectionId, shopifyProductId, { by = "" } = {}) {
+  const record = (await recordForCollection(collectionId)) || (await adoptStore(collectionId, { by }));
+  if (!record.department.code.approved || !departmentCode(record)) return { onboarding: record, product: null };
+  const known = rowForShopifyProduct(record, shopifyProductId);
+  if (known) return { onboarding: record, product: known };
+
+  const snapshot = await shop().productSnapshot(legacyProductId(shopifyProductId));
+  if (!snapshot) throw badRequest("That product is no longer in Shopify. Refresh the department page.");
+  const collectionLegacy = clean(record.collection.id) || clean(record.collection.gid).replace(/^gid:\/\/shopify\/Collection\//, "");
+  if (!(snapshot.collections || []).some((c) => String(c.id) === collectionLegacy)) {
+    throw badRequest(`"${snapshot.title}" is not in the collection "${record.collection.title}".`);
+  }
+  const read = productUpdate.rowFromLiveProduct(snapshot, { departmentCode: departmentCode(record) });
+  if (!read.row) throw badRequest(read.problems.join(" "));
+
+  const rowId = nextRowId(record);
+  const row = {
+    ...read.row,
+    id: rowId,
+    shopify: { productId: String(snapshot.id), gid: snapshot.gid, url: shopCore().adminProductUrl ? shopCore().adminProductUrl(snapshot.id) : "", variantCount: snapshot.variants.length, createdAt: nowIso() },
+    buildState: "created",
+    // Read off the live product, not built from a row: it has no mockups on file.
+    fromShopify: nowIso()
+  };
+  const saved = await saveProducts(record.id, [...record.products, row], { by, only: [rowId] });
+  const product = productById(saved, rowId);
+  if (!product) throw new Error(`The row for "${snapshot.title}" could not be saved.`);
+
+  /* The row must describe the product exactly as it stands: an update adds
+     whatever the row has and Shopify lacks, so a row that reads even one
+     variant differently would "add" it. Checked here, where nothing has been
+     written to Shopify, and the row is dropped again if it does not match. */
+  const colorTable = await tables().colorTable();
+  const expanded = rules.expandProduct(product, { departmentCode: departmentCode(saved), colorTable });
+  const plan = expanded.ok ? productUpdate.planProductUpdate(expanded, snapshot, { departmentCode: departmentCode(saved) }) : null;
+  if (plan && (!plan.ok || plan.variants.length)) {
+    await store().updateOnboarding(saved.id, (r) => {
+      r.products = r.products.filter((p) => p.id !== rowId);
+      return r;
+    });
+    const why = plan.problems[0] || `its row would add ${plan.variants.length} variant(s) the product already seems to have under other names`;
+    throw badRequest(`The agent could not read "${snapshot.title}" back exactly as it is in Shopify (${why}). Add to this product in Shopify.`);
+  }
+  const noted = await store().updateOnboarding(saved.id, (r) => {
+    note(r, { type: "products", message: `${snapshot.title}: row read from the product in Shopify (${snapshot.variants.length} variant(s)), so it can be added to here.`, by });
+    return r;
+  });
+  return { onboarding: noted, product: productById(noted, rowId) };
+}
+
+/** What "Update product" would add to one built product — nothing is written. */
+async function productUpdatePlan(id, productId) {
+  const record = await store().getOnboarding(id);
+  const row = productById(record, productId);
+  if (!row) throw badRequest(`No product row "${productId}" on this store.`);
+  if (!row.shopify?.gid) return { inShopify: false, ok: false, problems: ["This product is not in Shopify yet."], warnings: [], variants: 0 };
+  if (row.validation?.ok !== true) {
+    return { inShopify: true, ok: false, problems: ["Fix what the row says is wrong first."], warnings: [], variants: 0 };
+  }
+  const { plan, styleOf } = await planUpdate(record, row);
+  return {
+    inShopify: true,
+    ok: plan.ok,
+    problems: plan.problems,
+    warnings: plan.warnings,
+    variants: plan.variants.length,
+    skus: plan.variants.slice(0, 8).map((v) => v.sku).filter(Boolean),
+    newColors: plan.newColors,
+    newSizes: plan.newSizes,
+    newStyles: plan.newStyles,
+    addStyleOption: plan.addStyleOption,
+    mockups: plan.ok ? pairsToDraw(row, plan, styleOf).length : 0,
+    liveCount: plan.liveCount
+  };
+}
+
+/** Add what their rows gained to products that are already in Shopify. */
+async function updateProducts(id, productIds, { by = "", wait = false } = {}) {
+  if (activeBuilds.has(id)) return { started: false, reason: "A build for this store is already running.", build: null };
+  const ids = [...new Set((Array.isArray(productIds) ? productIds : [productIds]).map(clean).filter(Boolean))];
+  if (!ids.length) throw badRequest("Pick at least one product to update.");
+  const record = await store().getOnboarding(id);
+  for (const productId of ids) {
+    const row = productById(record, productId);
+    if (!row) throw badRequest(`No product row "${productId}" on this store.`);
+    const name = row.title || row.styleNumber || productId;
+    if (!row.shopify?.gid) throw badRequest(`"${name}" is not in Shopify yet, so there is nothing to update. Create it first.`);
+    if (row.validation?.ok !== true) {
+      throw badRequest(`"${name}" has not passed validation: ${(row.validation?.errors || ["not validated"]).join("; ")}`);
+    }
+  }
+  return startBuild(id, { force: true, by, wait, only: ids, kind: "update" });
+}
+
+/**
+ * "Add a logo to products": the same logo(s) as the next Style(s) of many
+ * built products at once — what Noroton Heights needed for its two new logos
+ * across the whole store. Each row is changed exactly as "+ Add another
+ * logo" on the row would change it (rules.logoStyles), and a row that cannot
+ * take the logo is left alone and named with the reason.
+ *
+ * Returns { onboarding, changed: [ids], skipped: [{ id, title, reason }] }.
+ */
+async function addLogosToProducts(id, { logos = [], spot = "", productIds = null, dryRun = false, by = "" } = {}) {
+  if (activeBuilds.has(id) && !dryRun) throw badRequest("A build is running for this store. Wait for it to finish.");
+  const record = await store().getOnboarding(id);
+  const art = new Map((record.packet?.files || []).filter((f) => f?.kind === "artwork" && f.assetId).map((f) => [f.assetId, f]));
+  const wanted = [...new Set((Array.isArray(logos) ? logos : [logos]).map(clean).filter(Boolean))];
+  if (!wanted.length) throw badRequest("Pick at least one logo to add.");
+  for (const logo of wanted) if (!art.has(logo)) throw badRequest("One of the logos picked is not on this store's record. Upload it first.");
+  const where = clean(spot).toUpperCase();
+  if (where && !["F", "B", "RS", "LS"].includes(where)) throw badRequest("The spot is front (F), back (B), right sleeve (RS) or left sleeve (LS).");
+  const only = Array.isArray(productIds) && productIds.length ? new Set(productIds.map(clean).filter(Boolean)) : null;
+  const code = departmentCode(record);
+  const colorTable = await tables().colorTable();
+
+  const changed = new Map();
+  const skipped = [];
+  for (const row of record.products) {
+    if (only ? !only.has(row.id) : !row.shopify?.gid) continue;
+    const title = row.title || row.styleNumber || row.id;
+    const skip = (reason) => skipped.push({ id: row.id, title, reason });
+    if (!row.shopify?.gid) {
+      skip("Not in Shopify yet.");
+      continue;
+    }
+    const others = Array.isArray(row.otherLogos) ? row.otherLogos.map((o) => ({ logo: clean(o?.logo), spot: clean(o?.spot).toUpperCase() })) : [];
+    const fresh = wanted.filter((logo) => !others.some((o) => o.logo === logo && (!where || !o.spot || o.spot === where)));
+    if (!fresh.length) {
+      skip("Already has this logo as a Style.");
+      continue;
+    }
+    const next = { ...row, otherLogos: [...others, ...fresh.map((logo) => ({ logo, spot: where }))] };
+    const trial = rules.logoStyles(next, { previous: row });
+    if (trial.errors.length) {
+      skip(trial.errors[0]);
+      continue;
+    }
+    /* The row as saveProducts would leave it, worked out here: only its
+       Styles change, so the garment's style, title, Vendor and master need
+       no second look at Shopify. A save per row is three Shopify reads; on a
+       store of 130 products that outlasts the request. */
+    next.styles = trial.styles;
+    next.logoMap = trial.logoMap;
+    next.placements = trial.placements;
+    next.otherLogos = trial.otherLogos;
+    if (!productUpdate.additiveChange(row, next)) {
+      skip("Its row was changed in another way since it was built; open it with Edit to add the logo.");
+      continue;
+    }
+    const expanded = rules.expandProduct(next, { departmentCode: code, colorTable });
+    if (!expanded.ok) {
+      skip(expanded.errors[0]);
+      continue;
+    }
+    next.validation = {
+      ok: true,
+      errors: [],
+      warnings: [...expanded.warnings, UPDATE_PENDING_NOTE],
+      assumptions: expanded.assumptions,
+      skuPreview: expanded.variants.map((v) => v.sku).filter(Boolean)
+    };
+    next.updatePending = true;
+    changed.set(row.id, next);
+  }
+  if (!changed.size || dryRun) return { onboarding: record, changed: [...changed.keys()], skipped };
+
+  const names = wanted.map((logo) => art.get(logo)?.name || "a logo").join(", ");
+  const saved = await store().updateOnboarding(id, (r) => {
+    r.products = r.products.map((p) => changed.get(p.id) || p);
+    note(r, { type: "products", message: `${names} added as another Style to ${changed.size} product(s)${skipped.length ? `; ${skipped.length} left as they are` : ""}.`, by });
+    return r;
+  });
+  return { onboarding: saved, changed: [...changed.keys()], skipped };
 }
 
 /* ---------------------------------------------------------------------------
@@ -1853,7 +2074,7 @@ async function startBuild(id, { force = false, by = "", wait = false, only = nul
   // Which products this run is for — "Redo images" for some of them, or the
   // products added to a store that is already built. A full build has no scope.
   const scopedIds = Array.isArray(only) ? [...new Set(only.map(clean).filter(Boolean))] : [];
-  const scopeKind = kind === "products" ? "products" : "images";
+  const scopeKind = kind === "products" || kind === "update" ? kind : "images";
   if (scopedIds.length) build.scope = { kind: scopeKind, productIds: scopedIds };
   activeBuilds.set(id, build);
   // Step flushes are the normal heartbeat, but one image call can run for
@@ -1920,7 +2141,12 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
   const scoped = Array.isArray(only) && only.length ? new Set(only) : null;
   const partial = Boolean(scoped);
   const productsOnly = partial && kind === "products";
-  const imagesOnly = partial && !productsOnly;
+  /* An "update" scope adds to products that are already in Shopify: the
+     colours, sizes and Styles their rows gained since they were built. Only
+     what is missing is drawn and created; nothing there is rewritten. */
+  const updateOnly = partial && kind === "update";
+  const imagesOnly = partial && !productsOnly && !updateOnly;
+  const updated = new Set();
   const rowsOf = (r) => (scoped ? r.products.filter((p) => scoped.has(p.id)) : r.products);
 
   let step = stepStart(build, "preflight", "Preflight");
@@ -1937,7 +2163,9 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
       r.status = "building";
       r.phase = "build";
     }
-    const message = productsOnly
+    const message = updateOnly
+      ? `Updating ${rowsOf(r).length} product(s) already in Shopify: new variants and their images are added; what is there is left as it is.`
+      : productsOnly
       ? `Adding ${rowsOf(r).length} product(s) to the store; the rest of the store is left as it is.`
       : imagesOnly
         ? `Images started for ${rowsOf(r).length} product(s); the rest of the store is left as it is.`
@@ -1945,11 +2173,76 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
     note(r, { type: "build", message, by }, build);
   });
 
+  /* An update goes product by product — its new mockups, then its new
+     variants and pictures — so a run over a whole store (two new logos on 130
+     products) puts each product right as it goes, instead of drawing every
+     mockup for an hour before the first variant exists. A product whose
+     mockups fail is not touched in Shopify; the rest carry on. */
+  for (const row of updateOnly ? rowsOf(record) : []) {
+    let product = productById(record, row.id);
+    const label = product.title || product.styleNumber || product.id;
+    step = stepStart(build, `mockups:${product.id}`, `Mockups — ${label}`);
+    try {
+      const made = await buildUpdateMockups(id, record, product, log);
+      if (!made) stepSkip(step, "nothing new to draw");
+      else {
+        record = await saveBuild(id, build, (r) => {
+          const target = productById(r, product.id);
+          if (target) target.mockups = made.mockups;
+          for (const w of made.warnings) note(r, { type: "warning", message: w, by }, build);
+        });
+        await trashSupersededImages(record, made.added, log);
+        stepDone(step, `${made.added.length} new image(s)`);
+      }
+    } catch (error) {
+      stepFail(step, error);
+      log(`Mockups failed for ${label}: ${errorText(error)}`);
+      record = await saveBuild(id, build);
+    }
+
+    product = productById(record, row.id);
+    step = stepStart(build, `products:${product.id}`, `Update — ${label}`);
+    try {
+      const done = await updateBuiltProduct(id, record, product, log);
+      record = await saveBuild(id, build, (r) => {
+        const target = productById(r, product.id);
+        if (target) {
+          target.buildState = "created";
+          target.buildError = "";
+          delete target.updatePending;
+          target.shopify = { ...target.shopify, variantCount: done.variantCount, updatedAt: nowIso() };
+          if (Array.isArray(target.validation?.warnings)) target.validation.warnings = target.validation.warnings.filter((w) => w !== UPDATE_PENDING_NOTE);
+        }
+        note(r, { type: "build", message: done.message, by }, build);
+        for (const w of done.warnings) note(r, { type: "warning", message: w, by }, build);
+      });
+      updated.add(product.id);
+      if (done.added) stepDone(step, done.detail);
+      else stepSkip(step, done.detail);
+    } catch (error) {
+      stepFail(step, error);
+      failures.push(`${label}: ${errorText(error)}`);
+      log(`${label} was not updated: ${errorText(error)}`);
+      // A failed update leaves the product as it was: still built.
+      record = await saveBuild(id, build, (r) => {
+        const target = productById(r, product.id);
+        if (target) target.buildError = errorText(error);
+      });
+    }
+  }
+
   // §5 mockups — before the products, because the product images are these.
-  for (const row of rowsOf(record)) {
+  for (const row of updateOnly ? [] : rowsOf(record)) {
     const product = productById(record, row.id);
     step = stepStart(build, `mockups:${product.id}`, `Mockups — ${product.title || product.styleNumber || product.id}`);
     try {
+      /* A built product waiting for "Update product" keeps the pictures it
+         has: a full re-run skips it as already created, so drawing the whole
+         row again here would be paid for and shown nowhere. */
+      if (product.updatePending && product.shopify?.gid && (await catalog().productExists(product.shopify.gid).catch(() => true))) {
+        stepSkip(step, "in Shopify already; Update product adds what is new");
+        continue;
+      }
       /* Mockups are the most expensive thing the agent does — one image-model
          call per face, per colour, per Style — and re-rendering them on a
          re-run also uploads a second copy of every image to Drive and strands
@@ -1959,7 +2252,10 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
       const renderedAlready =
         Array.isArray(product.mockups) &&
         product.mockups.length > 0 &&
-        product.mockups.every((m) => m && m.assetId && m.path !== "render-failed");
+        product.mockups.every((m) => m && m.assetId && m.path !== "render-failed") &&
+        // A row that gained a colour or a Style after these were made (and
+        // whose Shopify product is gone) is drawn again in full.
+        !product.updatePending;
       if (renderedAlready) {
         log(`Mockups for ${product.title || product.id}: reusing ${product.mockups.length} image(s) from the previous run.`);
         stepDone(step, `${product.mockups.length} image(s) reused`);
@@ -2022,7 +2318,7 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
   }
 
   // §9 products
-  for (const row of rowsOf(record)) {
+  for (const row of updateOnly ? [] : rowsOf(record)) {
     const product = productById(record, row.id);
     step = stepStart(build, `products:${product.id}`, `Product — ${product.title || product.styleNumber || product.id}`);
     try {
@@ -2173,7 +2469,7 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
     }
   }
 
-  const created = rowsOf(record).filter((p) => p.buildState === "created").length;
+  const created = updateOnly ? updated.size : rowsOf(record).filter((p) => p.buildState === "created").length;
   build.state = failures.length ? (created ? "partial" : "failed") : "complete";
   build.error = failures.length ? failures.join(" | ") : null;
   build.finishedAt = nowIso();
@@ -2182,7 +2478,9 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
       if (r.status !== "complete") r.status = failures.length ? (created ? "built-partial" : "build-error") : "built";
       r.phase = "report";
     }
-    const message = productsOnly
+    const message = updateOnly
+      ? `Update ${build.state}: ${created} of ${rowsOf(r).length} product(s) updated in Shopify${failures.length ? `; ${failures.length} failed` : ""}.`
+      : productsOnly
       ? `Products ${build.state}: ${created} of ${rowsOf(r).length} added to the store${failures.length ? `; ${failures.length} failed` : ""}.`
       : imagesOnly
         ? `Images ${build.state}: ${rowsOf(r).length} product(s) made again${failures.length ? `; ${failures.length} failed` : ""}.`
@@ -2195,7 +2493,7 @@ async function runBuild(id, build, { by = "", only = null, kind = "images" } = {
 /* §5 mockups for one product, made from the department's own logos. Omni's
    print-ready files are never fetched: the agent builds the store, and the
    pick on the row (or the packet artwork by role) is the logo to show. */
-async function buildMockups(id, record, product, log) {
+async function buildMockups(id, record, product, log, { existing = null } = {}) {
   const code = departmentCode(record);
   const colorTable = await tables().colorTable();
   const expanded = rules.expandProduct(product, { departmentCode: code, colorTable });
@@ -2269,11 +2567,14 @@ async function buildMockups(id, record, product, log) {
     departmentCode: code,
     artwork,
     blankPhotos,
+    existing,
     onLog: log
   });
 
   const out = [];
   for (const image of rendered) {
+    // An update keeps only what is new, whatever the renderer handed back.
+    if (existing && existing(image.color, image.style || null)) continue;
     const entry = {
       color: image.color,
       colorCode: image.colorCode || null,
@@ -2316,6 +2617,171 @@ async function buildMockups(id, record, product, log) {
   }
   log(`${product.title || product.id}: ${out.length} mockup image(s).`);
   return { mockups: out, warnings };
+}
+
+/* ---------------------------------------------------------------------------
+   "Update product" — add to a product that is already in Shopify
+   ---------------------------------------------------------------------------
+   The row of a built product gained a colour, a size or another logo (a
+   Style). The update reads the live product, works out what it does not have
+   (productUpdate.planProductUpdate), draws mockups for the new colour/Style
+   pairs only, creates the missing variants with the price and settings of the
+   variant beside them, and attaches the new pictures. Nothing already on the
+   product is rewritten or removed, so it is safe on a priced, Active product.
+   ------------------------------------------------------------------------- */
+
+async function planUpdate(record, product) {
+  const code = departmentCode(record);
+  const colorTable = await tables().colorTable();
+  const expanded = rules.expandProduct(product, { departmentCode: code, colorTable });
+  const snapshot = product.shopify?.gid ? await shop().productSnapshot(product.shopify.gid) : null;
+  const plan = productUpdate.planProductUpdate(expanded, snapshot, { departmentCode: code });
+  const wantStyles = expanded.product.styles.some((s) => s.name);
+  // A mockup made before the row had Styles is Style 1's picture.
+  const styleOf = (mockup) => mockup?.style || (wantStyles ? productUpdate.FIRST_STYLE : "");
+  return { expanded, snapshot, plan, wantStyles, styleOf };
+}
+
+// The colour/Style pairs the update still has to draw: new to Shopify and
+// without a usable front on the record (a resumed run keeps what it drew).
+function pairsToDraw(product, plan, styleOf) {
+  const drawn = new Set(
+    (product.mockups || [])
+      .filter((m) => m && m.assetId && m.face === "front" && m.path !== "render-failed")
+      .map((m) => productUpdate.pairKey(m.color, styleOf(m)))
+  );
+  return plan.newPairs.filter((pair) => !drawn.has(productUpdate.pairKey(pair.color, pair.style)));
+}
+
+/** Mockups for the new pairs only. Null when there is nothing to draw. */
+async function buildUpdateMockups(id, record, product, log) {
+  const { plan, wantStyles, styleOf } = await planUpdate(record, product);
+  if (!plan.ok) throw badRequest(plan.problems.join(" "));
+  const need = pairsToDraw(product, plan, styleOf);
+  if (!need.length) {
+    log(`${product.title || product.id}: nothing new to draw.`);
+    return null;
+  }
+  const needKeys = new Set(need.map((pair) => productUpdate.pairKey(pair.color, pair.style)));
+  log(`${product.title || product.id}: drawing ${need.map((pair) => [pair.color, pair.style].filter(Boolean).join(" ")).join(", ")}.`);
+  const made = await buildMockups(id, record, product, log, {
+    existing: (color, style) => !needKeys.has(productUpdate.pairKey(color, style))
+  });
+  const faceKey = (m) => `${productUpdate.pairKey(m.color, styleOf(m))}|${m.face}`;
+  const fresh = new Set(made.mockups.map(faceKey));
+  const kept = (product.mockups || [])
+    .filter((m) => m && !fresh.has(faceKey(m)))
+    .map((m) => (wantStyles && !m.style ? { ...m, style: productUpdate.FIRST_STYLE } : m));
+  return { mockups: [...kept, ...made.mockups], added: made.mockups, warnings: made.warnings };
+}
+
+/** The Shopify half of an update. Returns what it did, in words. */
+async function updateBuiltProduct(id, record, product, log) {
+  const label = product.title || product.styleNumber || product.id;
+  if (!product.shopify?.gid) throw badRequest(`"${label}" is not in Shopify yet. Create it first.`);
+  const gid = product.shopify.gid;
+  const { snapshot, plan, styleOf } = await planUpdate(record, product);
+  if (!plan.ok) throw badRequest(plan.problems.join(" "));
+  const warnings = [...plan.warnings.map((w) => `${label}: ${w}`)];
+  if (!plan.variants.length) {
+    log(`${label}: Shopify already has every variant on the row; nothing to add.`);
+    return { added: 0, variantCount: plan.liveCount, detail: "nothing to add — Shopify already has every variant on the row", message: `${label}: nothing to add; Shopify already has every variant on the row.`, warnings };
+  }
+
+  /* No variant is created without its picture. A new colour whose blank
+     could not be found, or a mockup step that failed, stops here with the
+     product untouched, instead of putting bare variants on a live product. */
+  const usable = (product.mockups || []).filter((m) => m && m.assetId && m.path !== "render-failed");
+  const missingArt = plan.newPairs.filter((pair) => !usable.some((m) => m.face === "front" && productUpdate.pairKey(m.color, styleOf(m)) === productUpdate.pairKey(pair.color, pair.style)));
+  if (missingArt.length) {
+    const names = missingArt.map((pair) => [pair.color, pair.style].filter(Boolean).join(" ")).join(", ");
+    throw new Error(`No picture could be made for ${names}, so nothing was added to the product. Check the mockup step above (a new colour needs a photo of the blank), then press Update product again.`);
+  }
+
+  const before = await shop().productVariantDetail(gid);
+  if (!before.length) throw new Error(`${label} has no variants in Shopify to copy a price from.`);
+  if (plan.addStyleOption) {
+    await shop().addProductOption(gid, { name: rules.OPTION_STYLE, values: [productUpdate.FIRST_STYLE] }, { onLog: log });
+  }
+  const optionsOf = (variant) => new Map((variant.selectedOptions || []).map((o) => [o.name, o.value]));
+  const liveStyle = (options) => clean(options.get(rules.OPTION_STYLE)) || (plan.addStyleOption ? productUpdate.FIRST_STYLE : "");
+  /* A new variant takes the price, tax, shipping and weight of the variant
+     most like it — the same size first, since size is what moves a price
+     (2XL and up), then the same colour, then the same Style. */
+  const siblingFor = (variant) => {
+    let best = before[0];
+    let bestScore = -1;
+    for (const candidate of before) {
+      const options = optionsOf(candidate);
+      const score =
+        (productUpdate.sizeKey(options.get(rules.OPTION_SIZE)) === productUpdate.sizeKey(variant.size) ? 4 : 0) +
+        (productUpdate.colorKey(options.get(rules.OPTION_COLOR)) === productUpdate.colorKey(variant.color) ? 2 : 0) +
+        (liveStyle(options) === clean(variant.style) ? 1 : 0);
+      if (score > bestScore) [best, bestScore] = [candidate, score];
+    }
+    return best;
+  };
+  const created = await shop().addProductVariants(
+    gid,
+    plan.variants.map((variant) => {
+      const sibling = siblingFor(variant);
+      return {
+        optionValues: variant.optionValues,
+        sku: variant.sku,
+        price: sibling.price,
+        compareAtPrice: sibling.compareAtPrice,
+        taxable: sibling.taxable,
+        inventoryPolicy: sibling.inventoryPolicy,
+        tracked: sibling.tracked,
+        requiresShipping: sibling.requiresShipping,
+        weight: sibling.weight
+      };
+    }),
+    { onLog: log }
+  );
+
+  /* Pictures. A new colour/Style pair gets the mockups just drawn (the front
+     bound to its variants, the back in the gallery). A new size of a pair
+     that was already there shows the picture its siblings show. */
+  const livePairs = new Set(plan.livePairs);
+  const pairOf = (variant) => {
+    const options = optionsOf(variant);
+    return productUpdate.pairKey(options.get(rules.OPTION_COLOR), clean(options.get(rules.OPTION_STYLE)));
+  };
+  const newPairKeys = new Set(created.map(pairOf).filter((key) => !livePairs.has(key)));
+  const title = clean(snapshot?.title) || label;
+  const selected = usable
+    .filter((m) => newPairKeys.has(productUpdate.pairKey(m.color, styleOf(m))))
+    .map((m) => (m.style || !styleOf(m) ? m : { ...m, style: styleOf(m) }));
+  const images = await mockupImages(id, { ...product, mockups: selected }, created, title);
+  if (images.length) await shop().attachMockups(gid, images, { onLog: log });
+  warnings.push(...unboundFrontWarnings(images, title));
+
+  const siblingMedia = new Map();
+  for (const variant of before) {
+    const options = optionsOf(variant);
+    const key = productUpdate.pairKey(options.get(rules.OPTION_COLOR), liveStyle(options));
+    if (variant.mediaId && !siblingMedia.has(key)) siblingMedia.set(key, variant.mediaId);
+  }
+  const links = created
+    .filter((variant) => livePairs.has(pairOf(variant)) && siblingMedia.has(pairOf(variant)))
+    .map((variant) => ({ variantId: variant.id, mediaId: siblingMedia.get(pairOf(variant)) }));
+  if (links.length) await shop().linkVariantImages(gid, links, { onLog: log });
+
+  const what = [
+    plan.newColors.length ? `colour${plan.newColors.length === 1 ? "" : "s"} ${plan.newColors.join(", ")}` : "",
+    plan.newStyles.length ? plan.newStyles.join(", ") : "",
+    plan.newSizes.length ? `size${plan.newSizes.length === 1 ? "" : "s"} ${plan.newSizes.join(", ")}` : ""
+  ].filter(Boolean);
+  const detail = `${created.length} variant${created.length === 1 ? "" : "s"} added${what.length ? ` (${what.join("; ")})` : ""}`;
+  log(`${label}: ${detail}; ${images.length} image(s) uploaded.`);
+  return {
+    added: created.length,
+    variantCount: before.length + created.length,
+    detail,
+    message: `${label}: ${detail}, priced like the variants beside them; ${images.length} image(s) added. Nothing already on the product was changed.`,
+    warnings
+  };
 }
 
 /*
@@ -3929,6 +4395,10 @@ module.exports = {
   saveProduct,
   removeProduct,
   createProducts,
+  storeProductRow,
+  productUpdatePlan,
+  updateProducts,
+  addLogosToProducts,
   adoptStore,
   proposeColor,
   startBuild,

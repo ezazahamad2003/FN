@@ -155,10 +155,40 @@ function fakeMenu(extraTitles = []) {
    from it, so an item nobody inserted cannot be "verified". */
 function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, menuTitles = [], realMenu = false, storeProducts = null } = {}) {
   const liveMenuTitles = [...menuTitles];
-  const calls = { setProduct: [], attachMockups: [], duplicate: [], collection: [] };
+  const calls = { setProduct: [], attachMockups: [], duplicate: [], collection: [], addOption: [], addVariants: [], linkImages: [] };
   let lastSet = null;
+  // What "Update product" has added to the live product since it was set.
+  let addedOption = null;
+  const addedVariants = [];
   const shopify = {
     calls,
+    // Prices Dan set after the build, by size ({ S: "20.00" }); 0.00 otherwise.
+    prices: {},
+    async productVariantDetail() {
+      const snapshot = await shopify.productSnapshot();
+      return snapshot.variants.map((v) => ({ ...v, compareAtPrice: null, taxable: true, tracked: false, requiresShipping: true, weight: null, mediaId: v.image ? `media-${v.sku}` : "" }));
+    },
+    async addProductOption(id, option) {
+      calls.addOption.push({ id, option });
+      addedOption = option;
+      return [];
+    },
+    async addProductVariants(id, variants) {
+      calls.addVariants.push({ id, variants });
+      const made = variants.map((variant) => ({
+        id: `gid://shopify/ProductVariant/added-${addedVariants.length + variants.indexOf(variant) + 1}`,
+        sku: variant.sku,
+        title: variant.sku,
+        price: variant.price,
+        selectedOptions: variant.optionValues.map((ov) => ({ name: ov.optionName, value: ov.name }))
+      }));
+      addedVariants.push(...made);
+      return made;
+    },
+    async linkVariantImages(id, links) {
+      calls.linkImages.push({ id, links });
+      return links.length;
+    },
     collectionAdminUrl: (id) => `https://admin.test/collections/${id}`,
     // What a collection holds, as the Departments page's adopt and delete read it.
     async storeProducts() {
@@ -244,6 +274,24 @@ function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, m
     },
     async productSnapshot() {
       if (!lastSet) return null;
+      const sizeOf = (options) => options.find((o) => o.name === rules.OPTION_SIZE)?.value;
+      // An option added later gives every variant already there its first value.
+      const withAdded = (options) => (addedOption && !options.some((o) => o.name === addedOption.name) ? [...options, { name: addedOption.name, value: addedOption.values[0] }] : options);
+      const variants = [
+        ...lastSet.variants.map((variant, i) => {
+          const selectedOptions = withAdded(variant.optionValues.map((ov) => ({ name: ov.optionName, value: ov.name })));
+          return {
+            id: `gid://shopify/ProductVariant/${i + 1}`,
+            sku: variant.sku,
+            price: shopify.prices[sizeOf(selectedOptions)] || "0.00",
+            inventoryPolicy: "CONTINUE",
+            selectedOptions,
+            image: { url: `https://cdn.test/${variant.sku}.png` }
+          };
+        }),
+        ...addedVariants.map((variant) => ({ id: variant.id, sku: variant.sku, price: variant.price, inventoryPolicy: "CONTINUE", selectedOptions: variant.selectedOptions, image: null }))
+      ];
+      const names = [...lastSet.options.map((o) => o.name), ...(addedOption && !lastSet.options.some((o) => o.name === addedOption.name) ? [addedOption.name] : [])];
       return {
         id: "999",
         gid: PRODUCT_GID,
@@ -252,15 +300,8 @@ function fakeShopify({ megaMenuAvailable = true, order = [], liveProducts = 0, m
         vendor: lastSet.vendor,
         tags: lastSet.tags,
         productType: lastSet.productType,
-        options: lastSet.options,
-        variants: lastSet.variants.map((variant, i) => ({
-          id: `gid://shopify/ProductVariant/${i + 1}`,
-          sku: variant.sku,
-          price: "0.00",
-          inventoryPolicy: "CONTINUE",
-          selectedOptions: variant.optionValues.map((ov) => ({ name: ov.optionName, value: ov.name })),
-          image: { url: `https://cdn.test/${variant.sku}.png` }
-        })),
+        options: names.map((name) => ({ name, values: [...new Set(variants.map((v) => v.selectedOptions.find((o) => o.name === name)?.value).filter(Boolean))] })),
+        variants,
         media: lastSet.variants.map((variant, i) => ({ id: `m${i}`, url: `https://cdn.test/${variant.sku}.png` })),
         collections: [{ id: "111", gid: COLLECTION_GID, title: COLLECTION_TITLE }]
       };
@@ -2759,4 +2800,290 @@ test("the router starts Redo images for several products in one call", async () 
   });
   const after = await store.getOnboarding(id);
   assert.equal(after.build.state, "complete", after.build.error || "");
+});
+
+/* ---------------------------------------------------------------------------
+   Update product — adding colours, sizes and logos to a product in Shopify
+   ------------------------------------------------------------------------- */
+
+// A one-colour, one-logo tee, built — what most of Noroton Heights' rows were.
+async function builtOneLogoTee(options = {}) {
+  const setup = await twoLogoStore(options);
+  const row = { ...setup.row, otherLogos: [] };
+  await agent.saveProducts(setup.id, [row], { by: "dan" });
+  const built = await agent.startBuild(setup.id, { by: "dan", wait: true });
+  assert.equal(built.started, true);
+  const record = await store.getOnboarding(setup.id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  return { ...setup, row: record.products[0], record };
+}
+
+test("a built row that only gains a colour and a logo keeps its mockups and waits for Update product", async () => {
+  const { id, ems, row, chest } = await builtOneLogoTee();
+  assert.equal(row.mockups.length, 2);
+
+  const saved = await agent.saveProducts(id, [{ ...row, colors: ["Navy", "Black"], otherLogos: [{ logo: ems.assetId }] }], { by: "dan" });
+  const tee = saved.products[0];
+  assert.equal(tee.validation.ok, true, tee.validation.errors.join(" "));
+  assert.equal(tee.updatePending, true);
+  assert.equal(tee.mockups.length, 2, "the pictures already made are still right");
+  assert.match(tee.validation.warnings.join(" "), /Press Update product/);
+  assert.doesNotMatch(tee.validation.warnings.join(" "), /Delete that draft/);
+
+  // Swapping the logo it was built with is still a different product.
+  const swapped = await agent.saveProducts(id, [{ ...tee, logoMap: { ...tee.logoMap, F01: ems.assetId }, otherLogos: [{ logo: chest.assetId }] }], { by: "dan" });
+  assert.equal(swapped.products[0].updatePending, undefined);
+  assert.deepEqual(swapped.products[0].mockups, []);
+  assert.match(swapped.products[0].validation.warnings.join(" "), /Delete that draft/);
+});
+
+test("Update product adds the new colour and Style to the live product and rewrites nothing on it", async () => {
+  const { deps, id, ems, row } = await builtOneLogoTee();
+  deps.shopify.prices = { S: "20.00", M: "22.50" };
+  const statusBefore = (await store.getOnboarding(id)).status;
+  await agent.saveProducts(id, [{ ...row, colors: ["Navy", "Black"], otherLogos: [{ logo: ems.assetId }] }], { by: "dan" });
+
+  const plan = await agent.productUpdatePlan(id, "p1");
+  assert.equal(plan.ok, true, plan.problems.join(" "));
+  assert.equal(plan.variants, 6, "Navy Style 2 (S, M) and Black in both Styles (S, M)");
+  assert.equal(plan.addStyleOption, true);
+  assert.deepEqual(plan.newColors, ["Black"]);
+  assert.deepEqual(plan.newStyles, ["Style 2"]);
+  assert.equal(plan.mockups, 3);
+  assert.equal(deps.shopify.calls.addVariants.length, 0, "the plan writes nothing");
+
+  const started = await agent.updateProducts(id, ["p1"], { by: "dan", wait: true });
+  assert.equal(started.started, true);
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  assert.deepEqual(record.build.scope, { kind: "update", productIds: ["p1"] });
+  assert.deepEqual(record.build.steps.map((s) => s.key), ["preflight", "mockups:p1", "products:p1"]);
+  assert.equal(record.status, statusBefore, "an update does not re-judge the store");
+
+  // Never productSet again: that would reset every price and the status.
+  assert.equal(deps.shopify.calls.setProduct.length, 1);
+  assert.equal(deps.shopify.calls.duplicate.length, 1);
+  assert.deepEqual(deps.shopify.calls.addOption.map((c) => c.option), [{ name: "Style", values: ["Style 1"] }]);
+  assert.equal(deps.shopify.calls.addVariants.length, 1);
+  const added = deps.shopify.calls.addVariants[0].variants;
+  assert.deepEqual(
+    added.map((v) => `${v.sku} @${v.price}`),
+    [
+      "NL3600-S-NVY-VAC-F02/B01 @20.00",
+      "NL3600-M-NVY-VAC-F02/B01 @22.50",
+      "NL3600-S-BLK-VAC-F01/B01 @20.00",
+      "NL3600-S-BLK-VAC-F02/B01 @20.00",
+      "NL3600-M-BLK-VAC-F01/B01 @22.50",
+      "NL3600-M-BLK-VAC-F02/B01 @22.50"
+    ],
+    "each new variant takes the price of the same size"
+  );
+  assert.deepEqual(added[0].optionValues, [
+    { optionName: "Color", name: "Navy" },
+    { optionName: "Size", name: "S" },
+    { optionName: "Style", name: "Style 2" }
+  ]);
+
+  // Only the new pictures are uploaded, each front bound to its new variants.
+  assert.equal(deps.shopify.calls.attachMockups.length, 2);
+  const images = deps.shopify.calls.attachMockups[1].images;
+  const fronts = images.filter((image) => image.face === "front");
+  assert.deepEqual(fronts.map((image) => image.alt).sort(), [
+    "Next Level Cotton Tee — Black Style 1 front",
+    "Next Level Cotton Tee — Black Style 2 front",
+    "Next Level Cotton Tee — Navy Style 2 front"
+  ]);
+  for (const front of fronts) assert.equal(front.variantIds.length, 2, `${front.alt} is bound to its two sizes`);
+  assert.ok(fronts.every((front) => front.variantIds.every((variantId) => /added-/.test(variantId))), "no variant that was already there is touched");
+
+  const tee = record.products[0];
+  assert.equal(tee.updatePending, undefined);
+  assert.equal(tee.buildState, "created");
+  assert.equal(tee.shopify.variantCount, 8);
+  assert.doesNotMatch(tee.validation.warnings.join(" "), /Press Update product/);
+  assert.ok(tee.mockups.every((m) => m.style), "the pictures made before the Styles are Style 1's");
+  assert.equal(tee.mockups.filter((m) => m.face === "front").length, 4);
+
+  // Run again: Shopify has everything, so nothing is drawn or created.
+  await agent.updateProducts(id, ["p1"], { by: "dan", wait: true });
+  const again = await store.getOnboarding(id);
+  assert.equal(again.build.state, "complete", again.build.error || "");
+  assert.deepEqual(again.build.steps.map((s) => s.state), ["complete", "skipped", "skipped"]);
+  assert.equal(deps.shopify.calls.addVariants.length, 1);
+  assert.equal(deps.shopify.calls.attachMockups.length, 2);
+});
+
+test("a new size on a built product takes its siblings' picture and draws nothing", async () => {
+  const { deps, id, row } = await builtOneLogoTee();
+  const rendered = [];
+  const render = deps.mockups.renderProductMockups;
+  deps.mockups.renderProductMockups = async (input) => {
+    rendered.push(input.product.styleNumber);
+    return render(input);
+  };
+  await agent.saveProducts(id, [{ ...row, sizes: ["S", "M", "L"] }], { by: "dan" });
+  await agent.updateProducts(id, ["p1"], { by: "dan", wait: true });
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  assert.deepEqual(rendered, [], "no mockup is drawn for a size");
+  assert.deepEqual(deps.shopify.calls.addVariants[0].variants.map((v) => v.sku), ["NL3600-L-NVY-VAC-F01/B01"]);
+  assert.equal(deps.shopify.calls.addOption.length, 0);
+  assert.deepEqual(deps.shopify.calls.linkImages[0].links, [{ variantId: "gid://shopify/ProductVariant/added-1", mediaId: "media-NL3600-S-NVY-VAC-F01/B01" }]);
+  assert.equal(deps.shopify.calls.attachMockups.length, 1, "nothing new is uploaded");
+});
+
+test("Update product adds no variant when its picture could not be made", async () => {
+  const { deps, id, row } = await builtOneLogoTee();
+  await agent.saveProducts(id, [{ ...row, colors: ["Navy", "Black"] }], { by: "dan" });
+  deps.mockups.renderProductMockups = async () => [
+    { color: "Black", colorCode: "BLK", style: null, face: "front", buffer: null, fileName: "VAC_NL3600_BLK_FRONT.png", path: "render-failed", reason: "No front blank for Black", warnings: ["No front blank for Black"] }
+  ];
+  await agent.updateProducts(id, ["p1"], { by: "dan", wait: true });
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "failed");
+  assert.match(record.build.error, /No picture could be made for Black, so nothing was added/);
+  assert.equal(deps.shopify.calls.addVariants.length, 0);
+  assert.equal(record.products[0].buildState, "created", "the product is still what it was");
+  assert.equal(record.products[0].updatePending, true);
+});
+
+test("updateProducts refuses a row that is not in Shopify or does not validate", async () => {
+  const { id } = await builtOnboarding();
+  const { product } = await agent.saveProduct(id, "", HAT_ROW, { by: "dan" });
+  await assert.rejects(() => agent.updateProducts(id, [product.id], { by: "dan" }), /not in Shopify yet/);
+  await assert.rejects(() => agent.updateProducts(id, [], { by: "dan" }), /at least one product/);
+  await assert.rejects(() => agent.updateProducts(id, ["p9"], { by: "dan" }), /No product row "p9"/);
+});
+
+const LIVE_HAT = {
+  id: "10",
+  gid: "gid://shopify/Product/10",
+  title: "New Era Trucker LPF",
+  status: "ACTIVE",
+  vendor: "Non Stock Item",
+  tags: ["LPF", "Embroidered"],
+  productType: "Hats",
+  options: [
+    { name: "Color", values: ["Navy", "Black"] },
+    { name: "Size", values: ["OSFA"] }
+  ],
+  variants: [
+    { id: "gid://shopify/ProductVariant/1", sku: "NE4030-OSFA-NVY-LPF-E01", price: "24.00", inventoryPolicy: "CONTINUE", selectedOptions: [{ name: "Color", value: "Navy" }, { name: "Size", value: "OSFA" }], image: { url: "https://cdn.test/navy.png" } },
+    { id: "gid://shopify/ProductVariant/2", sku: "NE4030-OSFA-BLK-LPF-E01", price: "24.00", inventoryPolicy: "CONTINUE", selectedOptions: [{ name: "Color", value: "Black" }, { name: "Size", value: "OSFA" }], image: { url: "https://cdn.test/black.png" } }
+  ],
+  media: [],
+  collections: [{ id: "222", gid: "gid://shopify/Collection/222", title: "2. Livermore-Pleasanton Firefighters IAFF 1974" }]
+};
+
+function olderStore(product = LIVE_HAT) {
+  const shopify = fakeShopify({
+    storeProducts: {
+      title: "2. Livermore-Pleasanton Firefighters IAFF 1974",
+      id: "222",
+      gid: "gid://shopify/Collection/222",
+      handle: "2-livermore-pleasanton-firefighters-iaff-1974",
+      products: [{ gid: product.gid, id: product.id, title: product.title, status: "ACTIVE", tags: ["LPF"], sku: "NL3600-L-NVY-LPF-F01" }]
+    }
+  });
+  shopify.productSnapshot = async () => product;
+  return shopify;
+}
+
+test("a product the agent has no row for gets one read off its options and SKUs", async () => {
+  const shopify = olderStore();
+  harness({ shopify });
+
+  const first = await agent.storeProductRow("222", "10", { by: "dan" });
+  assert.ok(first.onboarding.adopted, "the store got its record on the way");
+  const row = first.product;
+  assert.deepEqual(
+    [row.styleNumber, row.title, row.type, row.fulfillment, row.decorationMethod, row.decorationCodes],
+    ["NE4030", "New Era Trucker LPF", "Hats", "Non Stock Item", "embroidery", "E01"]
+  );
+  assert.deepEqual(row.colors, ["Navy", "Black"]);
+  assert.deepEqual(row.sizes, ["OSFA"]);
+  assert.deepEqual(row.placements, { E01: "F" });
+  assert.equal(row.shopify.gid, "gid://shopify/Product/10");
+  assert.equal(row.buildState, "created");
+  assert.equal(row.validation.ok, true, row.validation.errors.join(" "));
+  assert.deepEqual(row.validation.skuPreview, ["NE4030-OSFA-NVY-LPF-E01", "NE4030-OSFA-BLK-LPF-E01"]);
+  assert.equal(shopify.calls.setProduct.length, 0, "nothing is written to Shopify");
+
+  // Opened again: the same row, not a second one.
+  const again = await agent.storeProductRow("222", "gid://shopify/Product/10", { by: "dan" });
+  assert.equal(again.product.id, row.id);
+  assert.equal(again.onboarding.products.length, 1);
+
+  // Nothing to add until the row gains something.
+  const plan = await agent.productUpdatePlan(first.onboarding.id, row.id);
+  assert.deepEqual([plan.ok, plan.variants], [true, 0]);
+});
+
+test("a product whose SKUs or options the agent cannot read is refused, and leaves no row behind", async () => {
+  const handBuilt = { ...LIVE_HAT, options: [{ name: "Title", values: ["Default Title"] }], variants: [{ ...LIVE_HAT.variants[0], selectedOptions: [{ name: "Title", value: "Default Title" }] }] };
+  harness({ shopify: olderStore(handBuilt) });
+  await assert.rejects(() => agent.storeProductRow("222", "10", { by: "dan" }), /options are Title/);
+
+  const oddSkus = { ...LIVE_HAT, variants: LIVE_HAT.variants.map((v, i) => ({ ...v, sku: `HAT${i}` })) };
+  harness({ shopify: olderStore(oddSkus) });
+  await assert.rejects(() => agent.storeProductRow("222", "10", { by: "dan" }), /SKUs \(e\.g\. HAT0\) are not STYLE-SIZE-COLOUR-LPF-DECORATIONS/);
+  const record = await agent.adoptStore("222", { by: "dan" });
+  assert.equal(record.products.length, 0);
+
+  const elsewhere = { ...LIVE_HAT, collections: [{ id: "333", gid: "gid://shopify/Collection/333", title: "Another store" }] };
+  harness({ shopify: olderStore(elsewhere) });
+  await assert.rejects(() => agent.storeProductRow("222", "10", { by: "dan" }), /is not in the collection/);
+});
+
+test("one logo goes onto many built products as their next Style, and a row that cannot take it says why", async () => {
+  const { id, ems, chest } = await builtOneLogoTee();
+  const { product: hat } = await agent.saveProduct(id, "", HAT_ROW, { by: "dan" });
+
+  // What it would do, without doing it.
+  const preview = await agent.addLogosToProducts(id, { logos: [ems.assetId], spot: "F", dryRun: true, by: "dan" });
+  assert.deepEqual(preview.changed, ["p1"]);
+  assert.deepEqual(preview.skipped, [], "a row that is not in Shopify is not offered at all");
+  assert.equal((await store.getOnboarding(id)).products[0].otherLogos.length, 0);
+
+  const done = await agent.addLogosToProducts(id, { logos: [ems.assetId], spot: "F", productIds: ["p1", hat.id], by: "dan" });
+  assert.deepEqual(done.changed, ["p1"]);
+  assert.deepEqual(done.skipped.map((s) => [s.id, s.reason]), [[hat.id, "Not in Shopify yet."]]);
+  const tee = done.onboarding.products[0];
+  assert.deepEqual(tee.otherLogos, [{ logo: ems.assetId, spot: "F" }]);
+  assert.deepEqual(tee.styles.map((s) => s.decorationCodes), ["F01/B01", "F02/B01"]);
+  assert.equal(tee.updatePending, true);
+
+  // The same logo again, or the logo the row was built with, is not a new Style.
+  const repeat = await agent.addLogosToProducts(id, { logos: [ems.assetId], spot: "F", by: "dan" });
+  assert.deepEqual([repeat.changed, repeat.skipped[0].reason], [[], "Already has this logo as a Style."]);
+  const same = await agent.addLogosToProducts(id, { logos: [chest.assetId], spot: "F", by: "dan" });
+  assert.deepEqual(same.changed, []);
+  assert.match(same.skipped[0].reason, /same logo on the front as Style 1/);
+
+  await assert.rejects(() => agent.addLogosToProducts(id, { logos: ["nope.png"], by: "dan" }), /not on this store's record/);
+  await assert.rejects(() => agent.addLogosToProducts(id, { logos: [], by: "dan" }), /at least one logo/);
+});
+
+test("the router adds a logo to the store's products and starts their update in one call", async () => {
+  const { deps, id, ems } = await builtOneLogoTee();
+  await withServer(async (base) => {
+    const post = (path, body) => fetch(`${base}/api/onboardings/${id}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const preview = await (await post("/add-logos", { logos: [ems.assetId], spot: "F", preview: true })).json();
+    assert.deepEqual([preview.changed, preview.started], [["p1"], false]);
+
+    const res = await post("/add-logos", { logos: [ems.assetId], spot: "F" });
+    assert.equal(res.status, 202);
+    const payload = await res.json();
+    assert.deepEqual(payload.changed, ["p1"]);
+    assert.deepEqual(payload.build.scope, { kind: "update", productIds: ["p1"] });
+    while (agent.isBuildActive(id)) await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const plan = await (await fetch(`${base}/api/onboardings/${id}/products/p1/update-plan`)).json();
+    assert.deepEqual([plan.plan.ok, plan.plan.variants], [true, 0], "everything the row has is in Shopify now");
+    const none = await post("/update-products", { productIds: [] });
+    assert.equal(none.status, 400);
+  });
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  assert.deepEqual(deps.shopify.calls.addVariants[0].variants.map((v) => v.sku), ["NL3600-S-NVY-VAC-F02/B01", "NL3600-M-NVY-VAC-F02/B01"]);
 });

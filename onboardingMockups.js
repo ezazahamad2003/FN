@@ -512,6 +512,11 @@ async function renderProductMockups({
   generateBlank,
   deriveBack,
   onLog,
+  /* "Update product": (colorName, styleName) → true for a colour and Style
+     the product already has pictures of. Those are not drawn again, and a
+     new Style's back that is the same picture as one already there is not
+     drawn either. Fronts are always drawn: each Style's variants show one. */
+  existing = null,
   verify = process.env.ONBOARDING_MOCKUP_VERIFY !== "off",
   size = MOCKUP_SIZE
 } = {}) {
@@ -547,13 +552,22 @@ async function renderProductMockups({
   const generate = generateBlank === undefined ? defaultGenerateBlank(product, specs) : generateBlank;
   const derive = deriveBack === undefined ? defaultDeriveBack(product) : deriveBack;
 
+  const has = typeof existing === "function" ? (colorName, styleName) => Boolean(existing(colorName, styleName)) : () => false;
+
   for (const color of colorEntries(product)) {
+    // Nothing new in this colour: no blank is looked up or drawn for it.
+    if (plans.every((plan) => has(color.name, plan.style))) continue;
     const colorCode = color.code || String(color.name).toUpperCase().replace(/[^A-Z0-9]+/g, "");
     const colorWarnings = [];
     if (!color.code) colorWarnings.push(`Color "${color.name}" has no approved color code; the file name uses "${colorCode}" until one is approved.`);
     const photos = photosFor(blankPhotos, color.name);
+    // Backs the product already shows for this colour, by what is on them.
+    const backKey = (plan) => plan.back.map((d) => d.code).join("/");
+    const backsThere = new Set(plans.filter((plan) => has(color.name, plan.style)).map(backKey));
     // Every decorated product ships a back image (stock when nothing is on
-    // the back), so a back base is needed whenever the product is decorated.
+    // the back), so a back base is needed whenever the product is decorated —
+    // unless every back this run would draw is one the product already has.
+    const backWanted = plans.some((plan) => !has(color.name, plan.style) && !backsThere.has(backKey(plan)));
     const bases = await resolveBases({
       product,
       color: color.name,
@@ -562,7 +576,7 @@ async function renderProductMockups({
       supplierBackLookup: backLookup,
       generateBlank: generate,
       deriveBack: derive,
-      needBack: hasDecoration,
+      needBack: hasDecoration && backWanted,
       log
     });
     colorWarnings.push(...bases.warnings);
@@ -574,12 +588,17 @@ async function renderProductMockups({
     const rendersByCodes = new Map();
 
     for (const plan of plans) {
+      if (has(color.name, plan.style)) continue;
       const fileNameFor = (face) => rules.mockupFileName({ departmentCode, styleNumber, colorCode, style: plan.style, face });
       const tag = `${styleNumber} ${color.name}${plan.style ? ` ${plan.style}` : ""}`;
 
       for (const face of ["front", "back"]) {
         const decorations = plan[face];
         const faceBase = bases[face];
+        if (face === "back" && backsThere.has(decorations.map((d) => d.code).join("/"))) {
+          log(`${tag} back: the same picture is already on the product; not drawn again`);
+          continue;
+        }
         const entry = {
           color: color.name,
           colorCode: color.code,

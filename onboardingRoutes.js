@@ -474,6 +474,71 @@ function createOnboardingRouter({ requireAdminToken, upload, jsonBodyLimit = JSO
     }
   });
 
+  /* ---- a product already in the store (Departments → Edit) -------------- */
+
+  // The record and row behind one live product; a product the agent has no
+  // row for gets one read off its options and SKUs.
+  router.post("/stores/:collectionId/products/:productId/row", gate, async (req, res) => {
+    try {
+      res.json(await agent.storeProductRow(req.params.collectionId, req.params.productId, { by: byOf(req) }));
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  // What "Update product" would add. Reads Shopify; writes nothing.
+  router.get("/onboardings/:id/products/:productId/update-plan", gate, async (req, res) => {
+    try {
+      res.json({ plan: await agent.productUpdatePlan(req.params.id, req.params.productId) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  // Add the row's new colours, sizes and logos to the product in Shopify.
+  router.post("/onboardings/:id/products/:productId/update", gate, async (req, res) => {
+    try {
+      const result = await agent.updateProducts(req.params.id, req.params.productId, { by: byOf(req) });
+      if (!result.started) return res.status(409).json({ error: result.reason, build: result.build || null });
+      res.status(202).json({ started: true, build: result.build });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  router.post("/onboardings/:id/update-products", gate, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.productIds) ? req.body.productIds.map(clean).filter(Boolean) : [];
+      const result = await agent.updateProducts(req.params.id, ids, { by: byOf(req) });
+      if (!result.started) return res.status(409).json({ error: result.reason, build: result.build || null });
+      res.status(202).json({ started: true, build: result.build });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  /* The same logo(s) as another Style on many built products, then one run
+     that adds the new variants and mockups to each. `preview: true` only
+     says which products would take it. */
+  router.post("/onboardings/:id/add-logos", gate, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const added = await agent.addLogosToProducts(req.params.id, {
+        logos: Array.isArray(body.logos) ? body.logos.map(clean) : [],
+        spot: clean(body.spot),
+        productIds: Array.isArray(body.productIds) ? body.productIds.map(clean).filter(Boolean) : null,
+        dryRun: body.preview === true,
+        by: byOf(req)
+      });
+      if (body.preview === true) return res.json({ changed: added.changed, skipped: added.skipped, started: false, build: null });
+      if (!added.changed.length) return res.json({ ...added, started: false, build: null });
+      const result = await agent.updateProducts(req.params.id, added.changed, { by: byOf(req) });
+      res.status(result.started ? 202 : 200).json({ ...added, started: result.started, reason: result.reason || "", build: result.build || null });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   router.post("/onboardings/:id/colors/propose", gate, async (req, res) => {
     try {
       res.json({ onboarding: await agent.proposeColor(req.params.id, { color: req.body?.color, code: req.body?.code, by: byOf(req) }) });

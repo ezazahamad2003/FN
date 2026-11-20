@@ -827,6 +827,138 @@ async function linkVariantImages(id, links = [], { onLog } = {}) {
   return list.length;
 }
 
+/* ---------------------------------------------------------------------------
+   Adding to a product that is already live ("Update product"). Everything
+   here ADDS: productSet is never used on a built product, because it rewrites
+   the whole variant list — prices back to 0.00, status back to Draft — and a
+   product Dan has priced and made Active must keep both.
+   ------------------------------------------------------------------------- */
+
+const PRODUCT_VARIANT_DETAIL_QUERY = `
+query productVariantDetail($id: ID!, $after: String) {
+  product(id: $id) {
+    id
+    variants(first: ${PAGE_SIZE}, after: $after) {
+      nodes {
+        id sku price compareAtPrice taxable inventoryPolicy
+        selectedOptions { name value }
+        media(first: 1) { nodes { id } }
+        inventoryItem { tracked requiresShipping measurement { weight { value unit } } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+/* Every variant with what a new sibling should copy from it (price, tax,
+   shipping, weight) and the image it shows. */
+async function productVariantDetail(idOrGid) {
+  const id = productGid(idOrGid);
+  const out = [];
+  let after = null;
+  do {
+    const data = await gql(PRODUCT_VARIANT_DETAIL_QUERY, { id, after });
+    const product = data?.product;
+    if (!product) throw new Error(`Product ${idOrGid} was not found in Shopify.`);
+    for (const v of product.variants?.nodes || []) {
+      const item = v.inventoryItem || {};
+      const weight = item.measurement?.weight;
+      out.push({
+        id: v.id,
+        sku: v.sku || "",
+        price: v.price,
+        compareAtPrice: v.compareAtPrice ?? null,
+        taxable: v.taxable !== false,
+        inventoryPolicy: v.inventoryPolicy || "CONTINUE",
+        selectedOptions: v.selectedOptions || [],
+        mediaId: v.media?.nodes?.[0]?.id || "",
+        tracked: Boolean(item.tracked),
+        requiresShipping: item.requiresShipping !== false,
+        weight: weight && weight.value != null ? { value: weight.value, unit: weight.unit } : null
+      });
+    }
+    after = product.variants?.pageInfo?.hasNextPage ? product.variants.pageInfo.endCursor : null;
+  } while (after);
+  return out;
+}
+
+const PRODUCT_OPTIONS_CREATE_MUTATION = `
+mutation productOptionsCreate($productId: ID!, $options: [OptionCreateInput!]!) {
+  productOptionsCreate(productId: $productId, options: $options, variantStrategy: LEAVE_AS_IS) {
+    product { id options { name optionValues { name } } }
+    userErrors { code field message }
+  }
+}`;
+
+/* Give a product one more option. LEAVE_AS_IS creates no variants: every
+   variant already there takes the option's FIRST value (a product gaining
+   "Style" has all it sells today become "Style 1"). */
+async function addProductOption(idOrGid, { name, values = [] } = {}, { onLog } = {}) {
+  const log = logger(onLog);
+  const list = (values || []).map((v) => String(v || "").trim()).filter(Boolean);
+  if (!String(name || "").trim() || !list.length) throw new Error("addProductOption needs the option's name and at least one value.");
+  const data = await gql(PRODUCT_OPTIONS_CREATE_MUTATION, {
+    productId: productGid(idOrGid),
+    options: [{ name, values: list.map((value) => ({ name: value })) }]
+  });
+  assertNoUserErrors("productOptionsCreate", data?.productOptionsCreate?.userErrors);
+  log(`Added the ${name} option; the variants already there are ${list[0]}.`);
+  return (data?.productOptionsCreate?.product?.options || []).map((o) => ({ name: o.name, values: (o.optionValues || []).map((v) => v.name) }));
+}
+
+const VARIANTS_BULK_CREATE_MUTATION = `
+mutation productVariantsBulkCreate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  productVariantsBulkCreate(productId: $productId, variants: $variants) {
+    productVariants { id sku title selectedOptions { name value } }
+    userErrors { code field message }
+  }
+}`;
+
+const VARIANT_CREATE_CHUNK = 100;
+
+/*
+ * Pure: one ProductVariantsBulkInput. Unlike productSet, the SKU of a bulk
+ * variant lives on its inventory item. The price is the sibling's — never
+ * 0.00, which on an Active product would be a free shirt on the storefront.
+ */
+function buildVariantCreateInput(variant) {
+  const inventoryItem = {
+    sku: String(variant.sku || ""),
+    tracked: Boolean(variant.tracked),
+    requiresShipping: variant.requiresShipping !== false
+  };
+  if (variant.weight && variant.weight.value != null && variant.weight.unit) {
+    inventoryItem.measurement = { weight: { value: Number(variant.weight.value), unit: variant.weight.unit } };
+  }
+  const out = {
+    optionValues: (variant.optionValues || []).map((ov) => ({ optionName: ov.optionName, name: ov.name })),
+    price: String(variant.price == null || variant.price === "" ? "0.00" : variant.price),
+    inventoryPolicy: variant.inventoryPolicy === "DENY" ? "DENY" : "CONTINUE",
+    taxable: variant.taxable !== false,
+    inventoryItem
+  };
+  if (variant.compareAtPrice != null && variant.compareAtPrice !== "") out.compareAtPrice = String(variant.compareAtPrice);
+  return out;
+}
+
+/* Create variants on a live product. An option value that is new (a colour,
+   "Style 2") is made by naming it. Returns the variants created. */
+async function addProductVariants(idOrGid, variants = [], { onLog } = {}) {
+  const log = logger(onLog);
+  const list = (variants || []).filter(Boolean);
+  if (!list.length) return [];
+  const productId = productGid(idOrGid);
+  const created = [];
+  for (let i = 0; i < list.length; i += VARIANT_CREATE_CHUNK) {
+    const chunk = list.slice(i, i + VARIANT_CREATE_CHUNK);
+    const data = await gql(VARIANTS_BULK_CREATE_MUTATION, { productId, variants: chunk.map(buildVariantCreateInput) });
+    assertNoUserErrors("productVariantsBulkCreate", data?.productVariantsBulkCreate?.userErrors);
+    created.push(...(data?.productVariantsBulkCreate?.productVariants || []));
+  }
+  log(`Created ${created.length} variant(s).`);
+  return created.map((v) => ({ id: v.id, sku: v.sku || "", title: v.title, selectedOptions: v.selectedOptions || [] }));
+}
+
 async function replaceProductImages(id, images = [], { onLog } = {}) {
   const log = logger(onLog);
   const snapshot = await productSnapshot(id);
@@ -1901,6 +2033,11 @@ module.exports = {
   attachMockups,
   linkVariantImages,
   replaceProductImages,
+  // adding to a live product
+  productVariantDetail,
+  addProductOption,
+  buildVariantCreateInput,
+  addProductVariants,
   // collection
   ensureDepartmentCollection,
   // verification reads

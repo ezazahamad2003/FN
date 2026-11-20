@@ -2452,6 +2452,7 @@
             ${chip(validation.ok === true ? "valid" : validation.ok === false ? "has errors" : "not validated", tone)}
             ${product?.buildState ? chip(product.buildState, product.buildState === "created" ? "ok" : product.buildState === "failed" ? "danger" : "muted") : ""}
             ${product?.shopify?.url ? `<a href="${esc(product.shopify.url)}" target="_blank" rel="noreferrer">Open in Shopify</a>` : ""}
+            ${updateButtonHtml(product)}
             ${redoButtonHtml(product)}
           </span>
           <button class="variant-remove" type="button" data-ob="remove-product" aria-label="Remove product ${index + 1}">&times;</button>
@@ -3306,14 +3307,17 @@
     const elapsedMin = startedMs ? Math.max(0, Math.floor((Date.now() - startedMs) / 60000)) : 0;
     /* An images-only run (Redo images) covers only the products picked; the
        title and the estimate say so. */
-    const scope = build.scope?.kind === "images" ? list(build.scope.productIds) : null;
+    const scopeKind = ["images", "update", "products"].includes(build.scope?.kind) ? build.scope.kind : "";
+    const scope = scopeKind ? list(build.scope.productIds) : null;
+    const scopeTitle = scopeKind === "update" ? "Updating" : scopeKind === "products" ? "Adding" : "Making images for";
+    const scopeChip = scopeKind === "update" ? "update only" : scopeKind === "products" ? "new products only" : "images only";
     const productCount = scope ? scope.length : list(record.products).length;
     const nowDoing = current?.label || (steps.length ? "Finishing up" : "Starting");
     const liveHtml = running
       ? `<div class="ob-building" role="status" aria-live="polite">
           <span class="spinner" aria-hidden="true"></span>
           <div>
-            <p class="ob-building-title">${scope ? `Making images for ${productCount} product${plural(productCount, "", "s")}` : "Building now"} — ${esc(nowDoing)}</p>
+            <p class="ob-building-title">${scope ? `${scopeTitle} ${productCount} product${plural(productCount, "", "s")}` : "Building now"} — ${esc(nowDoing)}</p>
             <p class="ob-building-sub">${steps.length ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : "Getting ready"}${startedMs ? ` · ${elapsedMin < 1 ? "under a minute" : `${elapsedMin} min`} so far` : ""} · usually ${Math.max(3, productCount * 2 + 1)}–${Math.max(5, productCount * 3 + 2)} minutes for ${productCount} product${plural(productCount, "", "s")}, mostly the mockups.
             This page updates by itself, and the build keeps going if you leave it.</p>
           </div>
@@ -3325,7 +3329,7 @@
         <button class="${btnClass(record, "build")}" type="button" data-ob="build" ${blockers.length || running ? "disabled" : ""} ${blockers.length ? `title="${esc(`Blocked: ${blockers.join(", ")}`)}"` : ""}>${esc(label)}</button>
         ${interrupted ? `<span class="hint" data-tone="warn">The last run stopped before it finished — resuming picks up where it left off.</span>` : ""}
         ${build.state ? chip(build.state, buildTone(build.state)) : chip("not started", "muted")}
-        ${scope ? chip(`images only · ${productCount} product${plural(productCount, "", "s")}`, "muted") : ""}
+        ${scope ? chip(`${scopeChip} · ${productCount} product${plural(productCount, "", "s")}`, "muted") : ""}
         ${build.startedAt ? `<span class="hint">started ${esc(when(build.startedAt))}</span>` : ""}
         ${build.finishedAt ? `<span class="hint">finished ${esc(when(build.finishedAt))}</span>` : ""}
       </div>
@@ -3460,8 +3464,53 @@
      product, so nothing changed. */
   function redoButtonHtml(product) {
     if (!product?.id || !(list(product.mockups).length || product.shopify?.gid)) return "";
+    // Redo images runs from the onboarding record's Build step, not from the
+    // store dialog (which has no Build step to show it on).
+    if (storeOpen()) return "";
     const running = ["running", "starting"].includes(state.record?.build?.state);
     return `<button class="btn btn-ghost btn-sm" type="button" data-ob="redo-images" data-ob-product-id="${esc(product.id)}" ${running ? "disabled" : ""}>Redo images</button>`;
+  }
+
+  /* A built product whose row gained a colour, a size or a logo since: the
+     additions are on the row and not in Shopify yet. In the store dialog the
+     dialog's own Update product button does this. */
+  function updateButtonHtml(product) {
+    if (!product?.id || !product.updatePending || !product.shopify?.gid || storeOpen()) return "";
+    const running = ["running", "starting"].includes(state.record?.build?.state);
+    return `<button class="btn btn-secondary btn-sm" type="button" data-ob="update-product" data-ob-product-id="${esc(product.id)}" ${running ? "disabled" : ""} title="Add what this row gained to the product in Shopify">Update product</button>`;
+  }
+
+  function updateRowProduct(button) {
+    const id = state.record?.id;
+    const productId = button.dataset.obProductId;
+    const product = list(state.record?.products).find((p) => p?.id === productId);
+    if (!id || !product) return;
+    const name = product.title || product.styleNumber || "this product";
+    if (!window.confirm(`Add what this row gained to "${name}" in Shopify?
+
+The new colours, sizes and logos (Styles) become new variants with their mockups and SKUs, each priced like the same size already on the product. Its status is not changed, so on an Active product they are on sale straight away. Nothing already on it is changed or removed.`)) return;
+    return runAction(
+      button,
+      "Starting…",
+      async () => {
+        // What is typed on the rows is saved first, so the update is what is on screen.
+        if (page()?.querySelector("[data-ob-panel='inputs']")) {
+          const payload = await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products: collectProducts() }) });
+          if (!isCurrent("detail", id)) return;
+          state.record = payload.onboarding || state.record;
+          state.draft = null;
+        }
+        const started = await api(`${recordPath(id)}/products/${encodeURIComponent(productId)}/update`, { method: "POST", body: JSON.stringify({ by: currentOperator() }) });
+        if (!isCurrent("detail", id)) return;
+        const fresh = await api(recordPath(id));
+        if (!isCurrent("detail", id)) return;
+        state.record = fresh.onboarding || state.record;
+        if (started?.build) state.record.build = { ...(state.record.build || {}), ...started.build, state: started.build.state || "running" };
+        goToStep("build", { keepRows: false });
+      },
+      page(),
+      "obDetailError"
+    );
   }
 
   function mockupFigureHtml(record, mockup) {
@@ -3867,6 +3916,7 @@
     if (action === "save-products") return saveProducts(trigger);
     if (action === "build") return startBuild(trigger);
     if (action === "redo-images") return redoImages(trigger);
+    if (action === "update-product") return updateRowProduct(trigger);
     if (action === "redo-selected") return redoSelectedImages(trigger);
     if (action === "redo-pick") {
       const all = trigger.dataset.obPick === "all";
@@ -5373,10 +5423,24 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     return [row?.brand, row?.styleNumber, row?.type, row?.title].some((v) => String(v || "").trim()) || list(row?.colors).length > 0 || list(row?.sizes).length > 0;
   }
 
-  async function openStoreProduct({ collection, onCreated } = {}) {
+  /* The same modal has three jobs (st.mode):
+       "create"  New product — a fresh row, created as a Draft.
+       "update"  Edit → "Add colours, sizes or logos" on a product that is
+                 already in the store: its own row, and "Update product" adds
+                 what Shopify does not have yet (Dan, 2026-11-20).
+       "logos"   "Add a logo to products": one or more logos onto many built
+                 products at once, each as the product's next Style. */
+  const STORE_TITLES = { create: "New product", update: "Add to this product", logos: "Add a logo to products" };
+
+  async function openStoreProduct({ collection, product, logos = false, productCount = 0, onCreated } = {}) {
     if (!collection?.id) return;
+    const mode = logos ? "logos" : product?.id ? "update" : "create";
     const st = {
+      mode,
       collection: { id: String(collection.id), title: collection.title || "this department" },
+      // The live Shopify product being added to ("update").
+      live: mode === "update" ? { id: String(product.id), title: product.title || "this product" } : null,
+      productCount: Number(productCount) || 0,
       onCreated: typeof onCreated === "function" ? onCreated : null,
       productId: "",
       saved: false,
@@ -5385,16 +5449,25 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       pollTimer: null,
       buildStartedAt: "",
       polls: 0,
-      error: ""
+      error: "",
+      // "update": what Update product would add, as of the last check.
+      plan: null,
+      planState: "idle",
+      // "logos": what is ticked, kept across repaints (an upload redraws the body).
+      pickLogos: new Set(),
+      pickProducts: null,
+      spot: "F",
+      skipped: []
     };
     // openModal closes any dialog already open (and its onClose runs first).
     const overlay = openModal({
       id: "obStore",
-      title: "New product",
-      sub: `Adding to “${st.collection.title}”.`,
+      title: STORE_TITLES[mode],
+      sub: mode === "update" ? `“${st.live.title}” in “${st.collection.title}”.` : mode === "logos" ? `Products in “${st.collection.title}”.` : `Adding to “${st.collection.title}”.`,
       bodyHtml: `<div class="modal-body" data-ob-page="store-product" data-ob-panel="inputs">${stateBlock({ tone: "info", title: "Opening the store's record…", sub: "Reading its logos and products.", spinner: true })}</div>`
     });
     overlay.querySelector(".modal")?.classList.add("ob-store-modal");
+    overlay.querySelector(".modal")?.setAttribute("data-ob-store-mode", mode);
     st.overlay = overlay;
     state.store = st;
     state.view = "store-product";
@@ -5404,6 +5477,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     modalState.onClose = () => teardownStore(st);
     overlay.addEventListener("click", onStoreClick);
     overlay.addEventListener("change", onDetailChange);
+    overlay.addEventListener("change", onStoreLogosChange);
 
     // The store's garments for "pick a garment" on the row.
     if (!state.garments) {
@@ -5417,24 +5491,77 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         });
     }
 
+    await loadStoreRecord(st);
+  }
+
+  /* The store's record, and in "update" the row behind the live product (the
+     server reads one off the product when the agent has none). Run again
+     after a store's missing department code is typed. */
+  async function loadStoreRecord(st) {
     try {
-      const info = await api(`/api/stores/${encodeURIComponent(st.collection.id)}`);
-      if (state.store !== st) return;
-      const payload = info?.onboardingId
-        ? await api(recordPath(info.onboardingId))
-        : await api(`/api/stores/${encodeURIComponent(st.collection.id)}/adopt`, { method: "POST", body: JSON.stringify({ by: operator() }) });
+      let payload;
+      if (st.mode === "update") {
+        payload = await api(`/api/stores/${encodeURIComponent(st.collection.id)}/products/${encodeURIComponent(st.live.id)}/row`, {
+          method: "POST",
+          body: JSON.stringify({ by: operator() })
+        });
+      } else {
+        const info = await api(`/api/stores/${encodeURIComponent(st.collection.id)}`);
+        if (state.store !== st) return;
+        payload = info?.onboardingId
+          ? await api(recordPath(info.onboardingId))
+          : await api(`/api/stores/${encodeURIComponent(st.collection.id)}/adopt`, { method: "POST", body: JSON.stringify({ by: operator() }) });
+      }
       if (state.store !== st) return;
       if (!payload?.onboarding) throw new Error("The server answered without the store's record.");
       state.record = payload.onboarding;
       state.id = state.record.id;
-      st.productId = nextProductId();
+      st.error = "";
       st.phase = "form";
+      if (st.mode === "update") st.productId = payload.product?.id || "";
+      else if (st.mode === "create") st.productId = nextProductId();
+      // A run already going for this store (started here earlier, or from the
+      // onboarding record) is shown, not hidden behind a form that cannot start one.
+      const build = state.record.build || {};
+      if (st.mode === "logos" && (build.state === "running" || build.state === "starting")) {
+        st.phase = "creating";
+        st.buildStartedAt = build.startedAt || "";
+        st.polls = 0;
+      }
     } catch (error) {
       if (state.store !== st) return;
       st.phase = "error";
       st.error = error?.message || "Could not open the store's record.";
     }
     renderStoreProduct({ keepRows: false });
+    if (st.phase === "creating") pollStoreBuild();
+    else if (st.mode === "update" && st.productId) loadStorePlan(st);
+  }
+
+  /* What Update product would add, read from Shopify as it is now. Shown
+     under the row so the button never promises more than it will do. */
+  async function loadStorePlan(st) {
+    if (state.store !== st || st.mode !== "update" || !st.productId || !state.record?.id) return null;
+    st.planState = "loading";
+    paintStorePlan(st);
+    try {
+      const payload = await api(`${recordPath(state.record.id)}/products/${encodeURIComponent(st.productId)}/update-plan`);
+      if (state.store !== st) return null;
+      st.plan = payload?.plan || null;
+      st.planState = "ready";
+    } catch (error) {
+      if (state.store !== st) return null;
+      st.plan = null;
+      st.planState = "error";
+      st.planError = error?.message || "Shopify could not be read.";
+    }
+    paintStorePlan(st);
+    return st.plan;
+  }
+
+  function paintStorePlan(st) {
+    const slot = st.overlay?.querySelector("[data-ob-store-plan]");
+    if (slot) slot.innerHTML = storePlanHtml(st);
   }
 
   function teardownStore(st) {
@@ -5443,6 +5570,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     st.pollTimer = null;
     st.overlay?.removeEventListener("click", onStoreClick);
     st.overlay?.removeEventListener("change", onDetailChange);
+    st.overlay?.removeEventListener("change", onStoreLogosChange);
     state.store = null;
     if (state.view === "store-product") {
       state.view = null;
@@ -5467,11 +5595,27 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     const sub = st.overlay.querySelector(".modal-sub");
     if (sub) {
       const code = state.record?.department?.code;
-      sub.textContent = `Adding to “${st.collection.title}”${code?.approved && code.value ? ` · department code ${code.value}` : ""}. The product is created as a Draft; nothing is published.`;
+      const codeText = code?.approved && code.value ? ` · department code ${code.value}` : "";
+      sub.textContent =
+        st.mode === "update"
+          ? `“${st.live.title}” in “${st.collection.title}”${codeText}. What is already on the product is never changed.`
+          : st.mode === "logos"
+            ? `Products in “${st.collection.title}”${codeText}. What is already on a product is never changed.`
+            : `Adding to “${st.collection.title}”${codeText}. The product is created as a Draft; nothing is published.`;
     }
     body.innerHTML = storeBodyHtml(st);
     hydrateAssetImages(body);
     wirePacketDropzones(body);
+    if (st.mode === "update" && st.phase === "form") {
+      /* The garment of a product in Shopify is what it is: changing the style
+         here would make the row a different product. */
+      const style = body.querySelector("[data-ob-field='styleNumber']");
+      if (style) {
+        style.readOnly = true;
+        style.title = "The garment of a product that is already in Shopify cannot be changed here.";
+      }
+    }
+    if (st.mode === "logos" && st.phase === "form") syncStoreLogos(st);
   }
 
   function storeBodyHtml(st) {
@@ -5480,13 +5624,15 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     if (st.phase === "error" || !record) {
       return `${banner("obDetailError")}${stateBlock({
         tone: "danger",
-        title: "Could not open the product form",
+        title: st.mode === "update" ? "This product cannot be added to from here" : "Could not open the product form",
         sub: st.error || "The store's record could not be read.",
-        actionHtml: `<button class="btn btn-secondary btn-sm" type="button" data-ob="store-retry">Try again</button>`
+        actionHtml: `<button class="btn btn-secondary btn-sm" type="button" data-ob="store-retry">Try again</button> <button class="btn btn-ghost btn-sm" type="button" data-ob="store-close">Close</button>`
       })}`;
     }
-    if (st.phase !== "form") return storeProgressHtml(st, record);
+    if (st.phase !== "form") return st.mode === "logos" ? storeLogosProgressHtml(st, record) : storeProgressHtml(st, record);
     if (!record.department?.code?.approved) return `${banner("obDetailError")}${storeCodeHtml(record)}`;
+    if (st.mode === "logos") return storeLogosFormHtml(st, record);
+    if (st.mode === "update") return storeUpdateFormHtml(st, record);
 
     const screen = rowsForScreen(record);
     const rows = list(screen.products);
@@ -5506,6 +5652,319 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         <button class="btn btn-ghost" type="button" data-ob="store-close">Close</button>
         <button class="btn btn-secondary" type="button" data-ob="save-products">Save &amp; check</button>
         <button class="btn btn-primary" type="button" data-ob="store-create" ${built ? "disabled title=\"Already created\"" : ""}>Create product</button>
+      </div>`;
+  }
+
+  /* ---- "update": the row of a product that is already in Shopify ------------ */
+
+  function storeUpdateFormHtml(st, record) {
+    const screen = rowsForScreen(record);
+    const rows = list(screen.products);
+    const index = rows.findIndex((p) => p?.id === st.productId);
+    if (index === -1) {
+      return `${banner("obDetailError")}${stateBlock({ tone: "danger", title: "This product's row could not be found", sub: "Close this and open the product again.", actionHtml: `<button class="btn btn-ghost btn-sm" type="button" data-ob="store-close">Close</button>` })}`;
+    }
+    const row = rows[index];
+    return `
+      ${banner("obDetailError")}
+      <p class="ob-store-what">This is the row “${esc(st.live.title)}” was made from. <b>Add a colour or a size</b> to its lists, or <b>add another logo</b> under “Another logo on this garment” — it becomes the next Style of this same product. <b>Save &amp; check</b> shows what would be added; <b>Update product</b> makes the new mockups and adds the variants and SKUs to the product in Shopify. Each new variant takes the price of the same size already on the product, and nothing already there is changed or removed.</p>
+      ${row.fromShopify && !list(row.mockups).length ? `<p class="hint ob-store-saved" data-tone="info" role="note">The agent did not build this product, so the row was read off its options and SKUs in Shopify. Check the logo picked for each placement before adding to it: a new colour is drawn with those logos.</p>` : ""}
+      ${storeLogosHtml(record)}
+      <div class="ob-products">${productRowHtml(screen, row, index)}</div>
+      <div data-ob-store-plan aria-live="polite">${storePlanHtml(st)}</div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-ob="store-close">Close</button>
+        <button class="btn btn-secondary" type="button" data-ob="save-products">Save &amp; check</button>
+        <button class="btn btn-primary" type="button" data-ob="store-update">Update product</button>
+      </div>`;
+  }
+
+  function joinNames(names) {
+    const items = list(names);
+    if (items.length < 2) return items.join("");
+    return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  }
+
+  // What the plan adds, in words: "colour Black; Style 2 and Style 3; size XL".
+  function planWhat(plan) {
+    return [
+      list(plan.newColors).length ? `colour${plural(plan.newColors.length, "", "s")} ${joinNames(plan.newColors)}` : "",
+      list(plan.newStyles).length ? joinNames(plan.newStyles) : "",
+      list(plan.newSizes).length ? `size${plural(plan.newSizes.length, "", "s")} ${joinNames(plan.newSizes)}` : ""
+    ].filter(Boolean);
+  }
+
+  function storePlanHtml(st) {
+    if (st.planState === "loading") {
+      return `<div class="ob-store-plan" data-tone="info"><span class="spinner" aria-hidden="true"></span><p>Checking what the product already has in Shopify…</p></div>`;
+    }
+    if (st.planState === "error") {
+      return `<div class="ob-store-plan" data-tone="warn"><p><b>Shopify could not be read just now.</b> ${esc(st.planError || "")} Save &amp; check tries again.</p></div>`;
+    }
+    const plan = st.plan;
+    if (!plan) return "";
+    const warnings = list(plan.warnings).map((w) => `<li>${esc(w)}</li>`).join("");
+    if (!plan.ok) {
+      return `<div class="ob-store-plan" data-tone="danger" role="alert">
+          <p><b>Update product cannot run yet.</b></p>
+          <ul>${list(plan.problems).map((p) => `<li>${esc(p)}</li>`).join("")}</ul>
+        </div>`;
+    }
+    if (!plan.variants) {
+      return `<div class="ob-store-plan" data-tone="muted">
+          <p><b>Nothing to add yet.</b> Shopify already has every variant on this row (${plan.liveCount} variant${plural(plan.liveCount, "", "s")}). Add a colour, a size or another logo above, then press Save &amp; check.</p>
+          ${warnings ? `<ul>${warnings}</ul>` : ""}
+        </div>`;
+    }
+    const what = planWhat(plan);
+    const skus = list(plan.skus);
+    return `<div class="ob-store-plan" data-tone="ok">
+        <p><b>Update product will add ${plan.variants} variant${plural(plan.variants, "", "s")}</b>${what.length ? `: ${esc(what.join("; "))}` : ""}${plan.mockups ? `, and draw mockups for ${plan.mockups} new colour/logo combination${plural(plan.mockups, "", "s")}` : ", using the pictures the product already shows"}.</p>
+        ${plan.addStyleOption ? `<p>The product gets a “Style” option so shoppers can pick the logo; the ${plan.liveCount} variant${plural(plan.liveCount, "", "s")} it has now become Style 1.</p>` : ""}
+        ${skus.length ? `<p class="ob-store-plan-skus">New SKUs: ${skus.map((sku) => `<code>${esc(sku)}</code>`).join(" ")}${plan.variants > skus.length ? ` and ${plan.variants - skus.length} more` : ""}</p>` : ""}
+        <p>The ${plan.liveCount} variant${plural(plan.liveCount, "", "s")} already on the product keep${plan.liveCount === 1 ? "s its price, SKU and picture" : " their prices, SKUs and pictures"}; each new one takes the price of the same size.</p>
+        ${warnings ? `<ul>${warnings}</ul>` : ""}
+      </div>`;
+  }
+
+  /* ---- "logos": one or more logos onto many built products ------------------ */
+
+  function builtRows(record) {
+    return list(record?.products).filter((p) => p?.id && p.shopify?.gid);
+  }
+
+  function rowName(p) {
+    return p?.title || [p?.brand, p?.styleNumber].filter(Boolean).join(" ") || p?.id || "product";
+  }
+
+  function storeLogosFormHtml(st, record) {
+    const logos = packetLogos(record);
+    const rows = builtRows(record);
+    const picked = (id) => (st.pickProducts ? st.pickProducts.has(id) : true);
+    // Products in the collection that the agent has no row for (built by hand).
+    const offRecord = Math.max(0, st.productCount - rows.length);
+    if (!rows.length) {
+      return `
+        ${banner("obDetailError")}
+        ${stateBlock({
+          title: "No product of this store is on the agent's record yet",
+          sub: record.adopted
+            ? "This store was built before the agent. Open a product with Edit, then “Add colours, sizes or logos”: that brings it onto the record, and it can take a logo there."
+            : "Products appear here once the agent has built them.",
+          actionHtml: `<button class="btn btn-ghost btn-sm" type="button" data-ob="store-close">Close</button>`
+        })}`;
+    }
+    return `
+      ${banner("obDetailError")}
+      <p class="ob-store-what">Add one or more logos to products that are already in the store. Each logo becomes the product's next <b>Style</b> (Style 2, Style 3, …) in the spot picked below, so shoppers choose the logo on one product instead of finding a second product. The agent draws the new mockups and adds the variants and SKUs; each new variant takes the price of the same size already on the product, and nothing already there is changed.</p>
+      ${storeLogosHtml(record)}
+      <fieldset class="ob-bulk">
+        <legend>1. Which logo to add <small>tick one or more — each is its own Style</small></legend>
+        ${logos.length
+          ? `<ul class="ob-redo-list ob-bulk-logos">${logos
+              .map(
+                (f) => `<li><label class="toggle-field"><input type="checkbox" data-ob-bulk-logo="${esc(f.assetId)}" ${st.pickLogos.has(f.assetId) ? "checked" : ""}> <span>${esc(f.name || "logo")}</span></label>${f.role ? `<span class="ob-badge" data-tone="muted">${esc(f.role)}</span>` : ""}</li>`
+              )
+              .join("")}</ul>`
+          : `<p class="hint" data-tone="warn">Upload the new logo above first.</p>`}
+      </fieldset>
+      <fieldset class="ob-bulk">
+        <legend>2. Where it goes</legend>
+        <label class="ob-bulk-spot"><span class="sr-only">Where the logo goes</span>
+          <select data-ob-bulk-spot>
+            ${PLACEMENTS.map((p) => `<option value="${esc(p.key)}" ${st.spot === p.key ? "selected" : ""}>On the ${esc(p.label.toLowerCase())}, in place of the logo there</option>`).join("")}
+          </select>
+        </label>
+        <p class="hint">A product with no logo in that spot is left as it is, and named before anything runs.</p>
+      </fieldset>
+      <fieldset class="ob-bulk">
+        <legend>3. Which products <small>${rows.length} in Shopify on this store's record</small></legend>
+        <div class="ob-head-actions">
+          <button class="btn btn-ghost btn-sm" type="button" data-ob="store-logos-pick" data-ob-pick="all">Tick all</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-ob="store-logos-pick" data-ob-pick="none">Untick all</button>
+        </div>
+        <ul class="ob-redo-list ob-bulk-products">
+          ${rows
+            .map((p) => {
+              const styles = Math.max(1, list(p.styles).length);
+              return `<li><label class="toggle-field"><input type="checkbox" data-ob-bulk-product="${esc(p.id)}" ${picked(p.id) ? "checked" : ""}> <span title="${esc(`${rowName(p)} — ${csv(p.colors)}`)}">${esc(rowName(p))}${list(p.colors).length ? ` · ${esc(csv(p.colors))}` : ""}</span></label><span class="ob-badge" data-tone="${styles > 1 ? "ok" : "muted"}">${styles} logo${plural(styles, "", "s")} now</span></li>`;
+            })
+            .join("")}
+        </ul>
+        ${offRecord ? `<p class="hint">${offRecord} product${plural(offRecord, "", "s")} in this collection ${offRecord === 1 ? "is" : "are"} not on the agent's record (made by hand, or not built yet) and ${offRecord === 1 ? "is" : "are"} not listed. Open one with Edit, then “Add colours, sizes or logos”, to bring it in.</p>` : ""}
+      </fieldset>
+      <p class="hint" data-ob-bulk-summary role="status"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" type="button" data-ob="store-close">Close</button>
+        <button class="btn btn-primary" type="button" data-ob="store-logos-go" data-ob-bulk-go disabled>Add the logo</button>
+      </div>`;
+  }
+
+  function bulkPicks(st) {
+    const body = st.overlay?.querySelector("[data-ob-page='store-product']");
+    return {
+      logos: [...(body?.querySelectorAll("[data-ob-bulk-logo]:checked") || [])].map((box) => box.dataset.obBulkLogo),
+      products: [...(body?.querySelectorAll("[data-ob-bulk-product]:checked") || [])].map((box) => box.dataset.obBulkProduct),
+      spot: body?.querySelector("[data-ob-bulk-spot]")?.value || "F"
+    };
+  }
+
+  /* The button says how many logos go onto how many products, and the line
+     above it says how big the run is: every product gets one new mockup per
+     logo per colour, which is where the minutes go. */
+  function syncStoreLogos(st) {
+    const body = st.overlay?.querySelector("[data-ob-page='store-product']");
+    const button = body?.querySelector("[data-ob-bulk-go]");
+    if (!button) return;
+    const { logos, products } = bulkPicks(st);
+    const ready = logos.length > 0 && products.length > 0;
+    button.disabled = !ready;
+    button.textContent = ready
+      ? `Add ${logos.length} logo${plural(logos.length, "", "s")} to ${products.length} product${plural(products.length, "", "s")}`
+      : !logos.length
+        ? "Tick a logo to add"
+        : "Tick at least one product";
+    const summary = body.querySelector("[data-ob-bulk-summary]");
+    if (summary) {
+      const rows = builtRows(state.record).filter((p) => products.includes(p.id));
+      const mockups = rows.reduce((sum, p) => sum + Math.max(1, list(p.colors).length) * logos.length, 0);
+      summary.textContent = ready
+        ? `That is about ${mockups} new mockup${plural(mockups, "", "s")} — roughly ${Math.max(1, Math.round(mockups * 0.75))} to ${Math.max(2, Math.round(mockups * 1.5))} minutes in one run. It carries on if you close this, and no other build can start for this store until it finishes.`
+        : "";
+    }
+  }
+
+  function onStoreLogosChange(event) {
+    const st = state.store;
+    if (!st || st.mode !== "logos" || st.phase !== "form") return;
+    if (!event.target.matches("[data-ob-bulk-logo], [data-ob-bulk-product], [data-ob-bulk-spot]")) return;
+    const picks = bulkPicks(st);
+    st.pickLogos = new Set(picks.logos);
+    st.pickProducts = new Set(picks.products);
+    st.spot = picks.spot;
+    syncStoreLogos(st);
+  }
+
+  function pickStoreLogoProducts(trigger) {
+    const st = state.store;
+    if (!st) return;
+    const all = trigger.dataset.obPick === "all";
+    st.overlay?.querySelectorAll("[data-ob-bulk-product]").forEach((box) => {
+      box.checked = all;
+    });
+    st.pickProducts = new Set(bulkPicks(st).products);
+    syncStoreLogos(st);
+  }
+
+  /* Ask the server which products would take the logo (nothing is saved),
+     say so in the confirm, then add it and start the one run. */
+  function addStoreLogos(button) {
+    const st = state.store;
+    const id = state.record?.id;
+    if (!st || !id) return;
+    const picks = bulkPicks(st);
+    if (!picks.logos.length || !picks.products.length) return;
+    return runAction(
+      button,
+      "Checking…",
+      async () => {
+        const body = { logos: picks.logos, spot: picks.spot, productIds: picks.products, by: operator() };
+        const preview = await api(`${recordPath(id)}/add-logos`, { method: "POST", body: JSON.stringify({ ...body, preview: true }) });
+        if (state.store !== st) return;
+        const willChange = list(preview?.changed);
+        const skipped = list(preview?.skipped);
+        if (!willChange.length) {
+          fail(`None of the ticked products can take ${picks.logos.length === 1 ? "that logo" : "those logos"} there. ${skipped[0] ? `${skipped[0].title}: ${skipped[0].reason}` : ""}`);
+          return;
+        }
+        const skipLines = skipped.slice(0, 6).map((s) => `  • ${s.title}: ${s.reason}`);
+        const sure = window.confirm(
+          `Add ${picks.logos.length} logo${plural(picks.logos.length, "", "s")} to ${willChange.length} product${plural(willChange.length, "", "s")} in Shopify?\n\n` +
+            "Each product gets the logo as its next Style: new mockups, new variants and SKUs, priced like the same size already on it. Nothing already on a product is changed.\n" +
+            (skipped.length ? `\n${skipped.length} ticked product${plural(skipped.length, "", "s")} will be left as ${skipped.length === 1 ? "it is" : "they are"}:\n${skipLines.join("\n")}${skipped.length > skipLines.length ? `\n  • and ${skipped.length - skipLines.length} more` : ""}\n` : "")
+        );
+        if (!sure || state.store !== st) return;
+        const started = await api(`${recordPath(id)}/add-logos`, { method: "POST", body: JSON.stringify(body) });
+        if (state.store !== st) return;
+        if (started?.onboarding) state.record = started.onboarding;
+        st.skipped = list(started?.skipped);
+        if (!started?.started) {
+          renderStoreProduct({ keepRows: false });
+          fail(started?.reason || "The logo is on the rows, but the run did not start. Close this and try again.");
+          return;
+        }
+        st.phase = "creating";
+        st.error = "";
+        st.polls = 0;
+        st.buildStartedAt = started.build?.startedAt || "";
+        state.record.build = { ...(state.record.build || {}), ...(started.build || {}), state: started.build?.state || "running" };
+        state.draft = null;
+        renderStoreProduct({ keepRows: false });
+        pollStoreBuild();
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  /* The bulk run: how many products are done, what it is on now, what failed.
+     Unlike one product, this can run for an hour, so the dialog can be closed
+     and opened again — opening it while the run is going shows this. */
+  function storeLogosProgressHtml(st, record) {
+    const build = record?.build || {};
+    const steps = list(build.steps);
+    const productSteps = steps.filter((s) => String(s?.key || "").startsWith("products:"));
+    const total = list(build.scope?.productIds).length || productSteps.length;
+    const finished = productSteps.filter((s) => s.state === "complete" || s.state === "skipped").length;
+    const failed = productSteps.filter((s) => s.state === "failed");
+    const running = st.phase === "creating";
+    const current = steps.find((s) => s.state === "running");
+    const allDone = steps.filter((s) => s.state !== "running").length;
+    const expected = total * 2 + 1;
+    const pct = expected ? Math.min(100, Math.round((allDone / expected) * 100)) : 0;
+    const log = list(build.log).slice(-LOG_TAIL);
+    let head;
+    if (running) {
+      head = `<div class="ob-building" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <p class="ob-building-title">Adding to ${total} product${plural(total, "", "s")} — ${esc(current?.label || "starting")}</p>
+            <p class="ob-building-sub">One product at a time: its new mockups are drawn, then its new variants and pictures go onto it in Shopify. This updates by itself, and the work carries on if you close it: open “Add a logo to products” again to see where it is.</p>
+          </div>
+        </div>`;
+    } else if (st.phase === "done") {
+      head = `<div class="ob-store-done" data-tone="ok" role="status">
+          <p class="ob-building-title">${finished} product${plural(finished, "", "s")} updated in Shopify.</p>
+          <p class="ob-building-sub">Each has the new logo as a Style, with its mockups and SKUs. The new variants carry the price of the same size and the product's status did not change, so on an Active product they are on sale now.</p>
+        </div>`;
+    } else {
+      head = `<div class="ob-store-done" data-tone="danger" role="alert">
+          <p class="ob-building-title">${finished} of ${total} product${plural(total, "", "s")} updated${failed.length ? `; ${failed.length} failed` : ""}.</p>
+          <p class="ob-building-sub">${esc(st.error || "The log below says what went wrong. Running it again adds only what is still missing: nothing is added twice.")}</p>
+        </div>`;
+    }
+    return `
+      <div class="ob-store-progress">
+        ${head}
+        ${steps.length
+          ? `<div class="progress">
+              <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${running ? pct : 100}" aria-label="Progress"><div class="progress-fill" style="width:${running ? pct : 100}%"></div></div>
+              <div class="progress-meta"><span>${finished} of ${total} product${plural(total, "", "s")} done</span><span>${running ? `${pct}%` : ""}</span></div>
+            </div>`
+          : ""}
+        ${failed.length
+          ? `<ul class="build-steps">${failed.map((step) => `<li data-state="failed"><b>${esc(step.label || step.key || "")}</b><span>${esc(step.detail || "")}</span></li>`).join("")}</ul>`
+          : ""}
+        ${list(st.skipped).length
+          ? `<details class="ob-bulk-skipped"><summary>${st.skipped.length} ticked product${plural(st.skipped.length, "", "s")} left as ${st.skipped.length === 1 ? "it is" : "they are"}</summary><ul>${st.skipped.map((s) => `<li><b>${esc(s.title)}</b> — ${esc(s.reason)}</li>`).join("")}</ul></details>`
+          : ""}
+        <div class="ob-log" data-ob-log tabindex="0" role="group" aria-label="Run log">
+          ${log.length ? log.map((line) => `<span>${esc(line)}</span>`).join("") : `<span class="hint">Nothing logged yet.</span>`}
+        </div>
+        <div class="modal-actions">
+          ${st.phase === "failed" ? `<button class="btn btn-secondary" type="button" data-ob="store-back">Back</button>` : ""}
+          <button class="btn ${st.phase === "done" ? "btn-primary" : "btn-ghost"}" type="button" data-ob="store-close">Close</button>
+        </div>
       </div>`;
   }
 
@@ -5566,8 +6025,29 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     const pct = total ? Math.round((done / total) * 100) : 0;
     const log = list(build.log).slice(-LOG_TAIL);
     const current = steps.find((s) => s.state === "running");
+    const updating = st.mode === "update";
     let head;
-    if (running) {
+    if (running && updating) {
+      head = `<div class="ob-building" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <div>
+            <p class="ob-building-title">Updating ${esc(name)} — ${esc(current?.label || "starting")}</p>
+            <p class="ob-building-sub">The new mockups first, then the new variants and their pictures are added to the product in Shopify. A minute or two for each new colour or logo. This updates by itself, and the work carries on if you close it.</p>
+          </div>
+        </div>`;
+    } else if (updating && st.phase === "done") {
+      const step = steps.find((s) => String(s?.key || "") === `products:${st.productId}`);
+      head = `<div class="ob-store-done" data-tone="ok" role="status">
+          <p class="ob-building-title">${esc(name)} is updated in Shopify.</p>
+          <p class="ob-building-sub">${esc(step?.detail ? `${step.detail.charAt(0).toUpperCase()}${step.detail.slice(1)}.` : "")}${row.shopify?.variantCount ? ` It has ${row.shopify.variantCount} variant${plural(row.shopify.variantCount, "", "s")} now.` : ""} The new ones carry the price of the same size and the product's status did not change, so on an Active product they are on sale now.</p>
+          ${row.shopify?.url ? `<a class="btn btn-secondary btn-sm" href="${esc(row.shopify.url)}" target="_blank" rel="noreferrer">Open in Shopify</a>` : ""}
+        </div>`;
+    } else if (updating) {
+      head = `<div class="ob-store-done" data-tone="danger" role="alert">
+          <p class="ob-building-title">${esc(name)} was not fully updated.</p>
+          <p class="ob-building-sub">${esc(st.error || row.buildError || build.error || "The run stopped early.")} The log below says how far it got. Update product can be pressed again: it adds only what is still missing, never the same variant twice.</p>
+        </div>`;
+    } else if (running) {
       head = `<div class="ob-building" role="status" aria-live="polite">
           <span class="spinner" aria-hidden="true"></span>
           <div>
@@ -5607,7 +6087,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         </div>
         <div class="modal-actions">
           ${st.phase === "failed" ? `<button class="btn btn-secondary" type="button" data-ob="store-back">Back to the row</button>` : ""}
-          <button class="btn ${st.phase === "done" ? "btn-primary" : "btn-ghost"}" type="button" data-ob="store-close" ${running ? "disabled" : ""}>${running ? "Creating…" : "Close"}</button>
+          <button class="btn ${st.phase === "done" ? "btn-primary" : "btn-ghost"}" type="button" data-ob="store-close" ${running ? "disabled" : ""}>${running ? (updating ? "Updating…" : "Creating…") : "Close"}</button>
         </div>
       </div>`;
   }
@@ -5620,17 +6100,21 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     if (!st) return;
     if (action === "store-close") return closeStoreProduct();
     if (action === "store-create") return createStoreProduct(trigger);
+    if (action === "store-update") return updateStoreProduct(trigger);
+    if (action === "store-logos-go") return addStoreLogos(trigger);
+    if (action === "store-logos-pick") return pickStoreLogoProducts(trigger);
     if (action === "store-discard") return discardStoreProduct(trigger);
     if (action === "store-code") return setStoreCode(trigger);
     if (action === "store-back") {
       st.phase = "form";
       st.error = "";
       renderStoreProduct({ keepRows: false });
+      if (st.mode === "update") loadStorePlan(st);
       return;
     }
     if (action === "store-retry") {
-      const { collection, onCreated } = st;
-      return openStoreProduct({ collection, onCreated });
+      const { collection, onCreated, live, mode, productCount } = st;
+      return openStoreProduct({ collection, onCreated, product: live, logos: mode === "logos", productCount });
     }
   }
 
@@ -5669,8 +6153,83 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
           const payload = await putStoreRow(st, row);
           if (!payload) return;
           applyRecord(payload, { rowsSaved: true });
+          // "Save & check" on a product in Shopify also says what would be added.
+          if (st.mode === "update") await loadStorePlan(st);
         } finally {
           modalBusy(false);
+        }
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
+  /* Save, check, plan, confirm, update. The row is saved first so what is
+     added is what is on screen; the plan is read from Shopify as it is right
+     now and put in the confirm, because this writes to a product that may be
+     Active — the new variants are on sale the moment they exist. */
+  function updateStoreProduct(button) {
+    const st = state.store;
+    const id = state.record?.id;
+    if (!st || !id || st.mode !== "update") return;
+    const row = storeRowFromScreen(st);
+    if (!row) return;
+    return runAction(
+      button,
+      "Checking…",
+      async () => {
+        modalBusy(true);
+        let updating = false;
+        try {
+          const saved = await putStoreRow(st, row);
+          if (!saved) return;
+          applyRecord(saved, { rowsSaved: true });
+          if (saved.product?.validation?.ok !== true) {
+            st.plan = null;
+            st.planState = "idle";
+            paintStorePlan(st);
+            fail("Not updated: fix what the row says is wrong, then press Update product again.");
+            return;
+          }
+          const plan = await loadStorePlan(st);
+          if (state.store !== st) return;
+          if (!plan) {
+            fail("Not updated: Shopify could not be read to see what the product already has. Try again in a moment.");
+            return;
+          }
+          if (!plan.ok) {
+            fail(`Not updated: ${list(plan.problems)[0] || "the product cannot be added to as the row stands."}`);
+            return;
+          }
+          if (!plan.variants) {
+            fail("Nothing to add: Shopify already has every variant on this row. Add a colour, a size or another logo first.");
+            return;
+          }
+          const what = planWhat(plan);
+          const sure = window.confirm(
+            `Add ${plan.variants} variant${plural(plan.variants, "", "s")} to “${st.live.title}” in Shopify?\n\n` +
+              (what.length ? `New: ${what.join("; ")}.\n` : "") +
+              (plan.mockups ? `${plan.mockups} new colour/logo combination${plural(plan.mockups, "", "s")} will be drawn first.\n` : "") +
+              "\nEach new variant takes the price of the same size already on the product. The product's status is not changed, so if it is Active the new variants are on sale straight away. Nothing already on it is changed or removed."
+          );
+          if (!sure || state.store !== st) return;
+          const started = await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}/update`, {
+            method: "POST",
+            body: JSON.stringify({ by: operator() })
+          });
+          if (state.store !== st) return;
+          updating = true;
+          st.phase = "creating";
+          st.error = "";
+          st.polls = 0;
+          st.buildStartedAt = started?.build?.startedAt || "";
+          state.record.build = { ...(state.record.build || {}), ...(started?.build || {}), state: started?.build?.state || "running" };
+          state.draft = null;
+          renderStoreProduct({ keepRows: false });
+          pollStoreBuild();
+        } finally {
+          // The modal stays busy (no Escape, no backdrop close) while it updates.
+          if (!updating) modalBusy(false);
         }
       },
       page(),
@@ -5752,10 +6311,19 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
           const live = build.state === "running" || build.state === "starting";
           if (mine && build.startedAt && !live) {
             const row = list(next.products).find((p) => p?.id === st.productId);
-            st.phase = row?.shopify?.gid && row?.buildState === "created" ? "done" : "failed";
+            if (st.mode === "logos") {
+              st.phase = build.state === "complete" ? "done" : "failed";
+            } else if (st.mode === "update") {
+              // Updated when its own step went through and nothing is still owed.
+              const step = list(build.steps).find((s) => String(s?.key || "") === `products:${st.productId}`);
+              st.phase = step && step.state !== "failed" && step.state !== "running" && !row?.updatePending ? "done" : "failed";
+            } else {
+              st.phase = row?.shopify?.gid && row?.buildState === "created" ? "done" : "failed";
+            }
             modalBusy(false);
             renderStoreProduct({ keepRows: false });
-            if (st.phase === "done" && st.onCreated) st.onCreated(row);
+            // A bulk run that updated some products changed the page too.
+            if ((st.phase === "done" || st.mode === "logos") && st.onCreated) st.onCreated(row);
             return;
           }
           if (!mine && st.polls >= STORE_LOST_AFTER_POLLS) {
@@ -5812,6 +6380,12 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         const payload = await api(`/api/stores/${encodeURIComponent(st.collection.id)}/adopt`, { method: "POST", body: JSON.stringify({ code, by: operator() }) });
         if (state.store !== st) return;
         applyRecord(payload);
+        // With the code known, the product's row can be read off its SKUs.
+        if (st.mode === "update" && !st.productId) {
+          st.phase = "loading";
+          renderStoreProduct({ keepRows: false });
+          await loadStoreRecord(st);
+        }
       },
       page(),
       "obDetailError"

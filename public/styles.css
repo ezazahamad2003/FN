@@ -1422,6 +1422,27 @@ input[aria-invalid="true"],
 .dw-summary a { color: var(--info); font-weight: 700; }
 .dw-summary a:hover { text-decoration: underline; }
 
+/* Edit product → "Add colours, sizes or logos": the way into the product's
+   row. An action on the product, so it reads as a panel with one button, not
+   as another field of the form below it. */
+.dw-add {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--info-border);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius-md);
+  background: var(--info-soft);
+}
+.dw-add > div { flex: 1 1 260px; min-width: 0; }
+.dw-add h3 { margin: 0 0 var(--space-1); font-size: var(--fs-sm); font-weight: 800; color: var(--text); }
+.dw-add .hint { margin: 0; color: var(--text-muted); }
+.dw-add .btn { flex: none; }
+
 .dw-actions {
   display: flex;
   gap: var(--space-2);

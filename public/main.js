@@ -13,6 +13,12 @@
      • New product on a department page: window.FNOnboarding.openStoreProduct
        (public/onboarding.js) — the onboarding's product row in a modal, on
        GET/POST /api/stores/:id[/adopt] and /api/onboardings/:id/products/:pid.
+     • Edit → "Add colours, sizes or logos" on a product already in the store,
+       and "Add a logo to products" for many at once: the same form
+       (openStoreProduct with `product` / `logos`), then an update run that
+       only ADDS variants, SKUs and mockups to the live product:
+       POST /api/stores/:id/products/:pid/row, …/update-plan, …/update,
+       POST /api/onboardings/:id/add-logos.
      • /api/onboardings/* and /api/reference/* — the Department Onboarding
        Agent, rendered by public/onboarding.js (window.FNOnboarding).
 
@@ -1519,9 +1525,12 @@ function productCardHtml(product) {
     </article>`;
 }
 
+let currentProductCount = 0;
+
 function renderDepartment({ collection, products }) {
   currentCollection = collection;
   const count = products.length;
+  currentProductCount = count;
   const grid = count
     ? `<div class="pg-grid">${products.map(productCardHtml).join("")}</div>`
     : stateBlock({
@@ -1549,6 +1558,7 @@ function renderDepartment({ collection, products }) {
       <div class="dh-actions">
         <button class="btn btn-ghost btn-sm" type="button" id="refreshDepartment">Refresh</button>
         <button class="btn btn-danger-ghost btn-sm" type="button" id="deleteStore" hidden>Delete store</button>
+        ${count ? `<button class="btn btn-secondary btn-sm" type="button" id="openAddLogo" title="Add a logo to many of this store's products at once, as another Style of each">Add a logo to products</button>` : ""}
         <button class="btn btn-primary btn-sm" type="button" id="openNewProduct">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
           New product
@@ -1835,6 +1845,18 @@ function renderDrawer(product) {
         ${product.onlineStoreUrl ? `<a href="${escapeHtml(product.onlineStoreUrl)}" target="_blank" rel="noreferrer">View in store</a>` : ""}
       </div>
 
+      ${
+        currentCollection
+          ? `<section class="dw-add" aria-labelledby="epAddTitle">
+              <div>
+                <h3 id="epAddTitle">New colours, sizes or logos</h3>
+                <p class="hint">Opens this product's row, as in a new store build: add a colour, a size or another logo, and the agent makes the mockups and adds the variants and SKUs to this product. What is on it now is not changed.</p>
+              </div>
+              <button class="btn btn-secondary btn-sm" type="button" id="epAddVariants">Add colours, sizes or logos</button>
+            </section>`
+          : ""
+      }
+
       <div class="field">
         <label for="epTitle">Title</label>
         <input id="epTitle" name="title" type="text" value="${escapeHtml(product.title)}" aria-describedby="epTitleError">
@@ -1920,6 +1942,7 @@ function renderDrawer(product) {
 
   el("editProductForm").addEventListener("submit", saveProduct);
   el("epCancel").addEventListener("click", closeDrawer);
+  el("epAddVariants")?.addEventListener("click", openAddToProduct);
   el("epTitle").focus();
 }
 
@@ -2023,7 +2046,7 @@ async function saveProduct(e) {
    scoped to this one row. A store that predates the agent gets a record of
    its own on first use (POST /api/stores/:id/adopt).
    -------------------------------------------------------------------------- */
-function openNewProductModal() {
+function openStoreForm(options = {}) {
   if (!currentCollection) return;
   if (!window.FNOnboarding?.openStoreProduct) {
     window.alert("The product form did not load (onboarding.js). Reload the page and try again.");
@@ -2032,11 +2055,33 @@ function openNewProductModal() {
   const collectionId = currentCollection.id;
   window.FNOnboarding.openStoreProduct({
     collection: currentCollection,
+    productCount: currentProductCount,
+    ...options,
     onCreated: () => {
-      collectionsCache = null; // product counts changed
+      collectionsCache = null; // product and variant counts changed
       if (currentCollection && String(currentCollection.id) === String(collectionId)) loadDepartment(collectionId);
     }
   });
+}
+
+function openNewProductModal() {
+  openStoreForm();
+}
+
+/* A product that is already in the store: Edit → "Add colours, sizes or
+   logos" opens its row in the same form, and "Update product" there adds what
+   Shopify does not have yet — new variants, SKUs and mockups — without
+   touching what is on the product (Dan, 2026-11-20). */
+function openAddToProduct() {
+  if (!editingProduct) return;
+  const product = { id: editingProduct.id, title: editingProduct.title };
+  closeDrawer();
+  openStoreForm({ product });
+}
+
+// The same logo onto many of the store's products at once, as their next Style.
+function openAddLogoModal() {
+  openStoreForm({ logos: true });
 }
 
 /* -----------------------------------------------------------------------------
@@ -2055,6 +2100,7 @@ document.addEventListener("click", (e) => {
   if (e.target.closest("#openNewProduct") || e.target.closest("#emptyNewProduct")) {
     return openNewProductModal();
   }
+  if (e.target.closest("#openAddLogo")) return openAddLogoModal();
   const delStore = e.target.closest("#deleteStore");
   if (delStore && !delStore.disabled) return deleteStore(delStore);
   if (e.target.closest("#refreshDepartment") && currentCollection) {
