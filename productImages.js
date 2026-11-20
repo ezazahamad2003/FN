@@ -100,11 +100,25 @@ function finishPhrase(method) {
    information, but it puts the detail that exists at a scale the model can
    resolve.
 
-   Flattening has one inverse risk: a logo drawn in white disappears on a white
-   ground. When almost nothing survives the flatten, it goes onto a dark ground
-   instead.
+   Flattening has one inverse risk: ink the colour of the ground disappears
+   into it. White is the ground the model reads best, so it stays the ground
+   whenever the logo has no white ink to lose; a logo that does carry white ink
+   goes onto the garment's own colour instead (see groundFor).
    -------------------------------------------------------------------------- */
 const MIN_ARTWORK_EDGE = 1024;
+const WHITE_GROUND = "#ffffff";
+// Stands in for the cloth when its colour cannot be read off the blank (a
+// photo that is pure white throughout, or one that will not decode).
+const DARK_GROUND = "#1f2430";
+// Ink within this many levels of white on every channel is white ink. Tight on
+// purpose: silver and light grey (#c0c0c0) read on white and must not count,
+// and resizing sharpens their edges some 25 levels past their own colour.
+const SAME_AS_WHITE = 32;
+// The share of light ink (any hue) at which a logo reads poorly on white.
+const MOSTLY_LIGHT = 0.45;
+// A share of the ink this small is a highlight or an anti-aliased rim, not a
+// part of the logo anyone would miss.
+const NEGLIGIBLE_INK = 0.015;
 
 async function prepareArtwork(buffer, garmentColor) {
   try {
@@ -114,7 +128,7 @@ async function prepareArtwork(buffer, garmentColor) {
     if (!needsUpscale && !meta.hasAlpha) return buffer;
 
     const portrait = (meta.height || 0) > (meta.width || 0);
-    const onBackground = (background) => {
+    const onBackground = async (background) => {
       let pipe = sharp(buffer);
       if (needsUpscale) {
         pipe = pipe.resize({
@@ -123,14 +137,21 @@ async function prepareArtwork(buffer, garmentColor) {
           kernel: "lanczos3"
         });
       }
-      if (meta.hasAlpha) pipe = pipe.flatten({ background });
-      return pipe.png().toBuffer();
+      if (!meta.hasAlpha) return pipe.png().toBuffer();
+      /* Laid over a canvas of the ground rather than flattened in place: a
+         black-and-white logo saved as a greyscale PNG stays greyscale through
+         flatten(), which turned a green ground into a grey one. */
+      const sized = await pipe.png().toBuffer({ resolveWithObject: true });
+      return sharp({ create: { width: sized.info.width, height: sized.info.height, channels: 3, background } })
+        .composite([{ input: sized.data }])
+        .removeAlpha()
+        .png()
+        .toBuffer();
     };
 
-    if (!meta.hasAlpha) return onBackground("#ffffff");
-    // White ink is the only thing a white ground destroys, so only then is a
-    // different ground worth the risk of it being drawn.
-    return onBackground((await hasLightInk(buffer)) ? garmentColor || "#1f2430" : "#ffffff");
+    // Awaited here so a file that fails mid-decode lands in the catch below.
+    if (!meta.hasAlpha) return await onBackground(WHITE_GROUND);
+    return await onBackground(await groundFor(buffer, garmentColor));
   } catch {
     // An unreadable file is the edit endpoint's problem to report, not ours.
     return buffer;
@@ -138,25 +159,63 @@ async function prepareArtwork(buffer, garmentColor) {
 }
 
 /*
- * Does the artwork contain near-white ink? Such a mark flattened onto white
- * loses those strokes entirely - a logo whose lower half was white lettering
- * came back with those words simply gone.
+ * The ground a transparent logo is flattened onto: white, unless the logo has
+ * ink a white ground would hide, and then the garment's own colour.
+ *
+ * This used to ask only "is the logo MOSTLY light?" before leaving white. A
+ * logo with white ink in the minority - a crest in colour with the department
+ * name in white, black line art round a white-filled mascot - failed that
+ * test and went onto white. Its white strokes were gone before the model saw
+ * the file, and on a dark garment the white ground came back as a white patch
+ * behind the mark. Any white ink worth the name now moves the logo off white,
+ * however much other ink sits beside it. The older test still stands beside
+ * it for logos drawn mostly in a light colour that is not white - yellow,
+ * gold, a pale tint - which read poorly on white too.
+ *
+ * The garment's colour is the ground even when some ink matches the cloth
+ * (black line art on a black hoodie): that ink is lost on the real garment
+ * too. Measured on a light grey hoodie, a darker stand-in ground was drawn as
+ * a navy patch; the cloth's own colour was not.
  */
-async function hasLightInk(buffer) {
+async function groundFor(buffer, garmentColor) {
+  const ink = await lightInkOf(buffer);
+  const leaveWhite = ink.white >= NEGLIGIBLE_INK || ink.light > MOSTLY_LIGHT;
+  return leaveWhite ? garmentColor || DARK_GROUND : WHITE_GROUND;
+}
+
+/*
+ * How much of a logo's ink is white (it would vanish into a white ground) and
+ * how much is light at all, each as a share of the ink.
+ *
+ * Weighted by opacity and measured at a size that keeps fine line work: a
+ * small thumbnail thins hairline strokes to under half opacity, and a count
+ * of solid pixels then never sees them at all.
+ */
+async function lightInkOf(buffer) {
   const { data, info } = await sharp(buffer)
-    .resize(160, 160, { fit: "inside" })
+    .resize(512, 512, { fit: "inside", withoutEnlargement: true })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  let light = 0;
+  // A greyscale PNG decodes to grey + alpha: two channels, not four.
+  const grey = info.channels < 4;
+  const alphaAt = info.channels - 1;
+  const whiteFrom = 255 - SAME_AS_WHITE;
   let ink = 0;
+  let white = 0;
+  let light = 0;
   for (let i = 0; i < data.length; i += info.channels) {
-    if (data[i + 3] < 128) continue;
-    ink++;
-    if (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2] > 200) light++;
+    const opacity = data[i + alphaAt] / 255;
+    if (opacity < 0.05) continue;
+    ink += opacity;
+    const r = data[i];
+    const g = grey ? r : data[i + 1];
+    const b = grey ? r : data[i + 2];
+    if (r >= whiteFrom && g >= whiteFrom && b >= whiteFrom) white += opacity;
+    if (0.299 * r + 0.587 * g + 0.114 * b > 200) light += opacity;
   }
-  return ink > 0 && light / ink > 0.45;
+  return ink > 0 ? { white: white / ink, light: light / ink } : { white: 0, light: 0 };
 }
 
 /*
