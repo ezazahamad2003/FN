@@ -1272,6 +1272,33 @@ test("createProducts adds one product to a built store and leaves the collection
   await assert.rejects(() => agent.removeProduct(id, product.id, { by: "dan" }), /already in Shopify/);
 });
 
+test("createProducts makes several rows in one run, each with its own steps, and none when one row does not validate", async () => {
+  const { deps, id } = await builtOnboarding();
+  const hat = (await agent.saveProduct(id, "", HAT_ROW, { by: "dan" })).product;
+  const bad = (await agent.saveProduct(id, "", { ...HAT_ROW, styleNumber: "R112", colors: ["Navy"], sizes: [] }, { by: "dan" })).product;
+  const made = deps.shopify.calls.setProduct.length;
+
+  // One row that does not validate stops the whole run before anything is made.
+  await assert.rejects(() => agent.createProducts(id, [hat.id, bad.id], { by: "dan" }), /has not passed validation/);
+  assert.equal(deps.shopify.calls.setProduct.length, made, "nothing was created");
+
+  const fixed = (await agent.saveProduct(id, bad.id, { ...HAT_ROW, colors: ["Black"] }, { by: "dan" })).product;
+  assert.equal(fixed.validation.ok, true, (fixed.validation.errors || []).join("; "));
+  const started = await agent.createProducts(id, [hat.id, fixed.id], { by: "dan", wait: true });
+  assert.equal(started.started, true);
+  const record = await store.getOnboarding(id);
+  assert.equal(record.build.state, "complete", record.build.error || "");
+  assert.deepEqual(record.build.scope, { kind: "products", productIds: [hat.id, fixed.id] });
+  assert.deepEqual(record.build.steps.map((s) => s.key), ["preflight", `mockups:${hat.id}`, `mockups:${fixed.id}`, `products:${hat.id}`, `products:${fixed.id}`]);
+  assert.equal(deps.shopify.calls.setProduct.length, made + 2, "one Draft per row");
+  for (const rowId of [hat.id, fixed.id]) {
+    const row = record.products.find((p) => p.id === rowId);
+    assert.equal(row.buildState, "created");
+    assert.ok(row.shopify.gid);
+  }
+  assert.equal(record.products[0].shopify.gid, PRODUCT_GID, "the first product is as it was");
+});
+
 test("createProducts refuses a row that does not validate, and removeProduct takes only that row away", async () => {
   const { id } = await builtOnboarding();
   const { product } = await agent.saveProduct(id, "", { ...HAT_ROW, sizes: [] }, { by: "dan" });

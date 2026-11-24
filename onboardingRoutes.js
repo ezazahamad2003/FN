@@ -474,6 +474,19 @@ function createOnboardingRouter({ requireAdminToken, upload, jsonBodyLimit = JSO
     }
   });
 
+  // Several rows in one run (New product's "+ Add product"): each product's
+  // mockups and Draft, one after another. All of them must validate.
+  router.post("/onboardings/:id/create-products", gate, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.productIds) ? req.body.productIds.map(clean).filter(Boolean) : [];
+      const result = await agent.createProducts(req.params.id, ids, { by: byOf(req) });
+      if (!result.started) return res.status(409).json({ error: result.reason, build: result.build || null });
+      res.status(202).json({ started: true, build: result.build });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
   /* ---- a product already in the store (Departments → Edit) -------------- */
 
   // The record and row behind one live product; a product the agent has no

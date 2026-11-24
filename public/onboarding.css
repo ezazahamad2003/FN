@@ -1804,7 +1804,13 @@
    ========================================================================== */
 .ob-store-modal { width: min(1100px, 100%); }
 .ob-store-modal .modal-body { display: grid; gap: var(--space-4); align-content: start; }
-.ob-store-modal .ob-product-head .variant-remove { display: none; }
+/* The × on a row shows only when the form has more than one product. */
+.ob-store-modal:not([data-ob-store-rows="many"]) .ob-product-head .variant-remove { display: none; }
+.ob-store-add { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.ob-store-add .hint { margin: 0; color: var(--text-subtle); font-size: var(--fs-xs); }
+.ob-store-results { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); width: 100%; }
+.ob-store-results li { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap; font-size: var(--fs-sm); }
+.ob-store-results li > span:not(.status-chip) { flex: 1 1 24ch; min-width: 0; overflow-wrap: anywhere; }
 .ob-store-modal .modal-actions { margin-top: 0; }
 .ob-store-modal .ob-banner { margin: 0; }
 

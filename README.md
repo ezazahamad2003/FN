@@ -102,7 +102,9 @@ From there:
     byte-for-byte. If you do edit a description containing a size-chart table,
     the drawer warns you that the round-trip through plain text will flatten it;
     edit those in Shopify admin.
-- **New product** adds one product to that department with the same form as
+- **New product** adds products to that department (**+ Add product** in the
+  form puts another row under the first; **Create N products** makes them all
+  in one run, and nothing is created while any row has errors) with the same form as
   the Onboarding Agent's Products step: pick one of the store's own blanks (or
   look any brand and style up and have the row filled from the web), tick
   where the logos go and which logo goes on each placement, set colours and

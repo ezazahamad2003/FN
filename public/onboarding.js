@@ -4384,7 +4384,9 @@ The new colours, sizes and logos (Styles) become new variants with their mockups
     const record = state.record;
     // Only the Products step knows the rows; any other step on screen leaves
     // the last capture as it is.
-    if (!record || !page()?.querySelector("[data-ob-panel='inputs']")) return;
+    // (The New product modal's body is itself the inputs panel.)
+    const view = page();
+    if (!record || !view || !(view.matches("[data-ob-panel='inputs']") || view.querySelector("[data-ob-panel='inputs']"))) return;
     const rows = collectProducts();
     const saved = new Map(list(record.products).map((row) => [row?.id, row]));
     const changed = rows.some((row) => !saved.has(row.id) || rowSignature(row) !== rowSignature(saved.get(row.id)));
@@ -4727,8 +4729,9 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
             })
           : await api(recordPath(id, "/products"), { method: "PUT", body: JSON.stringify({ products }) });
         if (!isCurrent("detail", id)) return;
-        if (storeOpen()) state.store.saved = true;
-        applyRecord(payload, { rowsSaved: true });
+        // In the modal the other rows keep what is typed on them.
+        if (storeOpen() && payload?.onboarding) applyStoreSave(state.store, payload.onboarding, products, new Set([rowId]));
+        else applyRecord(payload, { rowsSaved: true });
         if (!master.created) showBanner(page(), "obDetailError", `The store already had a master for this garment: ${master.title}. The row now copies from it.`, "ok");
         api(`${API}/garments`)
           .then((more) => {
@@ -5391,9 +5394,12 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
      the store's own blanks, the lookup of any brand and style, the
      placements with a logo each, the embroidery proofs, another logo as a
      Style, the blank photos, the SKU preview and the validation — drawn
-     into a modal over the department page and saved, checked and created
-     ONE row at a time:
+     into a modal over the department page. "+ Add product" puts another row
+     under it (Dan, 2026-11-24), so several products are saved, checked and
+     created in one go; each row is still saved on its own:
 
+       POST /api/onboardings/:id/create-products      → 202 { build } (the rows
+                                                        on the form, one run)
        GET  /api/stores/:collectionId                 → { onboardingId? }
        POST /api/stores/:collectionId/adopt           → { onboarding } (a store
                                                         that predates the agent
@@ -5423,6 +5429,97 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     return [row?.brand, row?.styleNumber, row?.type, row?.title].some((v) => String(v || "").trim()) || list(row?.colors).length > 0 || list(row?.sizes).length > 0;
   }
 
+  // The rows this modal is working on: every row of a New product form, or
+  // the one row of a product already in Shopify.
+  function storeIds(st) {
+    return st?.mode === "create" ? list(st.productIds) : [st?.productId].filter(Boolean);
+  }
+
+  function storeRowName(row) {
+    return row?.title || [row?.brand, row?.styleNumber].filter(Boolean).join(" ") || "the product";
+  }
+
+  /* After a save in the modal: the server's version of the rows it saved, and
+     what is typed on the other rows kept as it is (a row still blank, a row
+     the save did not reach). */
+  function applyStoreSave(st, onboarding, typed, savedIds) {
+    st.saved = true;
+    state.record = onboarding;
+    const rest = list(typed).filter((row) => !savedIds.has(row.id));
+    state.draft = rest.length ? { id: onboarding.id, rows: rest } : null;
+    renderStoreProduct({ keepRows: false });
+  }
+
+  /* What follows from how many rows the form has: the × on each row (only
+     when there is more than one), the row headings, and a Create button that
+     says how many products it makes. */
+  function syncStoreActions(st) {
+    const modal = st?.overlay?.querySelector(".modal");
+    if (!modal || st.mode !== "create") return;
+    const nodes = [...modal.querySelectorAll(".ob-products > [data-ob-product]")];
+    modal.setAttribute("data-ob-store-rows", nodes.length > 1 ? "many" : "one");
+    nodes.forEach((node, index) => {
+      for (const label of node.querySelectorAll(":scope > legend, .ob-product-title")) {
+        if (/^Product \d+$/.test(label.textContent.trim())) label.textContent = `Product ${index + 1}`;
+      }
+      node.querySelector("[data-ob='remove-product']")?.setAttribute("aria-label", `Remove product ${index + 1}`);
+    });
+    const create = modal.querySelector("[data-ob='store-create']");
+    if (create && !create.dataset.obBusy) create.textContent = nodes.length > 1 ? `Create ${nodes.length} products` : "Create product";
+  }
+
+  // "+ Add product": another row under the ones on the form. Appended, not
+  // repainted, so a lookup result or a half-typed row above is left alone.
+  function addStoreRow() {
+    const st = state.store;
+    const holder = page()?.querySelector(".ob-products");
+    if (!st || st.mode !== "create" || st.phase !== "form" || !holder || !state.record) return;
+    const id = nextProductId();
+    st.productIds.push(id);
+    holder.insertAdjacentHTML("beforeend", productRowHtml(state.record, { id, colors: [], sizes: [], styles: [], unsaved: true }, st.productIds.length - 1));
+    syncStoreActions(st);
+    const row = holder.lastElementChild;
+    row?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+    row?.querySelector("select, input")?.focus({ preventScroll: true });
+  }
+
+  /* The × on a row of the form. A row that was never saved just goes; one
+     saved on the store's record (not in Shopify) is taken off the record. */
+  function removeStoreRow(trigger) {
+    const st = state.store;
+    const node = trigger.closest("[data-ob-product]");
+    const recordId = state.record?.id;
+    if (!st || st.mode !== "create" || !node || !recordId || storeIds(st).length < 2) return;
+    const id = node.dataset.obProduct;
+    const saved = list(state.record.products).find((p) => p?.id === id);
+    const drop = () => {
+      st.productIds = st.productIds.filter((other) => other !== id);
+      node.remove();
+      syncStoreActions(st);
+      page()?.querySelector("[data-ob='store-add-row']")?.focus();
+    };
+    if (!saved) {
+      const typed = collectProducts().find((p) => p.id === id);
+      if (storeRowFilled(typed) && !window.confirm("Remove this product from the form?\n\nIt has not been saved, so what is typed on it is lost.")) return;
+      drop();
+      return;
+    }
+    if (saved.shopify?.gid) return;
+    if (!window.confirm(`Remove "${storeRowName(saved)}" from the form?\n\nIt was saved on the store's record but not created in Shopify. Its uploaded proofs and photos go with it; a blank photo already kept for other departments stays kept.`)) return;
+    return runAction(
+      trigger,
+      "",
+      async () => {
+        const payload = await api(`${recordPath(recordId)}/products/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ by: operator() }) });
+        if (state.store !== st) return;
+        if (payload?.onboarding) state.record = payload.onboarding;
+        drop();
+      },
+      page(),
+      "obDetailError"
+    );
+  }
+
   /* The same modal has three jobs (st.mode):
        "create"  New product — a fresh row, created as a Draft.
        "update"  Edit → "Add colours, sizes or logos" on a product that is
@@ -5442,7 +5539,9 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       live: mode === "update" ? { id: String(product.id), title: product.title || "this product" } : null,
       productCount: Number(productCount) || 0,
       onCreated: typeof onCreated === "function" ? onCreated : null,
+      // "update": the row of the live product. "create": every row on the form.
       productId: "",
+      productIds: [],
       saved: false,
       phase: "loading",
       overlay: null,
@@ -5519,7 +5618,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       st.error = "";
       st.phase = "form";
       if (st.mode === "update") st.productId = payload.product?.id || "";
-      else if (st.mode === "create") st.productId = nextProductId();
+      else if (st.mode === "create") st.productIds = [nextProductId()];
       // A run already going for this store (started here earlier, or from the
       // onboarding record) is shown, not hidden behind a form that cannot start one.
       const build = state.record.build || {};
@@ -5616,6 +5715,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       }
     }
     if (st.mode === "logos" && st.phase === "form") syncStoreLogos(st);
+    if (st.mode === "create" && st.phase === "form") syncStoreActions(st);
   }
 
   function storeBodyHtml(st) {
@@ -5636,22 +5736,30 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
 
     const screen = rowsForScreen(record);
     const rows = list(screen.products);
-    let index = rows.findIndex((p) => p?.id === st.productId);
-    const row = index === -1 ? { id: st.productId, colors: [], sizes: [], styles: [], unsaved: true } : rows[index];
-    if (index === -1) index = rows.length;
-    const saved = list(record.products).some((p) => p?.id === st.productId);
-    const built = saved && Boolean(list(record.products).find((p) => p?.id === st.productId)?.shopify?.gid);
+    const ids = storeIds(st);
+    const many = ids.length > 1;
+    const onRecord = (id) => list(record.products).find((p) => p?.id === id);
+    // Saved on the record and not in Shopify yet; and whether every row is built.
+    const waiting = ids.filter((id) => onRecord(id) && !onRecord(id).shopify?.gid).length;
+    const built = ids.length > 0 && ids.every((id) => onRecord(id)?.shopify?.gid);
+    const rowsHtml = ids
+      .map((id, at) => productRowHtml(screen, rows.find((p) => p?.id === id) || { id, colors: [], sizes: [], styles: [], unsaved: true }, at))
+      .join("");
     return `
       ${banner("obDetailError")}
-      <p class="ob-store-what">Pick the garment — one of the store's own blanks, or look any brand and style up — tick where the logos go, and set the colours and sizes. <b>Save &amp; check</b> fills the title and Vendor from how the store already sells that blank and previews the SKUs; it also opens the slots for embroidery proofs and blank photos. <b>Create product</b> makes the mockups and the Draft in “${esc(st.collection.title)}”.</p>
+      <p class="ob-store-what">Pick the garment — one of the store's own blanks, or look any brand and style up — tick where the logos go, and set the colours and sizes. <b>Save &amp; check</b> fills the title and Vendor from how the store already sells that blank and previews the SKUs; it also opens the slots for embroidery proofs and blank photos. <b>+ Add product</b> puts another product under this one. <b>Create product</b> makes the mockups and a Draft in “${esc(st.collection.title)}” for every product on the form.</p>
       ${storeLogosHtml(record)}
-      <div class="ob-products">${productRowHtml(screen, row, index)}</div>
-      ${saved && !built ? `<p class="hint ob-store-saved" data-tone="warn" role="status">Saved on the store's record, not in Shopify yet — press Create product when the row validates.</p>` : ""}
+      <div class="ob-products">${rowsHtml}</div>
+      <div class="ob-store-add">
+        <button class="btn btn-secondary btn-sm" type="button" data-ob="store-add-row">+ Add product</button>
+        <span class="hint">Another product for this department. They are all created together, one after another.</span>
+      </div>
+      ${waiting ? `<p class="hint ob-store-saved" data-tone="warn" role="status">${many ? `${waiting} of the ${ids.length} products ${waiting === 1 ? "is" : "are"} saved` : "Saved"} on the store's record, not in Shopify yet — press ${many ? `Create ${ids.length} products` : "Create product"} when ${many ? "every row" : "the row"} validates.</p>` : ""}
       <div class="modal-actions">
-        ${saved && !built ? `<button class="btn btn-danger-ghost" type="button" data-ob="store-discard">Discard row</button>` : ""}
+        ${!many && waiting ? `<button class="btn btn-danger-ghost" type="button" data-ob="store-discard">Discard row</button>` : ""}
         <button class="btn btn-ghost" type="button" data-ob="store-close">Close</button>
         <button class="btn btn-secondary" type="button" data-ob="save-products">Save &amp; check</button>
-        <button class="btn btn-primary" type="button" data-ob="store-create" ${built ? "disabled title=\"Already created\"" : ""}>Create product</button>
+        <button class="btn btn-primary" type="button" data-ob="store-create" ${built ? "disabled title=\"Already created\"" : ""}>${many ? `Create ${ids.length} products` : "Create product"}</button>
       </div>`;
   }
 
@@ -6012,16 +6120,22 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
      THIS run, the log, and the way out. The run keeps going if the modal is
      closed; the department page shows the product once it exists. */
   function storeProgressHtml(st, record) {
-    const row = list(record?.products).find((p) => p?.id === st.productId) || {};
-    const name = row.title || [row.brand, row.styleNumber].filter(Boolean).join(" ") || "the product";
+    const ids = storeIds(st);
+    const many = ids.length > 1;
+    const runRows = ids.map((id) => list(record?.products).find((p) => p?.id === id) || { id });
+    const row = runRows[0] || {};
+    const name = many ? `${ids.length} products` : storeRowName(row);
     const build = record?.build || {};
-    const steps = list(build.steps).filter((s) => s?.key === "preflight" || String(s?.key || "").endsWith(`:${st.productId}`));
+    const steps = list(build.steps).filter((s) => s?.key === "preflight" || ids.some((id) => String(s?.key || "").endsWith(`:${id}`)));
     const done = steps.filter((s) => s.state === "complete" || s.state === "skipped").length;
     const running = st.phase === "creating";
     /* Steps appear as they start, so while the run is on, the bar is measured
-       against the three a product run always has (preflight, mockups, the
-       product) — not against "the one step so far", which read 100% at once. */
-    const total = running ? Math.max(steps.length, 3) : steps.length;
+       against the steps a product run always has (preflight, then mockups and
+       the product for each row) — not against "the one step so far", which
+       read 100% at once. */
+    const total = running ? Math.max(steps.length, 1 + 2 * Math.max(ids.length, 1)) : steps.length;
+    const isCreated = (r) => Boolean(r?.shopify?.gid) && r.buildState === "created";
+    const createdRows = runRows.filter(isCreated);
     const pct = total ? Math.round((done / total) * 100) : 0;
     const log = list(build.log).slice(-LOG_TAIL);
     const current = steps.find((s) => s.state === "running");
@@ -6052,8 +6166,31 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
           <span class="spinner" aria-hidden="true"></span>
           <div>
             <p class="ob-building-title">Creating ${esc(name)} — ${esc(current?.label || "starting")}</p>
-            <p class="ob-building-sub">Mockups first, then the Draft in “${esc(st.collection.title)}” with its SKUs and images. Usually 2–4 minutes, mostly the mockups. This updates by itself, and the work carries on if you close it.</p>
+            <p class="ob-building-sub">${many ? `The mockups for every product first, then each Draft in “${esc(st.collection.title)}” with its SKUs and images (${createdRows.length} of ${ids.length} created so far). Usually 2–4 minutes for each product, mostly the mockups.` : `Mockups first, then the Draft in “${esc(st.collection.title)}” with its SKUs and images. Usually 2–4 minutes, mostly the mockups.`} This updates by itself, and the work carries on if you close it.</p>
           </div>
+        </div>`;
+    } else if (many) {
+      // Several products: one line each, so a run that made some and not
+      // others says which.
+      const all = createdRows.length === ids.length;
+      const lines = runRows
+        .map((r) => {
+          const ok = isCreated(r);
+          const images = list(r.mockups).filter((m) => m?.assetId).length;
+          const detail = ok
+            ? `${r.shopify?.variantCount ? `${r.shopify.variantCount} variant${plural(r.shopify.variantCount, "", "s")} · ` : ""}${images} image${plural(images, "", "s")}`
+            : r.buildError || "Not created — the log below says where the run stopped.";
+          return `<li data-tone="${ok ? "ok" : "danger"}">
+              ${chip(ok ? "Draft created" : "not created", ok ? "ok" : "danger")}
+              <span><b>${esc(storeRowName(r))}</b> — ${esc(detail)}</span>
+              ${ok && r.shopify?.url ? `<a href="${esc(r.shopify.url)}" target="_blank" rel="noreferrer">Open in Shopify</a>` : ""}
+            </li>`;
+        })
+        .join("");
+      head = `<div class="ob-store-done" data-tone="${all ? "ok" : "danger"}" role="${all ? "status" : "alert"}">
+          <p class="ob-building-title">${all ? `${ids.length} products are in the store as Drafts.` : `${createdRows.length} of ${ids.length} products were created.`}</p>
+          <p class="ob-building-sub">${all ? "Set their prices and make them Active in Shopify when they are ready." : esc(st.error || build.error || "The others are still on the form: go back to them, fix what stopped them, and create them again. The ones already made are not made twice.")}</p>
+          <ul class="ob-store-results">${lines}</ul>
         </div>`;
     } else if (st.phase === "done") {
       const images = list(row.mockups).filter((m) => m?.assetId).length;
@@ -6086,7 +6223,8 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
           ${log.length ? log.map((line) => `<span>${esc(line)}</span>`).join("") : `<span class="hint">Nothing logged yet.</span>`}
         </div>
         <div class="modal-actions">
-          ${st.phase === "failed" ? `<button class="btn btn-secondary" type="button" data-ob="store-back">Back to the row</button>` : ""}
+          ${st.phase === "failed" ? `<button class="btn btn-secondary" type="button" data-ob="store-back">${many && createdRows.length < ids.length - 1 ? "Back to the rows" : "Back to the row"}</button>` : ""}
+          ${st.phase === "done" && !updating ? `<button class="btn btn-secondary" type="button" data-ob="store-more">Add more products</button>` : ""}
           <button class="btn ${st.phase === "done" ? "btn-primary" : "btn-ghost"}" type="button" data-ob="store-close" ${running ? "disabled" : ""}>${running ? (updating ? "Updating…" : "Creating…") : "Close"}</button>
         </div>
       </div>`;
@@ -6095,9 +6233,23 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
   function onStoreClick(event) {
     const trigger = event.target.closest("[data-ob]");
     const action = trigger?.dataset.ob || "";
-    if (!action.startsWith("store-")) return onDetailClick(event);
     const st = state.store;
+    // The × on a row of the New product form (the Products step has its own).
+    if (action === "remove-product" && st?.mode === "create") return removeStoreRow(trigger);
+    if (!action.startsWith("store-")) return onDetailClick(event);
     if (!st) return;
+    if (action === "store-add-row") return addStoreRow();
+    if (action === "store-more") {
+      // Created: a fresh form for the next products, without closing.
+      if (st.mode !== "create" || st.phase !== "done") return;
+      st.phase = "form";
+      st.error = "";
+      st.saved = false;
+      state.draft = null;
+      st.productIds = [nextProductId()];
+      renderStoreProduct({ keepRows: false });
+      return;
+    }
     if (action === "store-close") return closeStoreProduct();
     if (action === "store-create") return createStoreProduct(trigger);
     if (action === "store-update") return updateStoreProduct(trigger);
@@ -6106,6 +6258,11 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     if (action === "store-discard") return discardStoreProduct(trigger);
     if (action === "store-code") return setStoreCode(trigger);
     if (action === "store-back") {
+      // The products the run did make are done with; the form keeps the rest.
+      if (st.mode === "create") {
+        const left = storeIds(st).filter((id) => !list(state.record?.products).find((p) => p?.id === id)?.shopify?.gid);
+        st.productIds = left.length ? left : [nextProductId()];
+      }
       st.phase = "form";
       st.error = "";
       renderStoreProduct({ keepRows: false });
@@ -6118,29 +6275,54 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     }
   }
 
-  function storeRowFromScreen(st) {
-    return collectProducts().find((p) => p.id === st.productId) || null;
+  /* The rows on the form that a save sends: the modal's own, with something
+     on them. A row added with "+ Add product" and left blank stays on screen
+     and is not saved; a row already in Shopify is not a New product row. */
+  function storeRowsToSave(st, typed) {
+    const ids = storeIds(st);
+    return list(typed).filter((row) => ids.includes(row.id) && storeRowFilled(row) && (st.mode !== "create" || !row.shopify?.gid));
   }
 
-  // PUT the one row; the server fills it from the store and checks it.
-  async function putStoreRow(st, row) {
+  /* PUT each row on its own; the server fills it from the store and checks
+     it, and leaves every other row as it is. Whatever was saved is drawn
+     before a failure is reported, and what is typed on a row the save did
+     not reach stays on it. Resolves { onboarding, products: Map(id → row) },
+     or null when the modal was closed meanwhile. */
+  async function putStoreRows(st, rows, typed) {
     const id = state.record?.id;
-    const payload = await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}`, {
-      method: "PUT",
-      body: JSON.stringify({ product: row, by: operator() })
-    });
+    const products = new Map();
+    let latest = null;
+    let failure = null;
+    for (const row of rows) {
+      try {
+        const payload = await api(`${recordPath(id)}/products/${encodeURIComponent(row.id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ product: row, by: operator() })
+        });
+        if (state.store !== st) return null;
+        if (payload?.onboarding) latest = payload.onboarding;
+        if (payload?.product) products.set(row.id, payload.product);
+      } catch (error) {
+        failure = error;
+        break;
+      }
+    }
     if (state.store !== st) return null;
-    if (payload?.product?.id) st.productId = payload.product.id;
-    st.saved = true;
-    return payload;
+    if (latest) applyStoreSave(st, latest, typed, new Set(products.keys()));
+    if (failure) {
+      const name = [rows[products.size]?.brand, rows[products.size]?.styleNumber].filter(Boolean).join(" ");
+      if (rows.length > 1) failure.message = `${name ? `“${name}”` : `Product ${products.size + 1}`} was not saved: ${failure.message}`;
+      throw failure;
+    }
+    return { onboarding: latest, products };
   }
 
   function saveStoreProduct(button) {
     const st = state.store;
     if (!st || !state.record?.id) return;
-    const row = storeRowFromScreen(st);
-    if (!row) return;
-    if (!storeRowFilled(row)) {
+    const typed = collectProducts();
+    const rows = storeRowsToSave(st, typed);
+    if (!rows.length) {
       fail("Pick a garment first — one of the store's blanks, or look one up by brand and style.");
       return;
     }
@@ -6150,9 +6332,8 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       async () => {
         modalBusy(true);
         try {
-          const payload = await putStoreRow(st, row);
-          if (!payload) return;
-          applyRecord(payload, { rowsSaved: true });
+          const saved = await putStoreRows(st, rows, typed);
+          if (!saved) return;
           // "Save & check" on a product in Shopify also says what would be added.
           if (st.mode === "update") await loadStorePlan(st);
         } finally {
@@ -6172,7 +6353,8 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     const st = state.store;
     const id = state.record?.id;
     if (!st || !id || st.mode !== "update") return;
-    const row = storeRowFromScreen(st);
+    const typed = collectProducts();
+    const row = typed.find((p) => p.id === st.productId);
     if (!row) return;
     return runAction(
       button,
@@ -6181,10 +6363,9 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         modalBusy(true);
         let updating = false;
         try {
-          const saved = await putStoreRow(st, row);
+          const saved = await putStoreRows(st, [row], typed);
           if (!saved) return;
-          applyRecord(saved, { rowsSaved: true });
-          if (saved.product?.validation?.ok !== true) {
+          if (saved.products.get(st.productId)?.validation?.ok !== true) {
             st.plan = null;
             st.planState = "idle";
             paintStorePlan(st);
@@ -6237,17 +6418,26 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     );
   }
 
-  /* Save, check, create: the row is saved first so what is created is what is
-     on screen, and a row that does not validate stops here with its errors
-     drawn on it. Then the server runs this product's steps alone. */
+  /* Save, check, create: every row on the form is saved first so what is
+     created is what is on screen, and a row that does not validate stops it
+     here — nothing is created — with its errors drawn on it. Then the server
+     runs these products' steps alone, one product after another. */
   function createStoreProduct(button) {
     const st = state.store;
     const id = state.record?.id;
-    if (!st || !id) return;
-    const row = storeRowFromScreen(st);
-    if (!row) return;
-    if (!storeRowFilled(row)) {
+    if (!st || !id || st.mode !== "create") return;
+    const typed = collectProducts();
+    const rows = storeRowsToSave(st, typed);
+    if (!rows.length) {
       fail("Pick a garment first — one of the store's blanks, or look one up by brand and style.");
+      return;
+    }
+    // The button says how many products it makes, so an empty row is not
+    // quietly skipped.
+    const formIds = storeIds(st);
+    const empty = formIds.findIndex((rowId) => !storeRowFilled(typed.find((row) => row.id === rowId)));
+    if (empty !== -1) {
+      fail(`Product ${empty + 1} is empty. Pick its garment, or remove it with the × on its row, then press Create again.`);
       return;
     }
     return runAction(
@@ -6257,24 +6447,30 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
         modalBusy(true);
         let creating = false;
         try {
-          const saved = await putStoreRow(st, row);
+          const saved = await putStoreRows(st, rows, typed);
           if (!saved) return;
-          if (saved.product?.validation?.ok !== true) {
-            applyRecord(saved, { rowsSaved: true });
-            fail("Not created yet: fix what the row says is wrong, then press Create product again.");
+          const bad = rows.filter((row) => saved.products.get(row.id)?.validation?.ok !== true);
+          if (bad.length) {
+            fail(
+              rows.length > 1
+                ? `Nothing created yet: ${bad.length} of the ${rows.length} products need${bad.length === 1 ? "s" : ""} fixing. Each row marked “has errors” says what is wrong; then press Create again.`
+                : "Not created yet: fix what the row says is wrong, then press Create product again."
+            );
             return;
           }
-          const started = await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}/create`, {
+          const productIds = rows.map((row) => row.id);
+          const started = await api(`${recordPath(id)}/create-products`, {
             method: "POST",
-            body: JSON.stringify({ by: operator() })
+            body: JSON.stringify({ productIds, by: operator() })
           });
           if (state.store !== st) return;
           creating = true;
+          // A row left blank on the form is not part of the run.
+          st.productIds = productIds;
           st.phase = "creating";
           st.error = "";
           st.polls = 0;
           st.buildStartedAt = started?.build?.startedAt || "";
-          state.record = saved.onboarding;
           state.record.build = { ...(state.record.build || {}), ...(started?.build || {}), state: started?.build?.state || "running" };
           state.draft = null;
           renderStoreProduct({ keepRows: false });
@@ -6310,7 +6506,10 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
           const mine = !st.buildStartedAt || build.startedAt === st.buildStartedAt;
           const live = build.state === "running" || build.state === "starting";
           if (mine && build.startedAt && !live) {
-            const row = list(next.products).find((p) => p?.id === st.productId);
+            const ids = storeIds(st);
+            const runRows = ids.map((rowId) => list(next.products).find((p) => p?.id === rowId));
+            const row = runRows[0];
+            const created = runRows.filter((r) => r?.shopify?.gid && r.buildState === "created").length;
             if (st.mode === "logos") {
               st.phase = build.state === "complete" ? "done" : "failed";
             } else if (st.mode === "update") {
@@ -6318,12 +6517,12 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
               const step = list(build.steps).find((s) => String(s?.key || "") === `products:${st.productId}`);
               st.phase = step && step.state !== "failed" && step.state !== "running" && !row?.updatePending ? "done" : "failed";
             } else {
-              st.phase = row?.shopify?.gid && row?.buildState === "created" ? "done" : "failed";
+              st.phase = ids.length > 0 && created === ids.length ? "done" : "failed";
             }
             modalBusy(false);
             renderStoreProduct({ keepRows: false });
-            // A bulk run that updated some products changed the page too.
-            if ((st.phase === "done" || st.mode === "logos") && st.onCreated) st.onCreated(row);
+            // A run that made or updated only some products changed the page too.
+            if ((st.phase === "done" || st.mode === "logos" || (st.mode === "create" && created > 0)) && st.onCreated) st.onCreated(row);
             return;
           }
           if (!mine && st.polls >= STORE_LOST_AFTER_POLLS) {
@@ -6348,7 +6547,8 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
     const st = state.store;
     const id = state.record?.id;
     if (!st || !id) return;
-    const row = list(state.record.products).find((p) => p?.id === st.productId);
+    const productId = storeIds(st)[0];
+    const row = list(state.record.products).find((p) => p?.id === productId);
     if (!row || row.shopify?.gid) return;
     const name = row.title || [row.brand, row.styleNumber].filter(Boolean).join(" ") || "this row";
     if (!window.confirm(`Discard "${name}"?\n\nIt was saved on the store's record but not created in Shopify. Its uploaded proofs and photos go with it; a blank photo already kept for other departments stays kept.`)) return;
@@ -6356,7 +6556,7 @@ Only these products are touched, in one run. Their titles, SKUs, the other produ
       button,
       "Discarding…",
       async () => {
-        await api(`${recordPath(id)}/products/${encodeURIComponent(st.productId)}`, { method: "DELETE", body: JSON.stringify({ by: operator() }) });
+        await api(`${recordPath(id)}/products/${encodeURIComponent(productId)}`, { method: "DELETE", body: JSON.stringify({ by: operator() }) });
         if (state.store !== st) return;
         closeStoreProduct();
       },
